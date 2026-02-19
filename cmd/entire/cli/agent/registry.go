@@ -91,15 +91,17 @@ type AgentType string
 
 // Agent name constants (registry keys)
 const (
-	AgentNameClaudeCode AgentName = "claude-code"
-	AgentNameGemini     AgentName = "gemini"
+	AgentNameClaudeCode     AgentName = "claude-code"
+	AgentNameFactoryAIDroid AgentName = "factoryai-droid"
+	AgentNameGemini         AgentName = "gemini"
 )
 
 // Agent type constants (type identifiers stored in metadata/trailers)
 const (
-	AgentTypeClaudeCode AgentType = "Claude Code"
-	AgentTypeGemini     AgentType = "Gemini CLI"
-	AgentTypeUnknown    AgentType = "Agent" // Fallback for backwards compatibility
+	AgentTypeClaudeCode     AgentType = "Claude Code"
+	AgentTypeFactoryAIDroid AgentType = "Factory AI Droid"
+	AgentTypeGemini         AgentType = "Gemini CLI"
+	AgentTypeUnknown        AgentType = "Agent" // Fallback for backwards compatibility
 )
 
 // DefaultAgentName is the registry key for the default agent.

@@ -60,7 +60,7 @@ E2E tests:
 - Located in `cmd/entire/cli/e2e_test/`
 - Test real agent interactions (Claude Code creating files, committing, etc.)
 - Validate checkpoint scenarios documented in `docs/architecture/checkpoint-scenarios.md`
-- Support multiple agents via `E2E_AGENT` env var (currently `claude-code`, `gemini-cli` stub)
+- Support multiple agents via `E2E_AGENT` env var (currently `claude-code`, `gemini-cli` stub, `factoryai-droid` stub)
 
 **Environment variables:**
 - `E2E_AGENT` - Agent to test with (default: `claude-code`)
