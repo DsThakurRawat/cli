@@ -19,6 +19,9 @@ const AgentNameClaudeCode = "claude-code"
 // AgentNameGemini is the name for Gemini CLI agent.
 const AgentNameGemini = "gemini"
 
+// AgentNameFactoryAIDroid is the name for Factory AI Droid agent.
+const AgentNameFactoryAIDroid = "factoryai-droid"
+
 // AgentRunner abstracts invoking a coding agent for e2e tests.
 // This follows the multi-agent pattern from cmd/entire/cli/agent/agent.go.
 type AgentRunner interface {
@@ -58,6 +61,8 @@ func NewAgentRunner(name string, config AgentRunnerConfig) AgentRunner {
 		return NewClaudeCodeRunner(config)
 	case AgentNameGemini:
 		return NewGeminiCLIRunner(config)
+	case AgentNameFactoryAIDroid:
+		return NewFactoryAIDroidRunner(config)
 	default:
 		// Return a runner that reports as unavailable
 		return &unavailableRunner{name: name}
@@ -294,6 +299,116 @@ func (r *GeminiCLIRunner) RunPromptWithTools(ctx context.Context, workDir string
 
 	//nolint:gosec // args are constructed from trusted config, not user input
 	cmd := exec.CommandContext(ctx, "gemini", args...)
+	cmd.Dir = workDir
+
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	start := time.Now()
+	err := cmd.Run()
+	duration := time.Since(start)
+
+	result := &AgentResult{
+		Stdout:   stdout.String(),
+		Stderr:   stderr.String(),
+		Duration: duration,
+	}
+
+	if err != nil {
+		exitErr := &exec.ExitError{}
+		if errors.As(err, &exitErr) {
+			result.ExitCode = exitErr.ExitCode()
+		} else {
+			result.ExitCode = -1
+		}
+		//nolint:wrapcheck // error is from exec.Run, caller can check ExitCode in result
+		return result, err
+	}
+
+	result.ExitCode = 0
+	return result, nil
+}
+
+// FactoryAIDroidRunner implements AgentRunner for Factory AI Droid CLI.
+type FactoryAIDroidRunner struct {
+	Model     string
+	Timeout   time.Duration
+	AutoLevel string
+}
+
+// NewFactoryAIDroidRunner creates a new Factory AI Droid runner with the given config.
+func NewFactoryAIDroidRunner(config AgentRunnerConfig) *FactoryAIDroidRunner {
+	model := config.Model
+	if model == "" {
+		model = os.Getenv("E2E_DROID_MODEL")
+		// No default model — use droid's built-in default if not specified
+	}
+
+	timeout := config.Timeout
+	if timeout == 0 {
+		if envTimeout := os.Getenv("E2E_TIMEOUT"); envTimeout != "" {
+			if parsed, err := time.ParseDuration(envTimeout); err == nil {
+				timeout = parsed
+			}
+		}
+		if timeout == 0 {
+			timeout = 2 * time.Minute
+		}
+	}
+
+	return &FactoryAIDroidRunner{
+		Model:     model,
+		Timeout:   timeout,
+		AutoLevel: "medium",
+	}
+}
+
+func (r *FactoryAIDroidRunner) Name() string {
+	return AgentNameFactoryAIDroid
+}
+
+// IsAvailable checks if droid CLI is installed and FACTORY_API_KEY is set.
+// Droid uses API key authentication, not OAuth.
+func (r *FactoryAIDroidRunner) IsAvailable() (bool, error) {
+	if _, err := exec.LookPath("droid"); err != nil {
+		return false, fmt.Errorf("droid CLI not found in PATH: %w", err)
+	}
+
+	if os.Getenv("FACTORY_API_KEY") == "" {
+		return false, fmt.Errorf("FACTORY_API_KEY environment variable not set")
+	}
+
+	return true, nil
+}
+
+func (r *FactoryAIDroidRunner) RunPrompt(ctx context.Context, workDir string, prompt string) (*AgentResult, error) {
+	return r.RunPromptWithTools(ctx, workDir, prompt, nil)
+}
+
+func (r *FactoryAIDroidRunner) RunPromptWithTools(ctx context.Context, workDir string, prompt string, tools []string) (*AgentResult, error) {
+	args := []string{
+		"exec",
+		"--cwd", workDir,
+		"--auto", r.AutoLevel,
+		"-o", "text",
+	}
+
+	if len(tools) > 0 {
+		args = append(args, "--enabled-tools", strings.Join(tools, ","))
+	}
+
+	if r.Model != "" {
+		args = append(args, "-m", r.Model)
+	}
+
+	args = append(args, prompt)
+
+	ctx, cancel := context.WithTimeout(ctx, r.Timeout)
+	defer cancel()
+
+	//nolint:gosec // args are constructed from trusted config, not user input
+	cmd := exec.CommandContext(ctx, "droid", args...)
 	cmd.Dir = workDir
 
 	var stdout, stderr bytes.Buffer
