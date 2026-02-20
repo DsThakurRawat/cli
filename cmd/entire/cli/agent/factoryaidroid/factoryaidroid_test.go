@@ -295,9 +295,35 @@ func TestGetSessionID(t *testing.T) {
 func TestGetSessionDir(t *testing.T) {
 	t.Parallel()
 	ag := &FactoryAIDroidAgent{}
-	_, err := ag.GetSessionDir("/some/repo")
-	if err == nil {
-		t.Error("GetSessionDir() should return error (not implemented)")
+
+	dir, err := ag.GetSessionDir("/Users/alisha/Projects/test-repos/factoryai-droid")
+	if err != nil {
+		t.Fatalf("GetSessionDir() error = %v", err)
+	}
+
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatalf("failed to get home dir: %v", err)
+	}
+
+	expected := filepath.Join(homeDir, ".factory", "sessions", "-Users-alisha-Projects-test-repos-factoryai-droid")
+	if dir != expected {
+		t.Errorf("GetSessionDir() = %q, want %q", dir, expected)
+	}
+}
+
+// TestGetSessionDir_EnvOverride cannot use t.Parallel() due to t.Setenv.
+func TestGetSessionDir_EnvOverride(t *testing.T) {
+	ag := &FactoryAIDroidAgent{}
+	override := "/tmp/test-droid-sessions"
+	t.Setenv("ENTIRE_TEST_DROID_PROJECT_DIR", override)
+
+	dir, err := ag.GetSessionDir("/any/repo/path")
+	if err != nil {
+		t.Fatalf("GetSessionDir() error = %v", err)
+	}
+	if dir != override {
+		t.Errorf("GetSessionDir() = %q, want %q (env override)", dir, override)
 	}
 }
 

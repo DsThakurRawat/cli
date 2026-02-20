@@ -7,10 +7,19 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 
 	"github.com/entireio/cli/cmd/entire/cli/agent"
 	"github.com/entireio/cli/cmd/entire/cli/paths"
 )
+
+// nonAlphanumericRegex matches any non-alphanumeric character for path sanitization.
+// Same pattern as claudecode.SanitizePathForClaude — duplicated to avoid cross-package dependency.
+var nonAlphanumericRegex = regexp.MustCompile(`[^a-zA-Z0-9]`)
+
+func sanitizeRepoPath(path string) string {
+	return nonAlphanumericRegex.ReplaceAllString(path, "-")
+}
 
 //nolint:gochecknoinits // Agent self-registration is the intended pattern
 func init() {
@@ -100,9 +109,18 @@ func (f *FactoryAIDroidAgent) ParseHookInput(_ agent.HookType, r io.Reader) (*ag
 // GetSessionID extracts the session ID from hook input.
 func (f *FactoryAIDroidAgent) GetSessionID(input *agent.HookInput) string { return input.SessionID }
 
-// GetSessionDir is not implemented for Factory AI Droid.
-func (f *FactoryAIDroidAgent) GetSessionDir(_ string) (string, error) {
-	return "", errors.New("not implemented")
+// GetSessionDir returns the directory where Factory AI Droid stores session transcripts.
+// Path: ~/.factory/sessions/<sanitized-repo-path>/
+func (f *FactoryAIDroidAgent) GetSessionDir(repoPath string) (string, error) {
+	if override := os.Getenv("ENTIRE_TEST_DROID_PROJECT_DIR"); override != "" {
+		return override, nil
+	}
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("failed to get home directory: %w", err)
+	}
+	projectDir := sanitizeRepoPath(repoPath)
+	return filepath.Join(homeDir, ".factory", "sessions", projectDir), nil
 }
 
 // ResolveSessionFile returns the path to a Factory AI Droid session file.

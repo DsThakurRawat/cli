@@ -1154,16 +1154,19 @@ func TestFactoryAIDroidSessionStubs(t *testing.T) {
 		}
 	})
 
-	t.Run("GetSessionDir returns not-implemented error", func(t *testing.T) {
+	t.Run("GetSessionDir returns factory sessions path", func(t *testing.T) {
 		t.Parallel()
 
 		ag, _ := agent.Get("factoryai-droid")
-		_, err := ag.GetSessionDir("/tmp/repo")
-		if err == nil {
-			t.Error("GetSessionDir() should return an error for Factory AI Droid")
+		dir, err := ag.GetSessionDir("/Users/test/my-project")
+		if err != nil {
+			t.Fatalf("GetSessionDir() error = %v", err)
 		}
-		if !strings.Contains(err.Error(), "not implemented") {
-			t.Errorf("GetSessionDir() error = %q, want to contain 'not implemented'", err.Error())
+		if !strings.Contains(dir, filepath.Join(".factory", "sessions")) {
+			t.Errorf("GetSessionDir() = %q, want to contain .factory/sessions", dir)
+		}
+		if !strings.HasSuffix(dir, "-Users-test-my-project") {
+			t.Errorf("GetSessionDir() = %q, want to end with sanitized path", dir)
 		}
 	})
 }
