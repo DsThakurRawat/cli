@@ -17,7 +17,7 @@ import (
 func TestGetGitAuthorWithLocalConfig(t *testing.T) {
 	t.Parallel()
 
-	env := NewFeatureBranchEnv(t, "manual-commit")
+	env := NewFeatureBranchEnv(t)
 
 	// Local config is set by InitRepo(), so this tests the normal case
 	env.WriteFile("test.txt", "content")
@@ -66,7 +66,7 @@ func TestGetGitAuthorFallbackToGitCommand(t *testing.T) {
 	// The repo now has no local user config. We'll use GIT_AUTHOR_* and GIT_COMMITTER_*
 	// env vars for commits, simulating global config that go-git can't see but git command can.
 
-	env.InitEntire("manual-commit")
+	env.InitEntire()
 
 	// Create initial commit using environment variables for author/committer
 	env.WriteFile("README.md", "# Test")
@@ -150,7 +150,7 @@ func TestGetGitAuthorNoConfigReturnsDefaults(t *testing.T) {
 		t.Fatalf("git config commit.gpgsign failed: %v", err)
 	}
 
-	env.InitEntire("manual-commit")
+	env.InitEntire()
 
 	// Create initial commit using environment variables (required for CI without global config)
 	env.WriteFile("README.md", "# Test")
@@ -237,7 +237,7 @@ func TestGetGitAuthorRemovingLocalConfig(t *testing.T) {
 		t.Fatalf("failed to write .git/config: %v", err)
 	}
 
-	env.InitEntire("manual-commit")
+	env.InitEntire()
 
 	// Need to create initial commit - use environment variables (works in CI without global config)
 	env.WriteFile("README.md", "# Test")

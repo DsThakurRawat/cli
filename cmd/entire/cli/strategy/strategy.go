@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/entireio/cli/cmd/entire/cli/agent"
@@ -25,30 +24,6 @@ var ErrNotTaskCheckpoint = errors.New("not a task checkpoint")
 
 // ErrEmptyRepository is returned when the repository has no commits yet.
 var ErrEmptyRepository = errors.New("repository has no commits yet")
-
-// SessionIDConflictError is returned when trying to start a new session
-// but the shadow branch already has commits from a different session ID.
-// This prevents orphaning existing session work.
-type SessionIDConflictError struct {
-	ExistingSession string // Session ID found in the shadow branch
-	NewSession      string // Session ID being initialized
-	ShadowBranch    string // The shadow branch name (e.g., "entire/abc1234")
-}
-
-func (e *SessionIDConflictError) Error() string {
-	return "session ID conflict: shadow branch has commits from a different session"
-}
-
-// ExtractToolUseIDFromTaskMetadataDir extracts the ToolUseID from a task metadata directory path.
-// Task metadata dirs have format: .entire/metadata/<session>/tasks/<toolUseID>
-// Returns empty string if not a task metadata directory.
-func ExtractToolUseIDFromTaskMetadataDir(metadataDir string) string {
-	parts := strings.Split(metadataDir, "/")
-	if len(parts) >= 2 && parts[len(parts)-2] == "tasks" {
-		return parts[len(parts)-1]
-	}
-	return ""
-}
 
 // SessionInfo contains information about the current session state.
 // This is used to generate trailers for linking commits to their AI session.
@@ -99,7 +74,7 @@ type RewindPoint struct {
 	CheckpointID id.CheckpointID
 
 	// Agent is the human-readable name of the agent that created this checkpoint
-	// (e.g., "Claude Code", "Cursor")
+	// (e.g., "Claude Code", "Cursor IDE")
 	Agent agent.AgentType
 
 	// SessionID is the session identifier for this checkpoint.
@@ -176,7 +151,7 @@ type StepContext struct {
 	// AuthorEmail is the email to use for commits
 	AuthorEmail string
 
-	// AgentType is the human-readable agent name (e.g., "Claude Code", "Cursor")
+	// AgentType is the human-readable agent name (e.g., "Claude Code", "Cursor IDE")
 	AgentType agent.AgentType
 
 	// Transcript position at step/turn start - tracks what was added during this step
@@ -261,7 +236,7 @@ type TaskStepContext struct {
 	// Used for descriptive incremental checkpoint messages
 	TodoContent string
 
-	// AgentType is the human-readable agent name (e.g., "Claude Code", "Cursor")
+	// AgentType is the human-readable agent name (e.g., "Claude Code", "Cursor IDE")
 	AgentType agent.AgentType
 }
 
@@ -316,9 +291,6 @@ type Strategy interface {
 	// Name returns the strategy identifier (e.g., "commit", "branch", "stash")
 	Name() string
 
-	// Description returns a human-readable description for the setup wizard
-	Description() string
-
 	// ValidateRepository checks if the repository is in a valid state
 	// for this strategy to operate. Returns an error if validation fails.
 	ValidateRepository() error
@@ -329,10 +301,7 @@ type Strategy interface {
 
 	// SaveTaskStep is called by PostToolUse[Task] hook when a subagent completes.
 	// Creates a checkpoint commit with task metadata for later rewind.
-	// Different strategies may handle this differently:
-	// - Commit strategy: commits to active branch
-	// - Manual-commit strategy: commits to shadow branch
-	// - Auto-commit strategy: commits logs to shadow only (code deferred to Stop)
+	// Commits to shadow branch for later condensation.
 	SaveTaskStep(ctx TaskStepContext) error
 
 	// GetRewindPoints returns available points to rewind to.
@@ -349,17 +318,15 @@ type Strategy interface {
 
 	// PreviewRewind returns what will happen if rewinding to the given point.
 	// This allows showing warnings about files that will be deleted before the rewind.
-	// Returns nil if preview is not supported (e.g., auto-commit strategy).
+	// Returns nil if preview is not supported
 	PreviewRewind(point RewindPoint) (*RewindPreview, error)
 
 	// GetTaskCheckpoint returns the task checkpoint for a given rewind point.
-	// For strategies that store checkpoints in git (auto-commit), this reads from the branch.
 	// For strategies that store checkpoints on disk (commit, manual-commit), this reads from the filesystem.
 	// Returns nil, nil if not a task checkpoint or checkpoint not found.
 	GetTaskCheckpoint(point RewindPoint) (*TaskCheckpoint, error)
 
 	// GetTaskCheckpointTranscript returns the session transcript for a task checkpoint.
-	// For strategies that store transcripts in git (auto-commit), this reads from the branch.
 	// For strategies that store transcripts on disk (commit, manual-commit), this reads from the filesystem.
 	GetTaskCheckpointTranscript(point RewindPoint) ([]byte, error)
 
@@ -367,11 +334,6 @@ type Strategy interface {
 	// This is used by the context command to generate trailers.
 	// Returns ErrNoSession if no session info is available.
 	GetSessionInfo() (*SessionInfo, error)
-
-	// EnsureSetup ensures the strategy's required setup is in place,
-	// installing any missing pieces (git hooks, gitignore entries, etc.).
-	// Returns nil if setup is complete or was successfully installed.
-	EnsureSetup() error
 
 	// NOTE: ListSessions and GetSession are standalone functions in session.go.
 	// They read from entire/checkpoints/v1 and merge with SessionSource if implemented.
@@ -391,29 +353,17 @@ type Strategy interface {
 	GetSessionContext(sessionID string) string
 
 	// GetCheckpointLog returns the session transcript for a specific checkpoint.
-	// For strategies that store transcripts in git branches (auto-commit, manual-commit),
+	// For strategies that store transcripts in git branches (manual-commit),
 	// this reads from the checkpoint's commit tree.
 	// For strategies that store on disk (commit), reads from the filesystem.
 	// Returns ErrNoMetadata if transcript is not available.
 	GetCheckpointLog(checkpoint Checkpoint) ([]byte, error)
-}
-
-// SessionInitializer is an optional interface for strategies that need to
-// initialize session state when a user prompt is submitted.
-// Strategies like manual-commit use this to create session state files that
-// the git prepare-commit-msg hook can detect.
-type SessionInitializer interface {
 	// InitializeSession creates session state for a new session.
 	// Called during UserPromptSubmit hook before any checkpoints are created.
 	// agentType is the human-readable name of the agent (e.g., "Claude Code").
 	// transcriptPath is the path to the live transcript file (for mid-session commit detection).
 	// userPrompt is the user's prompt text (stored truncated as FirstPrompt for display).
 	InitializeSession(sessionID string, agentType agent.AgentType, transcriptPath string, userPrompt string) error
-}
-
-// PrepareCommitMsgHandler is an optional interface for strategies that need to
-// handle the git prepare-commit-msg hook.
-type PrepareCommitMsgHandler interface {
 	// PrepareCommitMsg is called by the git prepare-commit-msg hook.
 	// It can modify the commit message file to add trailers, etc.
 	// The source parameter indicates how the commit was initiated:
@@ -424,46 +374,51 @@ type PrepareCommitMsgHandler interface {
 	//   - "commit": amend with -c/-C
 	// Should return nil on errors to not block commits (log warnings to stderr).
 	PrepareCommitMsg(commitMsgFile string, source string) error
-}
-
-// PostCommitHandler is an optional interface for strategies that need to
-// handle the git post-commit hook.
-type PostCommitHandler interface {
 	// PostCommit is called by the git post-commit hook after a commit is created.
 	// Used to perform actions like condensing session data after commits.
 	// Should return nil on errors to not block subsequent operations (log warnings to stderr).
 	PostCommit() error
-}
-
-// CommitMsgHandler is an optional interface for strategies that need to
-// handle the git commit-msg hook.
-type CommitMsgHandler interface {
 	// CommitMsg is called by the git commit-msg hook after the user edits the message.
 	// Used to validate or modify the final commit message before the commit is created.
 	// If this returns an error, the commit is aborted.
 	CommitMsg(commitMsgFile string) error
-}
-
-// PrePushHandler is an optional interface for strategies that need to
-// handle the git pre-push hook.
-type PrePushHandler interface {
 	// PrePush is called by the git pre-push hook before pushing to a remote.
 	// Used to push session branches (e.g., entire/checkpoints/v1) alongside user pushes.
 	// The remote parameter is the name of the remote being pushed to.
 	// Should return nil on errors to not block pushes (log warnings to stderr).
 	PrePush(remote string) error
-}
-
-// TurnEndHandler is an optional interface for strategies that need to
-// perform work when an agent turn ends (ACTIVE → IDLE).
-// For example, manual-commit strategy uses this to finalize checkpoints
-// with the full session transcript.
-type TurnEndHandler interface {
 	// HandleTurnEnd performs strategy-specific cleanup at the end of a turn.
 	// Work items are read from state (e.g. TurnCheckpointIDs), not from the
 	// action list. The state has already been updated by ApplyTransition;
 	// the caller saves it after this method returns.
 	HandleTurnEnd(state *session.State) error
+	// RestoreLogsOnly restores session logs from a logs-only rewind point.
+	// Does not modify the working directory - only restores the transcript
+	// to the agent's session directory (determined per-session from checkpoint metadata).
+	// If force is false, prompts for confirmation when local logs have newer timestamps.
+	// Returns info about each restored session so callers can print correct resume commands.
+	RestoreLogsOnly(point RewindPoint, force bool) ([]RestoredSession, error)
+	// Reset deletes the shadow branch and session state for the current HEAD.
+	// Returns nil if there's nothing to reset (no shadow branch).
+	Reset() error
+	// ResetSession clears the state for a single session and cleans up
+	// the shadow branch if no other sessions reference it.
+	// File changes remain in the working directory.
+	ResetSession(sessionID string) error
+	// CondenseSessionByID force-condenses a session and cleans up.
+	// Generates a new checkpoint ID, condenses to entire/checkpoints/v1,
+	// updates the session state, and removes the shadow branch
+	// if no other active sessions need it.
+	CondenseSessionByID(sessionID string) error
+	// CountOtherActiveSessionsWithCheckpoints returns the number of other active sessions
+	// with uncommitted checkpoints on the same base commit.
+	// Returns 0, nil if no such sessions exist.
+	CountOtherActiveSessionsWithCheckpoints(currentSessionID string) (int, error)
+	// GetAdditionalSessions returns sessions not yet on entire/checkpoints/v1 branch.
+	GetAdditionalSessions() ([]*Session, error)
+	// ListOrphanedItems returns items created by this strategy that are now orphaned.
+	// Each strategy defines what "orphaned" means for its own data structures.
+	ListOrphanedItems() ([]CleanupItem, error)
 }
 
 // RestoredSession describes a single session that was restored by RestoreLogsOnly.
@@ -474,78 +429,4 @@ type RestoredSession struct {
 	Agent     agent.AgentType
 	Prompt    string
 	CreatedAt time.Time // From session metadata; used by resume to determine most recent
-}
-
-// LogsOnlyRestorer is an optional interface for strategies that support
-// restoring session logs without file state restoration.
-// This is used for "logs-only" rewind points where only the session transcript
-// can be restored (file state requires git checkout).
-type LogsOnlyRestorer interface {
-	// RestoreLogsOnly restores session logs from a logs-only rewind point.
-	// Does not modify the working directory - only restores the transcript
-	// to the agent's session directory (determined per-session from checkpoint metadata).
-	// If force is false, prompts for confirmation when local logs have newer timestamps.
-	// Returns info about each restored session so callers can print correct resume commands.
-	RestoreLogsOnly(point RewindPoint, force bool) ([]RestoredSession, error)
-}
-
-// SessionResetter is an optional interface for strategies that support
-// resetting session state and shadow branches.
-// This is used by the "reset" command to clean up shadow branches
-// and session state when a user wants to start fresh.
-type SessionResetter interface {
-	// Reset deletes the shadow branch and session state for the current HEAD.
-	// Returns nil if there's nothing to reset (no shadow branch).
-	Reset() error
-
-	// ResetSession clears the state for a single session and cleans up
-	// the shadow branch if no other sessions reference it.
-	// File changes remain in the working directory.
-	ResetSession(sessionID string) error
-}
-
-// SessionCondenser is an optional interface for strategies that support
-// force-condensing a session. This is used by "entire doctor" to
-// salvage stuck sessions by condensing their data to permanent storage.
-type SessionCondenser interface {
-	// CondenseSessionByID force-condenses a session and cleans up.
-	// Generates a new checkpoint ID, condenses to entire/checkpoints/v1,
-	// updates the session state, and removes the shadow branch
-	// if no other active sessions need it.
-	CondenseSessionByID(sessionID string) error
-}
-
-// ConcurrentSessionChecker is an optional interface for strategies that support
-// counting concurrent sessions with uncommitted changes.
-// This is used by the SessionStart hook to show an informational message about
-// how many other active conversations will be included in the next commit.
-type ConcurrentSessionChecker interface {
-	// CountOtherActiveSessionsWithCheckpoints returns the number of other active sessions
-	// with uncommitted checkpoints on the same base commit.
-	// Returns 0, nil if no such sessions exist.
-	CountOtherActiveSessionsWithCheckpoints(currentSessionID string) (int, error)
-}
-
-// SessionSource is an optional interface for strategies that provide additional
-// sessions beyond those stored on the entire/checkpoints/v1 branch.
-// For example, manual-commit strategy provides active sessions from .git/entire-sessions/
-// that haven't yet been condensed to entire/checkpoints/v1.
-//
-// ListSessions() automatically discovers all registered strategies, checks if they
-// implement SessionSource, and merges their additional sessions by ID.
-type SessionSource interface {
-	// GetAdditionalSessions returns sessions not yet on entire/checkpoints/v1 branch.
-	GetAdditionalSessions() ([]*Session, error)
-}
-
-// OrphanedItemsLister is an optional interface for strategies that can identify
-// orphaned items (shadow branches, session states, checkpoints) that should be
-// cleaned up. This is used by the "entire session cleanup" command.
-//
-// ListAllCleanupItems() automatically discovers all registered strategies, checks
-// if they implement OrphanedItemsLister, and combines their orphaned items.
-type OrphanedItemsLister interface {
-	// ListOrphanedItems returns items created by this strategy that are now orphaned.
-	// Each strategy defines what "orphaned" means for its own data structures.
-	ListOrphanedItems() ([]CleanupItem, error)
 }

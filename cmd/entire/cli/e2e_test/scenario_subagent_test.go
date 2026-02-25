@@ -27,7 +27,7 @@ func TestE2E_SubagentCheckpoint(t *testing.T) {
 		t.Skipf("Skipping subagent test for %s (Task tool is Claude Code specific)", defaultAgent)
 	}
 
-	env := NewFeatureBranchEnv(t, "manual-commit")
+	env := NewFeatureBranchEnv(t)
 
 	// Get rewind points before agent action
 	pointsBefore := env.GetRewindPoints()
@@ -107,7 +107,7 @@ func TestE2E_SubagentCheckpoint(t *testing.T) {
 func TestE2E_SubagentCheckpoint_CommitFlow(t *testing.T) {
 	t.Parallel()
 
-	env := NewFeatureBranchEnv(t, "manual-commit")
+	env := NewFeatureBranchEnv(t)
 
 	// 1. Run prompt that may trigger Task tool
 	t.Log("Step 1: Running prompt that may use Task tool")

@@ -33,7 +33,7 @@ func TestE2E_ResumeInRelocatedRepo(t *testing.T) {
 	t.Parallel()
 
 	// Create an initial test environment at the original location
-	env := NewFeatureBranchEnv(t, "manual-commit")
+	env := NewFeatureBranchEnv(t)
 	originalDir := env.RepoDir
 
 	t.Logf("Original repo location: %s", originalDir)

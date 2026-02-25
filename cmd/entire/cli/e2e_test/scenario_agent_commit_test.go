@@ -13,7 +13,7 @@ import (
 func TestE2E_AgentCommitsDuringTurn(t *testing.T) {
 	t.Parallel()
 
-	env := NewFeatureBranchEnv(t, "manual-commit")
+	env := NewFeatureBranchEnv(t)
 
 	// 1. First, agent creates a file
 	t.Log("Step 1: Agent creating file")
@@ -72,7 +72,7 @@ Only run these two commands, nothing else.`
 func TestE2E_MultipleAgentSessions(t *testing.T) {
 	t.Parallel()
 
-	env := NewFeatureBranchEnv(t, "manual-commit")
+	env := NewFeatureBranchEnv(t)
 
 	// Session 1: Create hello.go
 	t.Log("Session 1: Creating hello.go")

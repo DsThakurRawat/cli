@@ -340,38 +340,19 @@ func ListAllCleanupItems() ([]CleanupItem, error) {
 	var items []CleanupItem
 	var firstErr error
 
-	// Iterate over all registered strategies
-	for _, name := range List() {
-		strat, err := Get(name)
-		if err != nil {
-			if firstErr == nil {
-				firstErr = err
-			}
-			continue
-		}
-
-		// Check if strategy implements OrphanedItemsLister
-		if lister, ok := strat.(OrphanedItemsLister); ok {
-			stratItems, err := lister.ListOrphanedItems()
-			if err != nil {
-				if firstErr == nil {
-					firstErr = err
-				}
-				continue
-			}
-			items = append(items, stratItems...)
-		}
+	strat := NewManualCommitStrategy()
+	stratItems, err := strat.ListOrphanedItems()
+	if err != nil {
+		return nil, fmt.Errorf("listing orphaned items: %w", err)
 	}
-
+	items = append(items, stratItems...)
 	// Orphaned session states (strategy-agnostic)
 	states, err := ListOrphanedSessionStates()
 	if err != nil {
-		if firstErr == nil {
-			firstErr = err
-		}
-	} else {
-		items = append(items, states...)
+		return nil, err
 	}
+
+	items = append(items, states...)
 
 	return items, firstErr
 }

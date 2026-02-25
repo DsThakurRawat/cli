@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"github.com/entireio/cli/cmd/entire/cli/paths"
-	"github.com/entireio/cli/cmd/entire/cli/strategy"
 )
 
 // TestShadow_MidSessionRebaseMigration tests that when Claude performs a rebase
@@ -49,7 +48,7 @@ func TestShadow_MidSessionRebaseMigration(t *testing.T) {
 	env.GitCheckoutNewBranch("feature/rebase-test")
 
 	// Initialize Entire after branch creation
-	env.InitEntire(strategy.StrategyNameManualCommit)
+	env.InitEntire()
 
 	// Create a commit on feature branch
 	env.WriteFile("feature.txt", "feature content")
@@ -272,7 +271,7 @@ func TestShadow_CommitThenRebaseMidSession(t *testing.T) {
 	env.GitCheckoutNewBranch("feature/commit-then-rebase")
 
 	// Initialize Entire
-	env.InitEntire(strategy.StrategyNameManualCommit)
+	env.InitEntire()
 
 	initialFeatureHead := env.GetHeadHash()
 	t.Logf("Initial feature HEAD: %s", initialFeatureHead[:7])

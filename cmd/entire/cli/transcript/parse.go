@@ -34,6 +34,7 @@ func ParseFromBytes(content []byte) ([]Line, error) {
 
 		var line Line
 		if err := json.Unmarshal(lineBytes, &line); err == nil {
+			normalizeLineType(&line)
 			lines = append(lines, line)
 		}
 
@@ -83,6 +84,7 @@ func ParseFromFileAtLine(path string, startLine int) ([]Line, int, error) {
 		if totalLines >= startLine {
 			var line Line
 			if err := json.Unmarshal(lineBytes, &line); err == nil {
+				normalizeLineType(&line)
 				lines = append(lines, line)
 			}
 		}
@@ -94,6 +96,16 @@ func ParseFromFileAtLine(path string, startLine int) ([]Line, int, error) {
 	}
 
 	return lines, totalLines, nil
+}
+
+// normalizeLineType ensures line.Type is populated for all transcript formats.
+// Claude Code uses "type" while Cursor uses "role" for the same purpose.
+// When Type is empty but Role is set, we copy Role into Type so all downstream
+// consumers can switch on Type uniformly.
+func normalizeLineType(line *Line) {
+	if line.Type == "" && line.Role != "" {
+		line.Type = line.Role
+	}
 }
 
 // SliceFromLine returns the content starting from line number `startLine` (0-indexed).

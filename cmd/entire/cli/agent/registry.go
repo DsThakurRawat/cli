@@ -92,6 +92,7 @@ type AgentType string
 // Agent name constants (registry keys)
 const (
 	AgentNameClaudeCode AgentName = "claude-code"
+	AgentNameCursor     AgentName = "cursor"
 	AgentNameGemini     AgentName = "gemini"
 	AgentNameOpenCode   AgentName = "opencode"
 )
@@ -99,6 +100,7 @@ const (
 // Agent type constants (type identifiers stored in metadata/trailers)
 const (
 	AgentTypeClaudeCode AgentType = "Claude Code"
+	AgentTypeCursor     AgentType = "Cursor IDE"
 	AgentTypeGemini     AgentType = "Gemini CLI"
 	AgentTypeOpenCode   AgentType = "OpenCode"
 	AgentTypeUnknown    AgentType = "Agent" // Fallback for backwards compatibility

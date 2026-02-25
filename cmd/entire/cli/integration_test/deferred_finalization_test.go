@@ -12,7 +12,6 @@ import (
 
 	"github.com/entireio/cli/cmd/entire/cli/paths"
 	"github.com/entireio/cli/cmd/entire/cli/session"
-	"github.com/entireio/cli/cmd/entire/cli/strategy"
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing/object"
 )
@@ -33,7 +32,7 @@ import (
 func TestShadow_DeferredTranscriptFinalization(t *testing.T) {
 	t.Parallel()
 
-	env := NewFeatureBranchEnv(t, strategy.StrategyNameManualCommit)
+	env := NewFeatureBranchEnv(t)
 
 	sess := env.NewSession()
 
@@ -215,7 +214,6 @@ func TestShadow_DeferredTranscriptFinalization(t *testing.T) {
 	env.ValidateCheckpoint(CheckpointValidation{
 		CheckpointID:    checkpointID,
 		SessionID:       sess.ID,
-		Strategy:        strategy.StrategyNameManualCommit,
 		FilesTouched:    []string{"feature.go"},
 		ExpectedPrompts: []string{"Create feature function"},
 		ExpectedTranscriptContent: []string{
@@ -241,7 +239,7 @@ func TestShadow_DeferredTranscriptFinalization(t *testing.T) {
 func TestShadow_CarryForward_ActiveSession(t *testing.T) {
 	t.Parallel()
 
-	env := NewFeatureBranchEnv(t, strategy.StrategyNameManualCommit)
+	env := NewFeatureBranchEnv(t)
 
 	sess := env.NewSession()
 
@@ -318,7 +316,6 @@ func TestShadow_CarryForward_ActiveSession(t *testing.T) {
 	env.ValidateCheckpoint(CheckpointValidation{
 		CheckpointID:    firstCheckpointID,
 		SessionID:       sess.ID,
-		Strategy:        strategy.StrategyNameManualCommit,
 		FilesTouched:    []string{"fileA.go"},
 		ExpectedPrompts: []string{"Create files A, B, and C"},
 		ExpectedTranscriptContent: []string{
@@ -330,7 +327,6 @@ func TestShadow_CarryForward_ActiveSession(t *testing.T) {
 	env.ValidateCheckpoint(CheckpointValidation{
 		CheckpointID:    secondCheckpointID,
 		SessionID:       sess.ID,
-		Strategy:        strategy.StrategyNameManualCommit,
 		FilesTouched:    []string{"fileB.go"},
 		ExpectedPrompts: []string{"Create files A, B, and C"},
 		ExpectedTranscriptContent: []string{
@@ -379,7 +375,6 @@ func TestShadow_CarryForward_ActiveSession(t *testing.T) {
 	env.ValidateCheckpoint(CheckpointValidation{
 		CheckpointID:    thirdCheckpointID,
 		SessionID:       sess.ID,
-		Strategy:        strategy.StrategyNameManualCommit,
 		FilesTouched:    []string{"fileC.go"},
 		ExpectedPrompts: []string{"Create files A, B, and C"},
 		ExpectedTranscriptContent: []string{
@@ -403,7 +398,7 @@ func TestShadow_CarryForward_ActiveSession(t *testing.T) {
 func TestShadow_CarryForward_IdleSession(t *testing.T) {
 	t.Parallel()
 
-	env := NewFeatureBranchEnv(t, strategy.StrategyNameManualCommit)
+	env := NewFeatureBranchEnv(t)
 
 	sess := env.NewSession()
 
@@ -478,7 +473,7 @@ func TestShadow_CarryForward_IdleSession(t *testing.T) {
 func TestShadow_AgentCommitsMidTurn_UserCommitsRemainder(t *testing.T) {
 	t.Parallel()
 
-	env := NewFeatureBranchEnv(t, strategy.StrategyNameManualCommit)
+	env := NewFeatureBranchEnv(t)
 
 	sess := env.NewSession()
 
@@ -562,7 +557,6 @@ func TestShadow_AgentCommitsMidTurn_UserCommitsRemainder(t *testing.T) {
 	env.ValidateCheckpoint(CheckpointValidation{
 		CheckpointID:    userCheckpointID,
 		SessionID:       sess.ID,
-		Strategy:        strategy.StrategyNameManualCommit,
 		FilesTouched:    []string{"fileA.go"},
 		ExpectedPrompts: []string{"Create files A, B, and C"},
 	})
@@ -571,13 +565,11 @@ func TestShadow_AgentCommitsMidTurn_UserCommitsRemainder(t *testing.T) {
 	env.ValidateCheckpoint(CheckpointValidation{
 		CheckpointID: firstCheckpointID,
 		SessionID:    sess.ID,
-		Strategy:     strategy.StrategyNameManualCommit,
 		FilesTouched: []string{"fileB.go"},
 	})
 	env.ValidateCheckpoint(CheckpointValidation{
 		CheckpointID: secondCheckpointID,
 		SessionID:    sess.ID,
-		Strategy:     strategy.StrategyNameManualCommit,
 		FilesTouched: []string{"fileC.go"},
 	})
 
@@ -604,7 +596,7 @@ func TestShadow_AgentCommitsMidTurn_UserCommitsRemainder(t *testing.T) {
 func TestShadow_MultipleCommits_SameActiveTurn(t *testing.T) {
 	t.Parallel()
 
-	env := NewFeatureBranchEnv(t, strategy.StrategyNameManualCommit)
+	env := NewFeatureBranchEnv(t)
 
 	sess := env.NewSession()
 
@@ -703,7 +695,6 @@ func TestShadow_MultipleCommits_SameActiveTurn(t *testing.T) {
 		env.ValidateCheckpoint(CheckpointValidation{
 			CheckpointID:    cpID,
 			SessionID:       sess.ID,
-			Strategy:        strategy.StrategyNameManualCommit,
 			FilesTouched:    expectedFiles[i],
 			ExpectedPrompts: []string{"Create files A, B, and C"},
 			ExpectedTranscriptContent: []string{
@@ -728,7 +719,7 @@ func TestShadow_MultipleCommits_SameActiveTurn(t *testing.T) {
 func TestShadow_OverlapCheck_UnrelatedCommit(t *testing.T) {
 	t.Parallel()
 
-	env := NewFeatureBranchEnv(t, strategy.StrategyNameManualCommit)
+	env := NewFeatureBranchEnv(t)
 
 	sess := env.NewSession()
 
@@ -785,7 +776,7 @@ func TestShadow_OverlapCheck_UnrelatedCommit(t *testing.T) {
 func TestShadow_OverlapCheck_PartialOverlap(t *testing.T) {
 	t.Parallel()
 
-	env := NewFeatureBranchEnv(t, strategy.StrategyNameManualCommit)
+	env := NewFeatureBranchEnv(t)
 
 	sess := env.NewSession()
 
@@ -835,7 +826,7 @@ func TestShadow_OverlapCheck_PartialOverlap(t *testing.T) {
 func TestShadow_SessionDepleted_ManualEditNoCheckpoint(t *testing.T) {
 	t.Parallel()
 
-	env := NewFeatureBranchEnv(t, strategy.StrategyNameManualCommit)
+	env := NewFeatureBranchEnv(t)
 
 	sess := env.NewSession()
 
@@ -925,7 +916,7 @@ func TestShadow_SessionDepleted_ManualEditNoCheckpoint(t *testing.T) {
 func TestShadow_RevertedFiles_ManualEditNoCheckpoint(t *testing.T) {
 	t.Parallel()
 
-	env := NewFeatureBranchEnv(t, strategy.StrategyNameManualCommit)
+	env := NewFeatureBranchEnv(t)
 
 	sess := env.NewSession()
 
@@ -1002,7 +993,7 @@ func TestShadow_RevertedFiles_ManualEditNoCheckpoint(t *testing.T) {
 func TestShadow_ResetSession_ClearsTurnCheckpointIDs(t *testing.T) {
 	t.Parallel()
 
-	env := NewFeatureBranchEnv(t, strategy.StrategyNameManualCommit)
+	env := NewFeatureBranchEnv(t)
 
 	sess := env.NewSession()
 
@@ -1088,7 +1079,7 @@ func TestShadow_ResetSession_ClearsTurnCheckpointIDs(t *testing.T) {
 func TestShadow_EndedSession_UserCommitsRemainingFiles(t *testing.T) {
 	t.Parallel()
 
-	env := NewFeatureBranchEnv(t, strategy.StrategyNameManualCommit)
+	env := NewFeatureBranchEnv(t)
 
 	sess := env.NewSession()
 
@@ -1159,7 +1150,6 @@ func TestShadow_EndedSession_UserCommitsRemainingFiles(t *testing.T) {
 	env.ValidateCheckpoint(CheckpointValidation{
 		CheckpointID:    firstCheckpointID,
 		SessionID:       sess.ID,
-		Strategy:        strategy.StrategyNameManualCommit,
 		FilesTouched:    []string{"fileA.go"},
 		ExpectedPrompts: []string{"Create files A and B"},
 	})
@@ -1183,7 +1173,6 @@ func TestShadow_EndedSession_UserCommitsRemainingFiles(t *testing.T) {
 	env.ValidateCheckpoint(CheckpointValidation{
 		CheckpointID:    secondCheckpointID,
 		SessionID:       sess.ID,
-		Strategy:        strategy.StrategyNameManualCommit,
 		FilesTouched:    []string{"fileB.go"},
 		ExpectedPrompts: []string{"Create files A and B"},
 	})
@@ -1213,7 +1202,7 @@ func TestShadow_EndedSession_UserCommitsRemainingFiles(t *testing.T) {
 func TestShadow_DeletedFiles_CheckpointAndCarryForward(t *testing.T) {
 	t.Parallel()
 
-	env := NewFeatureBranchEnv(t, strategy.StrategyNameManualCommit)
+	env := NewFeatureBranchEnv(t)
 
 	// Pre-commit existing files
 	env.WriteFile("old_a.go", "package main\n\nfunc OldA() {}\n")
@@ -1277,7 +1266,6 @@ func TestShadow_DeletedFiles_CheckpointAndCarryForward(t *testing.T) {
 	env.ValidateCheckpoint(CheckpointValidation{
 		CheckpointID:    firstCheckpointID,
 		SessionID:       sess.ID,
-		Strategy:        strategy.StrategyNameManualCommit,
 		ExpectedPrompts: []string{"Create new_file.go and delete old_a.go"},
 	})
 
@@ -1309,7 +1297,7 @@ func TestShadow_DeletedFiles_CheckpointAndCarryForward(t *testing.T) {
 func TestShadow_CarryForward_ModifiedExistingFiles(t *testing.T) {
 	t.Parallel()
 
-	env := NewFeatureBranchEnv(t, strategy.StrategyNameManualCommit)
+	env := NewFeatureBranchEnv(t)
 
 	// Pre-commit existing files
 	env.WriteFile("model.go", "package main\n\nfunc Model() {}\n")
@@ -1372,7 +1360,6 @@ func TestShadow_CarryForward_ModifiedExistingFiles(t *testing.T) {
 		env.ValidateCheckpoint(CheckpointValidation{
 			CheckpointID:    cpID,
 			SessionID:       sess.ID,
-			Strategy:        strategy.StrategyNameManualCommit,
 			FilesTouched:    []string{files[i]},
 			ExpectedPrompts: []string{"Update MVC files"},
 		})

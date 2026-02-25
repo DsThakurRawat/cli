@@ -225,7 +225,7 @@ func (s *ManualCommitStrategy) CondenseSession(repo *git.Repository, checkpointI
 					slog.String("error", sliceErr.Error()))
 			}
 			scopedTranscript = scoped
-		case agent.AgentTypeClaudeCode, agent.AgentTypeUnknown:
+		case agent.AgentTypeClaudeCode, agent.AgentTypeCursor, agent.AgentTypeUnknown:
 			scopedTranscript = transcript.SliceFromLine(sessionData.Transcript, state.CheckpointTranscriptStart)
 		}
 		if len(scopedTranscript) > 0 {
@@ -593,6 +593,11 @@ func extractUserPrompts(agentType agent.AgentType, content string) []string {
 // where the current checkpoint began, allowing calculation for only the portion
 // of the transcript since the last checkpoint.
 func calculateTokenUsage(agentType agent.AgentType, data []byte, startOffset int) *agent.TokenUsage {
+	// No token usage information from Cursor yet
+	if agentType == agent.AgentTypeCursor {
+		return nil
+	}
+
 	if len(data) == 0 {
 		return &agent.TokenUsage{}
 	}
@@ -643,9 +648,13 @@ func extractUserPromptsFromLines(lines []string) []string {
 			continue
 		}
 
-		// Check for user message (supports both "human" and "user" types)
-		msgType, ok := entry["type"].(string)
-		if !ok || (msgType != "human" && msgType != "user") {
+		// Check for user message:
+		// - Claude Code uses "type": "human" or "type": "user"
+		// - Cursor uses "role": "user"
+		msgType, _ := entry["type"].(string) //nolint:errcheck // type assertion on interface{} from JSON
+		msgRole, _ := entry["role"].(string) //nolint:errcheck // type assertion on interface{} from JSON
+		isUser := msgType == "human" || msgType == "user" || msgRole == "user"
+		if !isUser {
 			continue
 		}
 

@@ -13,7 +13,7 @@ import (
 func TestE2E_CheckpointMetadata(t *testing.T) {
 	t.Parallel()
 
-	env := NewFeatureBranchEnv(t, "manual-commit")
+	env := NewFeatureBranchEnv(t)
 
 	// 1. Agent creates a file
 	t.Log("Step 1: Agent creating file")
@@ -62,7 +62,7 @@ func TestE2E_CheckpointMetadata(t *testing.T) {
 func TestE2E_CheckpointIDFormat(t *testing.T) {
 	t.Parallel()
 
-	env := NewFeatureBranchEnv(t, "manual-commit")
+	env := NewFeatureBranchEnv(t)
 
 	// 1. Agent makes changes
 	result, err := env.RunAgent(PromptCreateHelloGo.Prompt)
@@ -85,56 +85,4 @@ func TestE2E_CheckpointIDFormat(t *testing.T) {
 		assert.True(t, (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'),
 			"Checkpoint ID should be lowercase hex: got %c", c)
 	}
-}
-
-// TestE2E_AutoCommitStrategy tests the auto-commit strategy creates clean commits.
-func TestE2E_AutoCommitStrategy(t *testing.T) {
-	t.Parallel()
-
-	env := NewFeatureBranchEnv(t, "auto-commit")
-
-	// Count commits before agent action
-	commitsBefore := env.GetCommitCount()
-	t.Logf("Commits before: %d", commitsBefore)
-
-	// 1. Agent creates a file
-	t.Log("Step 1: Agent creating file with auto-commit strategy")
-	result, err := env.RunAgent(PromptCreateHelloGo.Prompt)
-	require.NoError(t, err)
-	AssertAgentSuccess(t, result, err)
-
-	// 2. Verify file exists
-	require.True(t, env.FileExists("hello.go"), "hello.go should exist")
-	AssertHelloWorldProgram(t, env, "hello.go")
-
-	// 3. With auto-commit, commits are created automatically
-	commitsAfter := env.GetCommitCount()
-	t.Logf("Commits after: %d", commitsAfter)
-	assert.Greater(t, commitsAfter, commitsBefore, "Auto-commit should create at least one commit")
-
-	// 4. Verify checkpoint trailer in commit history
-	checkpointID, err := env.GetLatestCheckpointIDFromHistory()
-	require.NoError(t, err, "Should find checkpoint ID in commit history")
-	require.NotEmpty(t, checkpointID, "Commit should have Entire-Checkpoint trailer")
-	t.Logf("Checkpoint ID: %s", checkpointID)
-
-	// Verify checkpoint ID format (12 hex characters)
-	assert.Len(t, checkpointID, 12, "Checkpoint ID should be 12 characters")
-
-	// 5. Verify metadata branch exists
-	assert.True(t, env.BranchExists("entire/checkpoints/v1"),
-		"entire/checkpoints/v1 branch should exist")
-
-	// 6. Check for rewind points
-	points := env.GetRewindPoints()
-	assert.GreaterOrEqual(t, len(points), 1, "Should have at least 1 rewind point")
-	t.Logf("Found %d rewind points", len(points))
-
-	// 7. Validate checkpoint has proper metadata on entire/checkpoints/v1
-	env.ValidateCheckpoint(CheckpointValidation{
-		CheckpointID:              checkpointID,
-		Strategy:                  "auto-commit",
-		FilesTouched:              []string{"hello.go"},
-		ExpectedTranscriptContent: []string{"hello.go"},
-	})
 }

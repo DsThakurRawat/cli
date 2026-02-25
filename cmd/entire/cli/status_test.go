@@ -252,7 +252,7 @@ func TestRunStatus_NotGitRepository(t *testing.T) {
 
 func TestRunStatus_LocalSettingsOnly(t *testing.T) {
 	setupTestRepo(t)
-	writeLocalSettings(t, `{"strategy": "auto-commit", "enabled": true}`)
+	writeLocalSettings(t, `{"enabled": true}`)
 
 	var stdout bytes.Buffer
 	if err := runStatus(&stdout, true); err != nil {
@@ -263,9 +263,6 @@ func TestRunStatus_LocalSettingsOnly(t *testing.T) {
 	// Should show effective status first (dot + Enabled + separator + strategy)
 	if !strings.Contains(output, "Enabled") {
 		t.Errorf("Expected output to show 'Enabled', got: %s", output)
-	}
-	if !strings.Contains(output, "auto-commit") {
-		t.Errorf("Expected output to show 'auto-commit', got: %s", output)
 	}
 	// Should show per-file details
 	if !strings.Contains(output, "Local") || !strings.Contains(output, "enabled") {
@@ -279,10 +276,10 @@ func TestRunStatus_LocalSettingsOnly(t *testing.T) {
 func TestRunStatus_BothProjectAndLocal(t *testing.T) {
 	setupTestRepo(t)
 	// Project: enabled=true, strategy=manual-commit
-	// Local: enabled=false, strategy=auto-commit
+	// Local: enabled=false, strategy=manual-commit
 	// Detailed mode shows effective status first, then each file separately
-	writeSettings(t, `{"strategy": "manual-commit", "enabled": true}`)
-	writeLocalSettings(t, `{"strategy": "auto-commit", "enabled": false}`)
+	writeSettings(t, `{"enabled": true}`)
+	writeLocalSettings(t, `{"enabled": false}`)
 
 	var stdout bytes.Buffer
 	if err := runStatus(&stdout, true); err != nil {
@@ -291,8 +288,8 @@ func TestRunStatus_BothProjectAndLocal(t *testing.T) {
 
 	output := stdout.String()
 	// Should show effective status first (local overrides project)
-	if !strings.Contains(output, "Disabled") || !strings.Contains(output, "auto-commit") {
-		t.Errorf("Expected output to show effective 'Disabled' with 'auto-commit', got: %s", output)
+	if !strings.Contains(output, "Disabled") || !strings.Contains(output, "manual-commit") {
+		t.Errorf("Expected output to show effective 'Disabled' with 'manual-commit', got: %s", output)
 	}
 	// Should show both settings separately
 	if !strings.Contains(output, "Project") || !strings.Contains(output, "manual-commit") {
@@ -306,10 +303,10 @@ func TestRunStatus_BothProjectAndLocal(t *testing.T) {
 func TestRunStatus_BothProjectAndLocal_Short(t *testing.T) {
 	setupTestRepo(t)
 	// Project: enabled=true, strategy=manual-commit
-	// Local: enabled=false, strategy=auto-commit
+	// Local: enabled=false, strategy=manual-commit
 	// Short mode shows merged/effective settings
-	writeSettings(t, `{"strategy": "manual-commit", "enabled": true}`)
-	writeLocalSettings(t, `{"strategy": "auto-commit", "enabled": false}`)
+	writeSettings(t, `{"enabled": true}`)
+	writeLocalSettings(t, `{"enabled": false}`)
 
 	var stdout bytes.Buffer
 	if err := runStatus(&stdout, false); err != nil {
@@ -318,29 +315,14 @@ func TestRunStatus_BothProjectAndLocal_Short(t *testing.T) {
 
 	output := stdout.String()
 	// Should show merged/effective state (local overrides project)
-	if !strings.Contains(output, "Disabled") || !strings.Contains(output, "auto-commit") {
-		t.Errorf("Expected output to show 'Disabled' with 'auto-commit', got: %s", output)
-	}
-}
-
-func TestRunStatus_ShowsStrategy(t *testing.T) {
-	setupTestRepo(t)
-	writeSettings(t, `{"strategy": "auto-commit", "enabled": true}`)
-
-	var stdout bytes.Buffer
-	if err := runStatus(&stdout, false); err != nil {
-		t.Fatalf("runStatus() error = %v", err)
-	}
-
-	output := stdout.String()
-	if !strings.Contains(output, "auto-commit") {
-		t.Errorf("Expected output to show strategy 'auto-commit', got: %s", output)
+	if !strings.Contains(output, "Disabled") || !strings.Contains(output, "manual-commit") {
+		t.Errorf("Expected output to show 'Disabled' with 'manual-commit', got: %s", output)
 	}
 }
 
 func TestRunStatus_ShowsManualCommitStrategy(t *testing.T) {
 	setupTestRepo(t)
-	writeSettings(t, `{"strategy": "manual-commit", "enabled": false}`)
+	writeSettings(t, `{"enabled": false}`)
 
 	var stdout bytes.Buffer
 	if err := runStatus(&stdout, true); err != nil {
@@ -355,6 +337,54 @@ func TestRunStatus_ShowsManualCommitStrategy(t *testing.T) {
 	// Should show per-file details
 	if !strings.Contains(output, "Project") || !strings.Contains(output, "disabled") {
 		t.Errorf("Expected output to show 'Project' and 'disabled', got: %s", output)
+	}
+}
+
+func TestRunStatus_DeprecatedStrategyWarning(t *testing.T) {
+	setupTestRepo(t)
+	writeSettings(t, `{"enabled": true, "strategy": "auto-commit"}`)
+
+	var stdout bytes.Buffer
+	if err := runStatus(&stdout, false); err != nil {
+		t.Fatalf("runStatus() error = %v", err)
+	}
+
+	output := stdout.String()
+	if !strings.Contains(output, "no longer needed") {
+		t.Errorf("Expected deprecation warning, got: %s", output)
+	}
+	if !strings.Contains(output, "strategy") {
+		t.Errorf("Expected warning to mention 'strategy', got: %s", output)
+	}
+}
+
+func TestRunStatus_DeprecatedStrategyWarning_Detailed(t *testing.T) {
+	setupTestRepo(t)
+	writeSettings(t, `{"enabled": true, "strategy": "auto-commit"}`)
+
+	var stdout bytes.Buffer
+	if err := runStatus(&stdout, true); err != nil {
+		t.Fatalf("runStatus() error = %v", err)
+	}
+
+	output := stdout.String()
+	if !strings.Contains(output, "no longer needed") {
+		t.Errorf("Expected deprecation warning in detailed mode, got: %s", output)
+	}
+}
+
+func TestRunStatus_NoWarningWithoutStrategy(t *testing.T) {
+	setupTestRepo(t)
+	writeSettings(t, testSettingsEnabled)
+
+	var stdout bytes.Buffer
+	if err := runStatus(&stdout, false); err != nil {
+		t.Fatalf("runStatus() error = %v", err)
+	}
+
+	output := stdout.String()
+	if strings.Contains(output, "no longer needed") {
+		t.Errorf("Expected no deprecation warning, got: %s", output)
 	}
 }
 
@@ -417,7 +447,7 @@ func TestWriteActiveSessions(t *testing.T) {
 			WorktreePath: "/Users/test/repo",
 			StartedAt:    now.Add(-15 * time.Minute),
 			FirstPrompt:  "Add dark mode support for the entire application and all components",
-			AgentType:    agent.AgentType("Cursor"),
+			AgentType:    agent.AgentTypeCursor,
 			TokenUsage: &agent.TokenUsage{
 				InputTokens:  500,
 				OutputTokens: 300,
@@ -451,7 +481,7 @@ func TestWriteActiveSessions(t *testing.T) {
 	if !strings.Contains(output, "Claude Code") {
 		t.Errorf("Expected agent label 'Claude Code', got: %s", output)
 	}
-	if !strings.Contains(output, "Cursor") {
+	if !strings.Contains(output, "Cursor IDE") {
 		t.Errorf("Expected agent label 'Cursor', got: %s", output)
 	}
 	// Session without AgentType should show unknown placeholder
@@ -486,7 +516,7 @@ func TestWriteActiveSessions(t *testing.T) {
 
 	// Session started 15m ago with no LastInteractionTime should NOT show "active" in stats
 	for _, line := range lines {
-		if strings.Contains(line, "Cursor") {
+		if strings.Contains(line, "Cursor IDE") {
 			if strings.Contains(line, "active") {
 				t.Errorf("Session without LastInteractionTime should not show 'active', got: %s", line)
 			}
@@ -1003,7 +1033,7 @@ func TestFormatSettingsStatusShort_Disabled(t *testing.T) {
 	sty := statusStyles{colorEnabled: false, width: 60}
 	s := &EntireSettings{
 		Enabled:  false,
-		Strategy: "auto-commit",
+		Strategy: "manual-commit",
 	}
 
 	result := formatSettingsStatusShort(s, sty)
@@ -1014,7 +1044,7 @@ func TestFormatSettingsStatusShort_Disabled(t *testing.T) {
 	if !strings.Contains(result, "Disabled") {
 		t.Errorf("Expected 'Disabled' in output, got: %q", result)
 	}
-	if !strings.Contains(result, "auto-commit") {
+	if !strings.Contains(result, "manual-commit") {
 		t.Errorf("Expected strategy in output, got: %q", result)
 	}
 }
@@ -1047,7 +1077,7 @@ func TestFormatSettingsStatus_LocalDisabled(t *testing.T) {
 	sty := statusStyles{colorEnabled: false, width: 60}
 	s := &EntireSettings{
 		Enabled:  false,
-		Strategy: "auto-commit",
+		Strategy: "manual-commit",
 	}
 
 	result := formatSettingsStatus("Local", s, sty)
@@ -1058,7 +1088,7 @@ func TestFormatSettingsStatus_LocalDisabled(t *testing.T) {
 	if !strings.Contains(result, "disabled") {
 		t.Errorf("Expected 'disabled' in output, got: %q", result)
 	}
-	if !strings.Contains(result, "auto-commit") {
+	if !strings.Contains(result, "manual-commit") {
 		t.Errorf("Expected strategy in output, got: %q", result)
 	}
 }

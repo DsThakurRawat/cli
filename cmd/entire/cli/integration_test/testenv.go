@@ -20,7 +20,6 @@ import (
 	"github.com/entireio/cli/cmd/entire/cli/checkpoint/id"
 	"github.com/entireio/cli/cmd/entire/cli/jsonutil"
 	"github.com/entireio/cli/cmd/entire/cli/paths"
-	"github.com/entireio/cli/cmd/entire/cli/strategy"
 	"github.com/entireio/cli/cmd/entire/cli/trailers"
 
 	"github.com/go-git/go-git/v5"
@@ -161,19 +160,19 @@ func (env *TestEnv) RunCLIWithStdin(stdin string, args ...string) string {
 
 // NewRepoEnv creates a TestEnv with an initialized git repo and Entire.
 // This is a convenience factory for tests that need a basic repo setup.
-func NewRepoEnv(t *testing.T, strategy string) *TestEnv {
+func NewRepoEnv(t *testing.T) *TestEnv {
 	t.Helper()
 	env := NewTestEnv(t)
 	env.InitRepo()
-	env.InitEntire(strategy)
+	env.InitEntire()
 	return env
 }
 
 // NewRepoWithCommit creates a TestEnv with a git repo, Entire, and an initial commit.
 // The initial commit contains a README.md and .gitignore (excluding .entire/).
-func NewRepoWithCommit(t *testing.T, strategy string) *TestEnv {
+func NewRepoWithCommit(t *testing.T) *TestEnv {
 	t.Helper()
-	env := NewRepoEnv(t, strategy)
+	env := NewRepoEnv(t)
 	env.WriteFile(".gitignore", ".entire/\n")
 	env.WriteFile("README.md", "# Test Repository")
 	env.GitAdd(".gitignore")
@@ -186,76 +185,11 @@ func NewRepoWithCommit(t *testing.T, strategy string) *TestEnv {
 // It initializes the repo, creates an initial commit on main,
 // and checks out a feature branch. This is the most common setup
 // for session and rewind tests since Entire tracking skips main/master.
-func NewFeatureBranchEnv(t *testing.T, strategyName string) *TestEnv {
+func NewFeatureBranchEnv(t *testing.T) *TestEnv {
 	t.Helper()
-	env := NewRepoWithCommit(t, strategyName)
+	env := NewRepoWithCommit(t)
 	env.GitCheckoutNewBranch("feature/test-branch")
 	return env
-}
-
-// AllStrategies returns all strategy names for parameterized tests.
-func AllStrategies() []string {
-	return []string{
-		strategy.StrategyNameAutoCommit,
-		strategy.StrategyNameManualCommit,
-	}
-}
-
-// RunForAllStrategies runs a test function for each strategy in parallel.
-// This reduces boilerplate for tests that need to verify behavior across all strategies.
-// Each subtest gets its own TestEnv with a feature branch ready for testing.
-func RunForAllStrategies(t *testing.T, testFn func(t *testing.T, env *TestEnv, strategyName string)) {
-	t.Helper()
-	for _, strat := range AllStrategies() {
-		strat := strat // capture for parallel
-		t.Run(strat, func(t *testing.T) {
-			t.Parallel()
-			env := NewFeatureBranchEnv(t, strat)
-			testFn(t, env, strat)
-		})
-	}
-}
-
-// RunForAllStrategiesWithRepoEnv runs a test function for each strategy in parallel,
-// using NewRepoWithCommit instead of NewFeatureBranchEnv. Use this for tests
-// that need to test behavior on the main branch.
-func RunForAllStrategiesWithRepoEnv(t *testing.T, testFn func(t *testing.T, env *TestEnv, strategyName string)) {
-	t.Helper()
-	for _, strat := range AllStrategies() {
-		strat := strat // capture for parallel
-		t.Run(strat, func(t *testing.T) {
-			t.Parallel()
-			env := NewRepoWithCommit(t, strat)
-			testFn(t, env, strat)
-		})
-	}
-}
-
-// RunForAllStrategiesWithBasicEnv runs a test function for each strategy in parallel,
-// using NewRepoEnv (git repo + entire init, no commits). Use this for tests
-// that need to verify basic initialization behavior.
-func RunForAllStrategiesWithBasicEnv(t *testing.T, testFn func(t *testing.T, env *TestEnv, strategyName string)) {
-	t.Helper()
-	for _, strat := range AllStrategies() {
-		strat := strat // capture for parallel
-		t.Run(strat, func(t *testing.T) {
-			t.Parallel()
-			env := NewRepoEnv(t, strat)
-			testFn(t, env, strat)
-		})
-	}
-}
-
-// RunForStrategiesSequential runs a test function for specific strategies sequentially.
-// Use this for tests that cannot be parallelized (e.g., tests using os.Chdir).
-// The strategies parameter allows testing a subset of strategies.
-func RunForStrategiesSequential(t *testing.T, strategies []string, testFn func(t *testing.T, strategyName string)) {
-	t.Helper()
-	for _, strat := range strategies {
-		t.Run(strat, func(t *testing.T) {
-			testFn(t, strat)
-		})
-	}
 }
 
 // InitRepo initializes a git repository in the test environment.
@@ -287,32 +221,32 @@ func (env *TestEnv) InitRepo() {
 }
 
 // InitEntire initializes the .entire directory with the specified strategy.
-func (env *TestEnv) InitEntire(strategyName string) {
-	env.InitEntireWithOptions(strategyName, nil)
+func (env *TestEnv) InitEntire() {
+	env.InitEntireWithOptions(nil)
 }
 
 // InitEntireWithOptions initializes the .entire directory with the specified strategy and options.
-func (env *TestEnv) InitEntireWithOptions(strategyName string, strategyOptions map[string]any) {
+func (env *TestEnv) InitEntireWithOptions(strategyOptions map[string]any) {
 	env.T.Helper()
-	env.initEntireInternal(strategyName, strategyOptions)
+	env.initEntireInternal(strategyOptions)
 }
 
 // InitEntireWithAgent initializes an Entire test environment with a specific agent.
 // The agent name is for test documentation only — the CLI resolves the agent from
 // hook commands and checkpoint metadata, not from settings.json.
-func (env *TestEnv) InitEntireWithAgent(strategyName string, _ agent.AgentName) {
+func (env *TestEnv) InitEntireWithAgent(_ agent.AgentName) {
 	env.T.Helper()
-	env.initEntireInternal(strategyName, nil)
+	env.initEntireInternal(nil)
 }
 
 // InitEntireWithAgentAndOptions initializes Entire with the specified strategy, agent, and options.
-func (env *TestEnv) InitEntireWithAgentAndOptions(strategyName string, _ agent.AgentName, strategyOptions map[string]any) {
+func (env *TestEnv) InitEntireWithAgentAndOptions(_ agent.AgentName, strategyOptions map[string]any) {
 	env.T.Helper()
-	env.initEntireInternal(strategyName, strategyOptions)
+	env.initEntireInternal(strategyOptions)
 }
 
 // initEntireInternal is the common implementation for InitEntire variants.
-func (env *TestEnv) initEntireInternal(strategyName string, strategyOptions map[string]any) {
+func (env *TestEnv) initEntireInternal(strategyOptions map[string]any) {
 	env.T.Helper()
 
 	// Create .entire directory structure
@@ -332,7 +266,7 @@ func (env *TestEnv) initEntireInternal(strategyName string, strategyOptions map[
 	// the agent from installed hooks (detect presence) or checkpoint metadata.
 	// The settings parser uses DisallowUnknownFields(), so only recognized fields are allowed.
 	settings := map[string]any{
-		"strategy":  strategyName,
+		"enabled":   true,
 		"local_dev": true, // Note: git-triggered hooks won't work (path is relative); tests call hooks via getTestBinary() instead
 	}
 	if strategyOptions != nil {
@@ -476,7 +410,7 @@ func (env *TestEnv) GitCommitWithMetadata(message, metadataDir string) {
 }
 
 // GitCommitWithCheckpointID creates a commit with Entire-Checkpoint trailer.
-// This simulates commits created by the auto-commit strategy.
+// This simulates commits.
 func (env *TestEnv) GitCommitWithCheckpointID(message, checkpointID string) {
 	env.T.Helper()
 

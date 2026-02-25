@@ -803,6 +803,76 @@ func TestBuildCondensedTranscriptFromBytes_OpenCodeInvalidJSON(t *testing.T) {
 	}
 }
 
+func TestBuildCondensedTranscriptFromBytes_CursorRoleBasedJSONL(t *testing.T) {
+	// Cursor transcripts use "role" instead of "type" and wrap user text in <user_query> tags.
+	// The transcript parser normalizes role→type, so condensation should work.
+	cursorJSONL := `{"role":"user","message":{"content":[{"type":"text","text":"<user_query>\nhello\n</user_query>"}]}}
+{"role":"assistant","message":{"content":[{"type":"text","text":"Hi there!"}]}}
+{"role":"user","message":{"content":[{"type":"text","text":"<user_query>\nadd one to a file and commit\n</user_query>"}]}}
+{"role":"assistant","message":{"content":[{"type":"text","text":"Created one.txt with one and committed."}]}}
+`
+
+	entries, err := BuildCondensedTranscriptFromBytes([]byte(cursorJSONL), agent.AgentTypeCursor)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(entries) == 0 {
+		t.Fatal("expected non-empty entries for Cursor transcript, got 0 (role→type normalization may be broken)")
+	}
+
+	// Should have 4 entries: 2 user + 2 assistant
+	if len(entries) != 4 {
+		t.Fatalf("expected 4 entries, got %d", len(entries))
+	}
+
+	if entries[0].Type != EntryTypeUser {
+		t.Errorf("entry 0: expected type %s, got %s", EntryTypeUser, entries[0].Type)
+	}
+	if !strings.Contains(entries[0].Content, "hello") {
+		t.Errorf("entry 0: expected content containing 'hello', got %q", entries[0].Content)
+	}
+
+	if entries[1].Type != EntryTypeAssistant {
+		t.Errorf("entry 1: expected type %s, got %s", EntryTypeAssistant, entries[1].Type)
+	}
+	if entries[1].Content != "Hi there!" {
+		t.Errorf("entry 1: expected 'Hi there!', got %q", entries[1].Content)
+	}
+
+	if entries[2].Type != EntryTypeUser {
+		t.Errorf("entry 2: expected type %s, got %s", EntryTypeUser, entries[2].Type)
+	}
+
+	if entries[3].Type != EntryTypeAssistant {
+		t.Errorf("entry 3: expected type %s, got %s", EntryTypeAssistant, entries[3].Type)
+	}
+}
+
+func TestBuildCondensedTranscriptFromBytes_CursorNoToolUseBlocks(t *testing.T) {
+	// Cursor transcripts have no tool_use blocks — only text content.
+	// This verifies we get entries (not an empty result) even without tool calls.
+	cursorJSONL := `{"role":"user","message":{"content":[{"type":"text","text":"write a poem"}]}}
+{"role":"assistant","message":{"content":[{"type":"text","text":"Here is a poem about code."}]}}
+`
+
+	entries, err := BuildCondensedTranscriptFromBytes([]byte(cursorJSONL), agent.AgentTypeCursor)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(entries) != 2 {
+		t.Fatalf("expected 2 entries, got %d", len(entries))
+	}
+
+	// No tool entries should appear
+	for i, e := range entries {
+		if e.Type == EntryTypeTool {
+			t.Errorf("entry %d: unexpected tool entry in Cursor transcript", i)
+		}
+	}
+}
+
 // mustMarshal is a test helper that marshals v to JSON, failing the test on error.
 func mustMarshal(t *testing.T, v interface{}) json.RawMessage {
 	t.Helper()

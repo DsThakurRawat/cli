@@ -119,20 +119,9 @@ func ListSessions() ([]Session, error) {
 		}
 	}
 
-	// Check all registered strategies for additional sessions
-	for _, name := range List() {
-		strat, stratErr := Get(name)
-		if stratErr != nil {
-			continue
-		}
-		source, ok := strat.(SessionSource)
-		if !ok {
-			continue
-		}
-		additionalSessions, addErr := source.GetAdditionalSessions()
-		if addErr != nil {
-			continue // Skip strategies that fail to provide additional sessions
-		}
+	// Check for additional sessions
+	strat := NewManualCommitStrategy()
+	if additionalSessions, err := strat.GetAdditionalSessions(); err == nil {
 		for _, addSession := range additionalSessions {
 			if addSession == nil {
 				continue

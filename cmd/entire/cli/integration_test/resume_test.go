@@ -12,26 +12,17 @@ import (
 	"testing"
 	"time"
 
-	"github.com/entireio/cli/cmd/entire/cli/strategy"
-
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
 )
 
 const masterBranch = "master"
 
-// Note: Resume tests only run with auto-commit strategy because:
-// - Auto-commit strategy creates commits with Entire-Checkpoint trailers and metadata on entire/checkpoints/v1
-//   immediately during SimulateStop
-// - Manual-commit strategy only creates this structure after user commits (via prepare-commit-msg
-//   and post-commit hooks), which requires the full workflow tested in manual_commit_workflow_test.go
-// Both strategies share the same resume code path once the structure exists.
-
 // TestResume_SwitchBranchWithSession tests the resume command when switching to a branch
 // that has a commit with an Entire-Checkpoint trailer.
 func TestResume_SwitchBranchWithSession(t *testing.T) {
 	t.Parallel()
-	env := NewFeatureBranchEnv(t, strategy.StrategyNameAutoCommit)
+	env := NewFeatureBranchEnv(t)
 
 	// Create a session on the feature branch
 	session := env.NewSession()
@@ -49,6 +40,9 @@ func TestResume_SwitchBranchWithSession(t *testing.T) {
 	if err := env.SimulateStop(session.ID, session.TranscriptPath); err != nil {
 		t.Fatalf("SimulateStop failed: %v", err)
 	}
+
+	// Commit the session's changes (manual-commit requires user to commit)
+	env.GitCommitWithShadowHooks("Create a hello script", "hello.rb")
 
 	// Remember the feature branch name
 	featureBranch := env.GetCurrentBranch()
@@ -93,8 +87,7 @@ func TestResume_SwitchBranchWithSession(t *testing.T) {
 // TestResume_AlreadyOnBranch tests that resume works when already on the target branch.
 func TestResume_AlreadyOnBranch(t *testing.T) {
 	t.Parallel()
-	env := NewFeatureBranchEnv(t, strategy.StrategyNameAutoCommit)
-
+	env := NewFeatureBranchEnv(t)
 	// Create a session on the feature branch
 	session := env.NewSession()
 	if err := env.SimulateUserPromptSubmit(session.ID); err != nil {
@@ -111,6 +104,9 @@ func TestResume_AlreadyOnBranch(t *testing.T) {
 	if err := env.SimulateStop(session.ID, session.TranscriptPath); err != nil {
 		t.Fatalf("SimulateStop failed: %v", err)
 	}
+
+	// Commit the session's changes (manual-commit requires user to commit)
+	env.GitCommitWithShadowHooks("Create a test script", "test.js")
 
 	currentBranch := env.GetCurrentBranch()
 
@@ -130,8 +126,7 @@ func TestResume_AlreadyOnBranch(t *testing.T) {
 // any Entire-Checkpoint trailer in their history gracefully.
 func TestResume_NoCheckpointOnBranch(t *testing.T) {
 	t.Parallel()
-	env := NewFeatureBranchEnv(t, strategy.StrategyNameAutoCommit)
-
+	env := NewFeatureBranchEnv(t)
 	// Create a branch directly from master (which has no checkpoints)
 	// Switch to master first
 	env.GitCheckoutBranch(masterBranch)
@@ -169,7 +164,7 @@ func TestResume_NoCheckpointOnBranch(t *testing.T) {
 // TestResume_BranchDoesNotExist tests that resume returns an error for non-existent branches.
 func TestResume_BranchDoesNotExist(t *testing.T) {
 	t.Parallel()
-	env := NewFeatureBranchEnv(t, strategy.StrategyNameAutoCommit)
+	env := NewFeatureBranchEnv(t)
 
 	// Try to resume a non-existent branch
 	output, err := env.RunResume("nonexistent-branch")
@@ -188,7 +183,7 @@ func TestResume_BranchDoesNotExist(t *testing.T) {
 // TestResume_UncommittedChanges tests that resume fails when there are uncommitted changes.
 func TestResume_UncommittedChanges(t *testing.T) {
 	t.Parallel()
-	env := NewFeatureBranchEnv(t, strategy.StrategyNameAutoCommit)
+	env := NewFeatureBranchEnv(t)
 
 	// Create another branch
 	env.GitCheckoutNewBranch("feature/target")
@@ -220,7 +215,7 @@ func TestResume_UncommittedChanges(t *testing.T) {
 // with the checkpoint's version. This ensures consistency when resuming from a different device.
 func TestResume_SessionLogAlreadyExists(t *testing.T) {
 	t.Parallel()
-	env := NewFeatureBranchEnv(t, strategy.StrategyNameAutoCommit)
+	env := NewFeatureBranchEnv(t)
 
 	// Create a session
 	session := env.NewSession()
@@ -238,6 +233,9 @@ func TestResume_SessionLogAlreadyExists(t *testing.T) {
 	if err := env.SimulateStop(session.ID, session.TranscriptPath); err != nil {
 		t.Fatalf("SimulateStop failed: %v", err)
 	}
+
+	// Commit the session's changes (manual-commit requires user to commit)
+	env.GitCommitWithShadowHooks("Create hello method", "hello.rb")
 
 	featureBranch := env.GetCurrentBranch()
 
@@ -284,7 +282,7 @@ func TestResume_SessionLogAlreadyExists(t *testing.T) {
 // ensuring it uses the session from the last commit.
 func TestResume_MultipleSessionsOnBranch(t *testing.T) {
 	t.Parallel()
-	env := NewFeatureBranchEnv(t, strategy.StrategyNameAutoCommit)
+	env := NewFeatureBranchEnv(t)
 
 	// Create first session
 	session1 := env.NewSession()
@@ -320,6 +318,9 @@ func TestResume_MultipleSessionsOnBranch(t *testing.T) {
 		t.Fatalf("SimulateStop session2 failed: %v", err)
 	}
 
+	// Commit the sessions' changes (manual-commit requires user to commit)
+	env.GitCommitWithShadowHooks("Update to version 2", "file.txt")
+
 	featureBranch := env.GetCurrentBranch()
 
 	// Switch to main
@@ -331,8 +332,8 @@ func TestResume_MultipleSessionsOnBranch(t *testing.T) {
 		t.Fatalf("resume failed: %v\nOutput: %s", err, output)
 	}
 
-	// Should show session info (from the most recent session)
-	if !strings.Contains(output, "Session:") {
+	// Should show session info (multi-session output says "Restored N sessions")
+	if !strings.Contains(output, "Restored 2 sessions") && !strings.Contains(output, "Session:") {
 		t.Errorf("output should contain session info, got: %s", output)
 	}
 
@@ -348,7 +349,7 @@ func TestResume_MultipleSessionsOnBranch(t *testing.T) {
 // This can happen if the metadata branch was corrupted or reset.
 func TestResume_CheckpointWithoutMetadata(t *testing.T) {
 	t.Parallel()
-	env := NewFeatureBranchEnv(t, strategy.StrategyNameAutoCommit)
+	env := NewFeatureBranchEnv(t)
 
 	// First create a real session so the entire/checkpoints/v1 branch exists
 	session := env.NewSession()
@@ -364,6 +365,9 @@ func TestResume_CheckpointWithoutMetadata(t *testing.T) {
 	if err := env.SimulateStop(session.ID, session.TranscriptPath); err != nil {
 		t.Fatalf("SimulateStop failed: %v", err)
 	}
+
+	// Commit the session's changes (manual-commit requires user to commit)
+	env.GitCommitWithShadowHooks("Create real file", "real.txt")
 
 	// Create a new branch for the orphan checkpoint test
 	env.GitCheckoutNewBranch("feature/orphan-checkpoint")
@@ -404,7 +408,7 @@ func TestResume_CheckpointWithoutMetadata(t *testing.T) {
 // Since the only "newer" commits are merge commits, no confirmation should be required.
 func TestResume_AfterMergingMain(t *testing.T) {
 	t.Parallel()
-	env := NewFeatureBranchEnv(t, strategy.StrategyNameAutoCommit)
+	env := NewFeatureBranchEnv(t)
 
 	// Create a session on the feature branch
 	session := env.NewSession()
@@ -422,6 +426,9 @@ func TestResume_AfterMergingMain(t *testing.T) {
 	if err := env.SimulateStop(session.ID, session.TranscriptPath); err != nil {
 		t.Fatalf("SimulateStop failed: %v", err)
 	}
+
+	// Commit the session's changes (manual-commit requires user to commit)
+	env.GitCommitWithShadowHooks("Create a hello script", "hello.rb")
 
 	// Remember the feature branch name
 	featureBranch := env.GetCurrentBranch()
@@ -580,7 +587,7 @@ func (env *TestEnv) GitCheckoutBranch(branchName string) {
 // and does NOT overwrite the local log. This ensures safe behavior in CI environments.
 func TestResume_LocalLogNewerTimestamp_RequiresForce(t *testing.T) {
 	t.Parallel()
-	env := NewFeatureBranchEnv(t, strategy.StrategyNameAutoCommit)
+	env := NewFeatureBranchEnv(t)
 
 	// Create a session with a specific timestamp
 	session := env.NewSession()
@@ -598,6 +605,9 @@ func TestResume_LocalLogNewerTimestamp_RequiresForce(t *testing.T) {
 	if err := env.SimulateStop(session.ID, session.TranscriptPath); err != nil {
 		t.Fatalf("SimulateStop failed: %v", err)
 	}
+
+	// Commit the session's changes (manual-commit requires user to commit)
+	env.GitCommitWithShadowHooks("Create hello method", "hello.rb")
 
 	featureBranch := env.GetCurrentBranch()
 
@@ -638,7 +648,7 @@ func TestResume_LocalLogNewerTimestamp_RequiresForce(t *testing.T) {
 // and overwrites the local log.
 func TestResume_LocalLogNewerTimestamp_ForceOverwrites(t *testing.T) {
 	t.Parallel()
-	env := NewFeatureBranchEnv(t, strategy.StrategyNameAutoCommit)
+	env := NewFeatureBranchEnv(t)
 
 	// Create a session with a specific timestamp
 	session := env.NewSession()
@@ -656,6 +666,9 @@ func TestResume_LocalLogNewerTimestamp_ForceOverwrites(t *testing.T) {
 	if err := env.SimulateStop(session.ID, session.TranscriptPath); err != nil {
 		t.Fatalf("SimulateStop failed: %v", err)
 	}
+
+	// Commit the session's changes (manual-commit requires user to commit)
+	env.GitCommitWithShadowHooks("Create hello method", "hello.rb")
 
 	featureBranch := env.GetCurrentBranch()
 
@@ -697,7 +710,7 @@ func TestResume_LocalLogNewerTimestamp_ForceOverwrites(t *testing.T) {
 // confirms the overwrite prompt interactively, the local log is overwritten.
 func TestResume_LocalLogNewerTimestamp_UserConfirmsOverwrite(t *testing.T) {
 	t.Parallel()
-	env := NewFeatureBranchEnv(t, strategy.StrategyNameAutoCommit)
+	env := NewFeatureBranchEnv(t)
 
 	// Create a session with a specific timestamp
 	session := env.NewSession()
@@ -715,6 +728,9 @@ func TestResume_LocalLogNewerTimestamp_UserConfirmsOverwrite(t *testing.T) {
 	if err := env.SimulateStop(session.ID, session.TranscriptPath); err != nil {
 		t.Fatalf("SimulateStop failed: %v", err)
 	}
+
+	// Commit the session's changes (manual-commit requires user to commit)
+	env.GitCommitWithShadowHooks("Create hello method", "hello.rb")
 
 	featureBranch := env.GetCurrentBranch()
 
@@ -761,7 +777,7 @@ func TestResume_LocalLogNewerTimestamp_UserConfirmsOverwrite(t *testing.T) {
 // declines the overwrite prompt interactively, the local log is preserved.
 func TestResume_LocalLogNewerTimestamp_UserDeclinesOverwrite(t *testing.T) {
 	t.Parallel()
-	env := NewFeatureBranchEnv(t, strategy.StrategyNameAutoCommit)
+	env := NewFeatureBranchEnv(t)
 
 	// Create a session with a specific timestamp
 	session := env.NewSession()
@@ -779,6 +795,9 @@ func TestResume_LocalLogNewerTimestamp_UserDeclinesOverwrite(t *testing.T) {
 	if err := env.SimulateStop(session.ID, session.TranscriptPath); err != nil {
 		t.Fatalf("SimulateStop failed: %v", err)
 	}
+
+	// Commit the session's changes (manual-commit requires user to commit)
+	env.GitCommitWithShadowHooks("Create hello method", "hello.rb")
 
 	featureBranch := env.GetCurrentBranch()
 
@@ -826,7 +845,7 @@ func TestResume_LocalLogNewerTimestamp_UserDeclinesOverwrite(t *testing.T) {
 // than local log, resume proceeds without requiring --force.
 func TestResume_CheckpointNewerTimestamp(t *testing.T) {
 	t.Parallel()
-	env := NewFeatureBranchEnv(t, strategy.StrategyNameAutoCommit)
+	env := NewFeatureBranchEnv(t)
 
 	// Create a session
 	session := env.NewSession()
@@ -844,6 +863,9 @@ func TestResume_CheckpointNewerTimestamp(t *testing.T) {
 	if err := env.SimulateStop(session.ID, session.TranscriptPath); err != nil {
 		t.Fatalf("SimulateStop failed: %v", err)
 	}
+
+	// Commit the session's changes (manual-commit requires user to commit)
+	env.GitCommitWithShadowHooks("Create hello method", "hello.rb")
 
 	featureBranch := env.GetCurrentBranch()
 
@@ -885,7 +907,7 @@ func TestResume_CheckpointNewerTimestamp(t *testing.T) {
 // where one session has a newer local log (conflict) and another doesn't (no conflict).
 func TestResume_MultiSessionMixedTimestamps(t *testing.T) {
 	t.Parallel()
-	env := NewFeatureBranchEnv(t, strategy.StrategyNameManualCommit)
+	env := NewFeatureBranchEnv(t)
 
 	// Create first session
 	session1 := env.NewSession()
@@ -992,7 +1014,7 @@ func TestResume_MultiSessionMixedTimestamps(t *testing.T) {
 // resume proceeds without requiring --force (treated as new).
 func TestResume_LocalLogNoTimestamp(t *testing.T) {
 	t.Parallel()
-	env := NewFeatureBranchEnv(t, strategy.StrategyNameAutoCommit)
+	env := NewFeatureBranchEnv(t)
 
 	// Create a session
 	session := env.NewSession()
@@ -1010,6 +1032,9 @@ func TestResume_LocalLogNoTimestamp(t *testing.T) {
 	if err := env.SimulateStop(session.ID, session.TranscriptPath); err != nil {
 		t.Fatalf("SimulateStop failed: %v", err)
 	}
+
+	// Commit the session's changes (manual-commit requires user to commit)
+	env.GitCommitWithShadowHooks("Create hello method", "hello.rb")
 
 	featureBranch := env.GetCurrentBranch()
 

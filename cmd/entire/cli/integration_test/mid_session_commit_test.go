@@ -25,7 +25,7 @@ import (
 func TestShadowStrategy_MidSessionCommit_FromTranscript(t *testing.T) {
 	t.Parallel()
 
-	env := NewFeatureBranchEnv(t, strategy.StrategyNameManualCommit)
+	env := NewFeatureBranchEnv(t)
 
 	session := env.NewSession()
 
@@ -108,7 +108,7 @@ func TestShadowStrategy_MidSessionCommit_FromTranscript(t *testing.T) {
 func TestShadowStrategy_MidSessionCommit_NoTrailerWithoutTranscriptPath(t *testing.T) {
 	t.Parallel()
 
-	env := NewFeatureBranchEnv(t, strategy.StrategyNameManualCommit)
+	env := NewFeatureBranchEnv(t)
 
 	session := env.NewSession()
 
@@ -139,7 +139,7 @@ func TestShadowStrategy_MidSessionCommit_NoTrailerWithoutTranscriptPath(t *testi
 func TestShadowStrategy_MidSessionCommit_NoTrailerForUnrelatedFile(t *testing.T) {
 	t.Parallel()
 
-	env := NewFeatureBranchEnv(t, strategy.StrategyNameManualCommit)
+	env := NewFeatureBranchEnv(t)
 
 	session := env.NewSession()
 
@@ -188,7 +188,7 @@ func TestShadowStrategy_MidSessionCommit_NoTrailerForUnrelatedFile(t *testing.T)
 func TestShadowStrategy_AgentCommit_AlwaysGetsTrailer(t *testing.T) {
 	t.Parallel()
 
-	env := NewFeatureBranchEnv(t, strategy.StrategyNameManualCommit)
+	env := NewFeatureBranchEnv(t)
 
 	session := env.NewSession()
 
@@ -221,7 +221,7 @@ func TestShadowStrategy_AgentCommit_AlwaysGetsTrailer(t *testing.T) {
 func TestShadowStrategy_MidSessionCommit_FilesTouchedFallback(t *testing.T) {
 	t.Parallel()
 
-	env := NewFeatureBranchEnv(t, strategy.StrategyNameManualCommit)
+	env := NewFeatureBranchEnv(t)
 
 	session := env.NewSession()
 

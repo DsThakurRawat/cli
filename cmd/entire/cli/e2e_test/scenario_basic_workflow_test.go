@@ -14,7 +14,7 @@ import (
 func TestE2E_BasicWorkflow(t *testing.T) {
 	t.Parallel()
 
-	env := NewFeatureBranchEnv(t, "manual-commit")
+	env := NewFeatureBranchEnv(t)
 
 	// 1. Agent creates a file
 	t.Log("Step 1: Running agent to create hello.go")
@@ -57,7 +57,7 @@ func TestE2E_BasicWorkflow(t *testing.T) {
 func TestE2E_MultipleChanges(t *testing.T) {
 	t.Parallel()
 
-	env := NewFeatureBranchEnv(t, "manual-commit")
+	env := NewFeatureBranchEnv(t)
 
 	// 1. First agent action: create hello.go
 	t.Log("Step 1: Creating first file")

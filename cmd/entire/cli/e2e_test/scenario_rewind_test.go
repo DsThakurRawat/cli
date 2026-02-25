@@ -13,7 +13,7 @@ import (
 func TestE2E_RewindToCheckpoint(t *testing.T) {
 	t.Parallel()
 
-	env := NewFeatureBranchEnv(t, "manual-commit")
+	env := NewFeatureBranchEnv(t)
 
 	// 1. Agent creates first file
 	t.Log("Step 1: Creating first file")
@@ -69,7 +69,7 @@ func TestE2E_RewindToCheckpoint(t *testing.T) {
 func TestE2E_RewindAfterCommit(t *testing.T) {
 	t.Parallel()
 
-	env := NewFeatureBranchEnv(t, "manual-commit")
+	env := NewFeatureBranchEnv(t)
 
 	// 1. Agent creates file
 	t.Log("Step 1: Creating file")
@@ -131,7 +131,7 @@ func TestE2E_RewindAfterCommit(t *testing.T) {
 func TestE2E_RewindMultipleFiles(t *testing.T) {
 	t.Parallel()
 
-	env := NewFeatureBranchEnv(t, "manual-commit")
+	env := NewFeatureBranchEnv(t)
 
 	// 1. Agent creates multiple files
 	t.Log("Step 1: Creating first file")

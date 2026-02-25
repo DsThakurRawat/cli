@@ -23,7 +23,7 @@ import (
 func TestE2E_Scenario3_MultipleGranularCommits(t *testing.T) {
 	t.Parallel()
 
-	env := NewFeatureBranchEnv(t, "manual-commit")
+	env := NewFeatureBranchEnv(t)
 
 	// Count commits before
 	commitsBefore := env.GetCommitCount()
@@ -123,7 +123,7 @@ Do each task in order, making the commit after each file creation.`
 func TestE2E_Scenario4_UserSplitsCommits(t *testing.T) {
 	t.Parallel()
 
-	env := NewFeatureBranchEnv(t, "manual-commit")
+	env := NewFeatureBranchEnv(t)
 
 	// Agent creates multiple files in one prompt
 	multiFilePrompt := `Create these files:
@@ -224,7 +224,7 @@ Create all four files, no other files or actions.`
 func TestE2E_Scenario5_PartialCommitStashNextPrompt(t *testing.T) {
 	t.Parallel()
 
-	env := NewFeatureBranchEnv(t, "manual-commit")
+	env := NewFeatureBranchEnv(t)
 
 	// Prompt 1: Agent creates files A, B, C
 	t.Log("Prompt 1: Creating files A, B, C")
@@ -321,7 +321,7 @@ Create both files, nothing else.`
 func TestE2E_Scenario6_StashSecondPromptUnstashCommitAll(t *testing.T) {
 	t.Parallel()
 
-	env := NewFeatureBranchEnv(t, "manual-commit")
+	env := NewFeatureBranchEnv(t)
 
 	// Prompt 1: Agent creates files A, B, C
 	t.Log("Prompt 1: Creating files A, B, C")
@@ -430,7 +430,7 @@ Create both files, nothing else.`
 func TestE2E_Scenario7_PartialStagingSimulated(t *testing.T) {
 	t.Parallel()
 
-	env := NewFeatureBranchEnv(t, "manual-commit")
+	env := NewFeatureBranchEnv(t)
 
 	// Create partial.go as an existing tracked file first.
 	// For MODIFIED files (vs NEW files), content-aware detection always
@@ -548,7 +548,7 @@ func Second() int {
 func TestE2E_ContentAwareOverlap_RevertAndReplace(t *testing.T) {
 	t.Parallel()
 
-	env := NewFeatureBranchEnv(t, "manual-commit")
+	env := NewFeatureBranchEnv(t)
 
 	// Agent creates a file
 	t.Log("Agent creating file with specific content")
@@ -624,7 +624,7 @@ func CompletelyDifferent() string {
 func TestE2E_Scenario1_BasicFlow(t *testing.T) {
 	t.Parallel()
 
-	env := NewFeatureBranchEnv(t, "manual-commit")
+	env := NewFeatureBranchEnv(t)
 
 	// 1. User submits prompt (triggers UserPromptSubmit hook → InitializeSession)
 	t.Log("Step 1: User submits prompt")
@@ -680,7 +680,7 @@ Create only this file.`
 func TestE2E_Scenario2_AgentCommitsDuringTurn(t *testing.T) {
 	t.Parallel()
 
-	env := NewFeatureBranchEnv(t, "manual-commit")
+	env := NewFeatureBranchEnv(t)
 
 	commitsBefore := env.GetCommitCount()
 
@@ -740,7 +740,7 @@ Create the file first, then run the git commands.`
 func TestE2E_ExistingFiles_ModifyAndCommit(t *testing.T) {
 	t.Parallel()
 
-	env := NewFeatureBranchEnv(t, "manual-commit")
+	env := NewFeatureBranchEnv(t)
 
 	// Create and commit an existing file first
 	env.WriteFile("config.go", `package main
@@ -782,7 +782,7 @@ Keep the existing content and just add the new key. Only modify this one file.`
 func TestE2E_ExistingFiles_StashModifications(t *testing.T) {
 	t.Parallel()
 
-	env := NewFeatureBranchEnv(t, "manual-commit")
+	env := NewFeatureBranchEnv(t)
 
 	// Create and commit two existing files
 	env.WriteFile("fileA.go", "package main\n\nfunc A() { /* original */ }\n")
@@ -842,7 +842,7 @@ Only modify these two files.`
 func TestE2E_ExistingFiles_SplitCommits(t *testing.T) {
 	t.Parallel()
 
-	env := NewFeatureBranchEnv(t, "manual-commit")
+	env := NewFeatureBranchEnv(t)
 
 	// Create and commit multiple existing files
 	env.WriteFile("model.go", "package main\n\ntype Model struct{}\n")
@@ -923,7 +923,7 @@ Only modify these three files.`
 func TestE2E_ExistingFiles_RevertModification(t *testing.T) {
 	t.Parallel()
 
-	env := NewFeatureBranchEnv(t, "manual-commit")
+	env := NewFeatureBranchEnv(t)
 
 	// Create and commit an existing file
 	originalContent := `package main
@@ -983,7 +983,7 @@ func UserAdd(x, y int) int {
 func TestE2E_ExistingFiles_MixedNewAndModified(t *testing.T) {
 	t.Parallel()
 
-	env := NewFeatureBranchEnv(t, "manual-commit")
+	env := NewFeatureBranchEnv(t)
 
 	// Create and commit an existing file
 	env.WriteFile("main.go", `package main
@@ -1034,7 +1034,7 @@ Complete all three tasks.`
 func TestE2E_EndedSession_UserCommitsAfterExit(t *testing.T) {
 	t.Parallel()
 
-	env := NewFeatureBranchEnv(t, "manual-commit")
+	env := NewFeatureBranchEnv(t)
 
 	// Agent creates files A, B, C — session ends when agent exits
 	prompt := `Create these files:
@@ -1096,7 +1096,7 @@ Create all three files, nothing else.`
 func TestE2E_DeletedFiles_CommitDeletion(t *testing.T) {
 	t.Parallel()
 
-	env := NewFeatureBranchEnv(t, "manual-commit")
+	env := NewFeatureBranchEnv(t)
 
 	// Pre-commit a file that will be deleted
 	env.WriteFile("to_delete.go", "package main\n\nfunc ToDelete() {}\n")
@@ -1158,7 +1158,7 @@ Do both tasks.`
 func TestE2E_AgentCommitsMidTurn_UserCommitsRemainder(t *testing.T) {
 	t.Parallel()
 
-	env := NewFeatureBranchEnv(t, "manual-commit")
+	env := NewFeatureBranchEnv(t)
 
 	commitsBefore := env.GetCommitCount()
 
@@ -1229,7 +1229,7 @@ Do all tasks in order. Create each file, then commit the first two, then create 
 func TestE2E_TrailerRemoval_SkipsCondensation(t *testing.T) {
 	t.Parallel()
 
-	env := NewFeatureBranchEnv(t, "manual-commit")
+	env := NewFeatureBranchEnv(t)
 
 	// Agent creates a file
 	prompt := `Create a file called trailer_test.go with content:
@@ -1265,7 +1265,7 @@ Create only this file.`
 func TestE2E_SessionDepleted_ManualEditNoCheckpoint(t *testing.T) {
 	t.Parallel()
 
-	env := NewFeatureBranchEnv(t, "manual-commit")
+	env := NewFeatureBranchEnv(t)
 
 	// Agent creates a file
 	prompt := `Create a file called depleted.go with content:

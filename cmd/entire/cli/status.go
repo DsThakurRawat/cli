@@ -16,6 +16,7 @@ import (
 	"github.com/entireio/cli/cmd/entire/cli/paths"
 	"github.com/entireio/cli/cmd/entire/cli/session"
 	"github.com/entireio/cli/cmd/entire/cli/settings"
+	"github.com/entireio/cli/cmd/entire/cli/strategy"
 	"github.com/entireio/cli/cmd/entire/cli/stringutil"
 
 	"github.com/spf13/cobra"
@@ -40,7 +41,7 @@ func newStatusCmd() *cobra.Command {
 
 func runStatus(w io.Writer, detailed bool) error {
 	// Check if we're in a git repository
-	if _, repoErr := paths.RepoRoot(); repoErr != nil {
+	if _, repoErr := paths.WorktreeRoot(); repoErr != nil {
 		fmt.Fprintln(w, "✕ not a git repository")
 		return nil //nolint:nilerr // Not being in a git repo is a valid status, not an error
 	}
@@ -85,8 +86,9 @@ func runStatus(w io.Writer, detailed bool) error {
 	}
 
 	fmt.Fprintln(w)
+	settings.WriteDeprecatedStrategyWarnings(w)
+	fmt.Fprintln(w)
 	fmt.Fprintln(w, formatSettingsStatusShort(s, sty))
-
 	if s.Enabled {
 		writeActiveSessions(w, sty)
 	}
@@ -101,6 +103,8 @@ func runStatusDetailed(w io.Writer, sty statusStyles, settingsPath, localSetting
 	if err != nil {
 		return fmt.Errorf("failed to load settings: %w", err)
 	}
+	fmt.Fprintln(w)
+	settings.WriteDeprecatedStrategyWarnings(w)
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, formatSettingsStatusShort(effectiveSettings, sty))
 	fmt.Fprintln(w) // blank line
@@ -131,12 +135,9 @@ func runStatusDetailed(w io.Writer, sty statusStyles, settingsPath, localSetting
 }
 
 // formatSettingsStatusShort formats a short settings status line.
-// Output format: "● Enabled · manual-commit · branch main" or "○ Disabled · auto-commit"
+// Output format: "● Enabled · manual-commit · branch main" or "○ Disabled"
 func formatSettingsStatusShort(s *EntireSettings, sty statusStyles) string {
-	displayName := s.Strategy
-	if dn, ok := strategyInternalToDisplay[s.Strategy]; ok {
-		displayName = dn
-	}
+	displayName := strategy.StrategyNameManualCommit
 
 	var b strings.Builder
 
@@ -154,7 +155,7 @@ func formatSettingsStatusShort(s *EntireSettings, sty statusStyles) string {
 	b.WriteString(displayName)
 
 	// Resolve branch from repo root
-	if repoRoot, err := paths.RepoRoot(); err == nil {
+	if repoRoot, err := paths.WorktreeRoot(); err == nil {
 		if branch := resolveWorktreeBranch(repoRoot); branch != "" {
 			b.WriteString(sty.render(sty.dim, " · "))
 			b.WriteString("branch ")
@@ -166,12 +167,9 @@ func formatSettingsStatusShort(s *EntireSettings, sty statusStyles) string {
 }
 
 // formatSettingsStatus formats a settings status line with source prefix.
-// Output format: "Project · enabled · manual-commit" or "Local · disabled · auto-commit"
+// Output format: "Project · enabled · manual-commit" or "Local · disabled"
 func formatSettingsStatus(prefix string, s *EntireSettings, sty statusStyles) string {
-	displayName := s.Strategy
-	if dn, ok := strategyInternalToDisplay[s.Strategy]; ok {
-		displayName = dn
-	}
+	displayName := strategy.StrategyNameManualCommit
 
 	var b strings.Builder
 	b.WriteString(sty.render(sty.bold, prefix))

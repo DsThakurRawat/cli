@@ -209,74 +209,6 @@ func TestResumeFromCurrentBranch_NoCheckpoint(t *testing.T) {
 	}
 }
 
-func TestResumeFromCurrentBranch_WithEntireCheckpointTrailer(t *testing.T) {
-	tmpDir := t.TempDir()
-	t.Chdir(tmpDir)
-
-	// Set up a fake Claude project directory for testing
-	claudeDir := filepath.Join(tmpDir, "claude-projects")
-	t.Setenv("ENTIRE_TEST_CLAUDE_PROJECT_DIR", claudeDir)
-
-	_, _, _ = setupResumeTestRepo(t, tmpDir, false)
-
-	// Set up the auto-commit strategy and create checkpoint metadata on entire/checkpoints/v1 branch
-	strat := strategy.NewAutoCommitStrategy()
-	if err := strat.EnsureSetup(); err != nil {
-		t.Fatalf("Failed to ensure setup: %v", err)
-	}
-
-	// Create metadata directory with session log (required for SaveStep)
-	sessionID := "4f8c1176-7025-4530-a860-c6fc4c63a150"
-	sessionLogContent := `{"type":"test"}`
-	metadataDir := filepath.Join(tmpDir, paths.EntireMetadataDir, sessionID)
-	if err := os.MkdirAll(metadataDir, 0o755); err != nil {
-		t.Fatalf("Failed to create metadata dir: %v", err)
-	}
-	logFile := filepath.Join(metadataDir, paths.TranscriptFileName)
-	if err := os.WriteFile(logFile, []byte(sessionLogContent), 0o644); err != nil {
-		t.Fatalf("Failed to write log file: %v", err)
-	}
-
-	// Create a file change to commit
-	testFile := filepath.Join(tmpDir, "test.txt")
-	if err := os.WriteFile(testFile, []byte("metadata content"), 0o644); err != nil {
-		t.Fatalf("Failed to write test file: %v", err)
-	}
-
-	// Use SaveStep to create a commit with checkpoint metadata on entire/checkpoints/v1 branch
-	ctx := strategy.StepContext{
-		CommitMessage:  "test commit with checkpoint",
-		MetadataDir:    filepath.Join(paths.EntireMetadataDir, sessionID),
-		MetadataDirAbs: metadataDir,
-		NewFiles:       []string{},
-		ModifiedFiles:  []string{"test.txt"},
-		DeletedFiles:   []string{},
-		AuthorName:     "Test User",
-		AuthorEmail:    "test@example.com",
-	}
-	if err := strat.SaveStep(ctx); err != nil {
-		t.Fatalf("Failed to save changes: %v", err)
-	}
-
-	// Run resumeFromCurrentBranch
-	err := resumeFromCurrentBranch("master", false)
-	if err != nil {
-		t.Errorf("resumeFromCurrentBranch() returned error: %v", err)
-	}
-
-	// Verify that the session log was written to the Claude project directory
-	expectedLogPath := filepath.Join(claudeDir, sessionID+".jsonl")
-
-	content, err := os.ReadFile(expectedLogPath)
-	if err != nil {
-		t.Fatalf("Failed to read session log from Claude project dir: %v (expected the log to be restored)", err)
-	}
-
-	if string(content) != sessionLogContent {
-		t.Errorf("Session log content mismatch.\nGot: %s\nWant: %s", string(content), sessionLogContent)
-	}
-}
-
 func TestRunResume_AlreadyOnBranch(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Chdir(tmpDir)
@@ -361,8 +293,7 @@ func createCheckpointOnMetadataBranch(t *testing.T, repo *git.Repository, sessio
 	metadataJSON := fmt.Sprintf(`{
   "checkpoint_id": %q,
   "session_id": %q,
-  "created_at": "2025-01-01T00:00:00Z",
-  "strategy": "auto-commit"
+  "created_at": "2025-01-01T00:00:00Z"
 }`, checkpointID.String(), sessionID)
 
 	// Create blob for metadata

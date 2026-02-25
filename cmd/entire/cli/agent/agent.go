@@ -9,7 +9,7 @@ import (
 )
 
 // Agent defines the interface for interacting with a coding agent.
-// Each agent implementation (Claude Code, Cursor, Aider, etc.) converts its
+// Each agent implementation (Claude Code, Cursor IDE, Aider, etc.) converts its
 // native format to the normalized types defined in this package.
 //
 // The interface is organized into three groups:
@@ -76,7 +76,7 @@ type Agent interface {
 }
 
 // HookSupport is implemented by agents with lifecycle hooks.
-// This optional interface allows agents like Claude Code and Cursor to
+// This optional interface allows agents like Claude Code and Cursor IDE to
 // install and manage hooks that notify Entire of agent events.
 //
 // The interface is organized into two groups:

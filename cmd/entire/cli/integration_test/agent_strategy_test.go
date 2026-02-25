@@ -11,7 +11,6 @@ import (
 	"github.com/entireio/cli/cmd/entire/cli/agent"
 	"github.com/entireio/cli/cmd/entire/cli/agent/claudecode"
 	"github.com/entireio/cli/cmd/entire/cli/paths"
-	"github.com/entireio/cli/cmd/entire/cli/strategy"
 )
 
 // TestAgentStrategyComposition verifies that agent and strategy work together correctly.
@@ -19,96 +18,87 @@ import (
 func TestAgentStrategyComposition(t *testing.T) {
 	t.Parallel()
 
-	RunForAllStrategies(t, func(t *testing.T, env *TestEnv, strategyName string) {
-		// Get agent and strategy
-		ag, err := agent.Get("claude-code")
-		if err != nil {
-			t.Fatalf("Get(claude-code) error = %v", err)
-		}
+	env := NewFeatureBranchEnv(t)
+	// Get agent and strategy
+	ag, err := agent.Get("claude-code")
+	if err != nil {
+		t.Fatalf("Get(claude-code) error = %v", err)
+	}
 
-		_, err = strategy.Get(strategyName)
-		if err != nil {
-			t.Fatalf("Get(%s) error = %v", strategyName, err)
-		}
+	// Create a session with the agent
+	session := env.NewSession()
 
-		// Create a session with the agent
-		session := env.NewSession()
+	// Create test file
+	env.WriteFile("feature.go", "package main\n// new feature")
 
-		// Create test file
-		env.WriteFile("feature.go", "package main\n// new feature")
-
-		// Create transcript via agent's expected format
-		transcriptPath := session.CreateTranscript("Add a feature", []FileChange{
-			{Path: "feature.go", Content: "package main\n// new feature"},
-		})
-
-		// Read session via agent interface
-		agentSession, err := ag.ReadSession(&agent.HookInput{
-			SessionID:  session.ID,
-			SessionRef: transcriptPath,
-		})
-		if err != nil {
-			t.Fatalf("ReadSession() error = %v", err)
-		}
-
-		// Verify agent computed modified files
-		if len(agentSession.ModifiedFiles) == 0 {
-			t.Error("agent.ReadSession() should compute ModifiedFiles")
-		}
-
-		// Simulate session flow: UserPromptSubmit → make changes → Stop
-		if err := env.SimulateUserPromptSubmit(session.ID); err != nil {
-			t.Fatalf("SimulateUserPromptSubmit error = %v", err)
-		}
-
-		if err := env.SimulateStop(session.ID, transcriptPath); err != nil {
-			t.Fatalf("SimulateStop error = %v", err)
-		}
-
-		// Verify checkpoint was created
-		points := env.GetRewindPoints()
-		if len(points) == 0 {
-			t.Fatal("expected at least 1 rewind point after Stop hook")
-		}
+	// Create transcript via agent's expected format
+	transcriptPath := session.CreateTranscript("Add a feature", []FileChange{
+		{Path: "feature.go", Content: "package main\n// new feature"},
 	})
+
+	// Read session via agent interface
+	agentSession, err := ag.ReadSession(&agent.HookInput{
+		SessionID:  session.ID,
+		SessionRef: transcriptPath,
+	})
+	if err != nil {
+		t.Fatalf("ReadSession() error = %v", err)
+	}
+
+	// Verify agent computed modified files
+	if len(agentSession.ModifiedFiles) == 0 {
+		t.Error("agent.ReadSession() should compute ModifiedFiles")
+	}
+
+	// Simulate session flow: UserPromptSubmit → make changes → Stop
+	if err := env.SimulateUserPromptSubmit(session.ID); err != nil {
+		t.Fatalf("SimulateUserPromptSubmit error = %v", err)
+	}
+
+	if err := env.SimulateStop(session.ID, transcriptPath); err != nil {
+		t.Fatalf("SimulateStop error = %v", err)
+	}
+
+	// Verify checkpoint was created
+	points := env.GetRewindPoints()
+	if len(points) == 0 {
+		t.Fatal("expected at least 1 rewind point after Stop hook")
+	}
 }
 
 // TestAgentSessionIDTransformation verifies session ID transformation across agent/strategy boundary.
 func TestAgentSessionIDTransformation(t *testing.T) {
 	t.Parallel()
 
-	RunForAllStrategies(t, func(t *testing.T, env *TestEnv, strategyName string) {
-		// Create session and simulate full flow
-		session := env.NewSession()
-		env.WriteFile("test.go", "package main")
-		transcriptPath := session.CreateTranscript("Test", []FileChange{
-			{Path: "test.go", Content: "package main"},
-		})
-
-		// Simulate hooks
-		env.SimulateUserPromptSubmit(session.ID)
-		env.SimulateStop(session.ID, transcriptPath)
-
-		// Get rewind points and verify we can rewind
-		points := env.GetRewindPoints()
-		if len(points) == 0 {
-			t.Skip("no rewind points created")
-		}
-
-		// Rewind should work
-		if err := env.Rewind(points[0].ID); err != nil {
-			t.Errorf("Rewind() error = %v", err)
-		}
+	env := NewFeatureBranchEnv(t)
+	// Create session and simulate full flow
+	session := env.NewSession()
+	env.WriteFile("test.go", "package main")
+	transcriptPath := session.CreateTranscript("Test", []FileChange{
+		{Path: "test.go", Content: "package main"},
 	})
+
+	// Simulate hooks
+	env.SimulateUserPromptSubmit(session.ID)
+	env.SimulateStop(session.ID, transcriptPath)
+
+	// Get rewind points and verify we can rewind
+	points := env.GetRewindPoints()
+	if len(points) == 0 {
+		t.Skip("no rewind points created")
+	}
+
+	// Rewind should work
+	if err := env.Rewind(points[0].ID); err != nil {
+		t.Errorf("Rewind() error = %v", err)
+	}
 }
 
 // TestAgentTranscriptRestoration verifies transcript is restored correctly on rewind.
 func TestAgentTranscriptRestoration(t *testing.T) {
 	t.Parallel()
 
-	// Only test with manual-commit strategy as it has full transcript restoration
-	env := NewFeatureBranchEnv(t, strategy.StrategyNameManualCommit)
-
+	env := NewFeatureBranchEnv(t)
 	ag, _ := agent.Get("claude-code")
 
 	// Create first session

@@ -21,35 +21,6 @@ import (
 
 const testTrailerCheckpointID id.CheckpointID = "a1b2c3d4e5f6"
 
-func TestShadowStrategy_Registration(t *testing.T) {
-	s, err := Get(StrategyNameManualCommit)
-	if err != nil {
-		t.Fatalf("Get(%q) error = %v", StrategyNameManualCommit, err)
-	}
-	if s == nil {
-		t.Fatal("Get() returned nil strategy")
-	}
-	if s.Name() != StrategyNameManualCommit {
-		t.Errorf("Name() = %q, want %q", s.Name(), StrategyNameManualCommit)
-	}
-}
-
-func TestShadowStrategy_DirectInstantiation(t *testing.T) {
-	// NewShadowStrategy delegates to NewManualCommitStrategy, so returns manual-commit name.
-	s := NewManualCommitStrategy()
-	if s.Name() != StrategyNameManualCommit {
-		t.Errorf("Name() = %q, want %q", s.Name(), StrategyNameManualCommit)
-	}
-}
-
-func TestShadowStrategy_Description(t *testing.T) {
-	s := NewManualCommitStrategy()
-	desc := s.Description()
-	if desc == "" {
-		t.Error("Description() returned empty string")
-	}
-}
-
 func TestShadowStrategy_ValidateRepository(t *testing.T) {
 	dir := t.TempDir()
 	_, err := git.PlainInit(dir, false)

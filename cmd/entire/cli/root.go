@@ -58,7 +58,7 @@ func NewRootCmd() *cobra.Command {
 				// Use detached tracking (non-blocking)
 				installedAgents := GetAgentsWithHooksInstalled()
 				agentStr := JoinAgentNames(installedAgents)
-				telemetry.TrackCommandDetached(cmd, settings.Strategy, agentStr, settings.Enabled, buildinfo.Version)
+				telemetry.TrackCommandDetached(cmd, agentStr, settings.Enabled, buildinfo.Version)
 			}
 
 			// Version check and notification (synchronous with 2s timeout)
@@ -81,7 +81,6 @@ func NewRootCmd() *cobra.Command {
 	cmd.AddCommand(newHooksCmd())
 	cmd.AddCommand(newVersionCmd())
 	cmd.AddCommand(newExplainCmd())
-	cmd.AddCommand(newDebugCmd())
 	cmd.AddCommand(newDoctorCmd())
 	cmd.AddCommand(newTrailCmd())
 	cmd.AddCommand(newSendAnalyticsCmd())

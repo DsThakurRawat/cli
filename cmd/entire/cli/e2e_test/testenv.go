@@ -67,7 +67,7 @@ func NewTestEnv(t *testing.T) *TestEnv {
 // NewFeatureBranchEnv creates an E2E test environment ready for testing.
 // It initializes the repo, creates an initial commit on main,
 // checks out a feature branch, and sets up agent hooks.
-func NewFeatureBranchEnv(t *testing.T, strategyName string) *TestEnv {
+func NewFeatureBranchEnv(t *testing.T) *TestEnv {
 	t.Helper()
 
 	env := NewTestEnv(t)
@@ -105,7 +105,7 @@ func NewFeatureBranchEnv(t *testing.T, strategyName string) *TestEnv {
 
 	// Use `entire enable` to set up everything (hooks, settings, etc.)
 	// This sets up .entire/settings.json and .claude/settings.json with hooks
-	env.RunEntireEnable(strategyName)
+	env.RunEntireEnable()
 
 	// Commit all files created by `entire enable` so they survive git stash -u operations.
 	// Without this, stash operations would stash away the hooks config and entire settings,
@@ -119,13 +119,12 @@ func NewFeatureBranchEnv(t *testing.T, strategyName string) *TestEnv {
 
 // RunEntireEnable runs `entire enable` to set up the project with hooks.
 // Uses the configured defaultAgent (from E2E_AGENT env var or "claude-code").
-func (env *TestEnv) RunEntireEnable(strategyName string) {
+func (env *TestEnv) RunEntireEnable() {
 	env.T.Helper()
 
 	args := []string{
 		"enable",
 		"--agent", defaultAgent,
-		"--strategy", strategyName,
 		"--telemetry=false",
 		"--force", // Force reinstall hooks in case they exist
 	}

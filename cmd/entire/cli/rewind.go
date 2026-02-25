@@ -546,12 +546,7 @@ func handleLogsOnlyRewindNonInteractive(start strategy.Strategy, point strategy.
 		slog.String("session_id", point.SessionID),
 	)
 
-	restorer, ok := start.(strategy.LogsOnlyRestorer)
-	if !ok {
-		return errors.New("strategy does not support logs-only restoration")
-	}
-
-	sessions, err := restorer.RestoreLogsOnly(point, true) // force=true for explicit rewind
+	sessions, err := start.RestoreLogsOnly(point, true) // force=true for explicit rewind
 	if err != nil {
 		logging.Error(ctx, "logs-only rewind failed",
 			slog.String("checkpoint_id", point.ID),
@@ -589,11 +584,6 @@ func handleLogsOnlyResetNonInteractive(start strategy.Strategy, point strategy.R
 		slog.String("session_id", point.SessionID),
 	)
 
-	restorer, ok := start.(strategy.LogsOnlyRestorer)
-	if !ok {
-		return errors.New("strategy does not support logs-only restoration")
-	}
-
 	// Get current HEAD before reset (for recovery message)
 	currentHead, headErr := getCurrentHeadHash()
 	if headErr != nil {
@@ -601,7 +591,7 @@ func handleLogsOnlyResetNonInteractive(start strategy.Strategy, point strategy.R
 	}
 
 	// Restore logs first
-	sessions, err := restorer.RestoreLogsOnly(point, true) // force=true for explicit rewind
+	sessions, err := start.RestoreLogsOnly(point, true) // force=true for explicit rewind
 	if err != nil {
 		logging.Error(ctx, "logs-only reset failed during log restoration",
 			slog.String("checkpoint_id", point.ID),
@@ -838,14 +828,8 @@ func handleLogsOnlyRestore(start strategy.Strategy, point strategy.RewindPoint) 
 		slog.String("session_id", point.SessionID),
 	)
 
-	// Check if strategy supports logs-only restoration
-	restorer, ok := start.(strategy.LogsOnlyRestorer)
-	if !ok {
-		return errors.New("strategy does not support logs-only restoration")
-	}
-
 	// Restore logs
-	sessions, err := restorer.RestoreLogsOnly(point, true) // force=true for explicit rewind
+	sessions, err := start.RestoreLogsOnly(point, true) // force=true for explicit rewind
 	if err != nil {
 		logging.Error(ctx, "logs-only restore failed",
 			slog.String("checkpoint_id", point.ID),
@@ -881,13 +865,7 @@ func handleLogsOnlyCheckout(start strategy.Strategy, point strategy.RewindPoint,
 		slog.String("session_id", point.SessionID),
 	)
 
-	// First, restore the logs
-	restorer, ok := start.(strategy.LogsOnlyRestorer)
-	if !ok {
-		return errors.New("strategy does not support logs-only restoration")
-	}
-
-	sessions, err := restorer.RestoreLogsOnly(point, true) // force=true for explicit rewind
+	sessions, err := start.RestoreLogsOnly(point, true) // force=true for explicit rewind
 	if err != nil {
 		logging.Error(ctx, "logs-only checkout failed during log restoration",
 			slog.String("checkpoint_id", point.ID),
@@ -952,13 +930,7 @@ func handleLogsOnlyReset(start strategy.Strategy, point strategy.RewindPoint, sh
 		slog.String("session_id", point.SessionID),
 	)
 
-	// First, restore the logs
-	restorer, ok := start.(strategy.LogsOnlyRestorer)
-	if !ok {
-		return errors.New("strategy does not support logs-only restoration")
-	}
-
-	sessions, restoreErr := restorer.RestoreLogsOnly(point, true) // force=true for explicit rewind
+	sessions, restoreErr := start.RestoreLogsOnly(point, true) // force=true for explicit rewind
 	if restoreErr != nil {
 		logging.Error(ctx, "logs-only reset failed during log restoration",
 			slog.String("checkpoint_id", point.ID),

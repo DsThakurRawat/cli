@@ -7,8 +7,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"github.com/entireio/cli/cmd/entire/cli/strategy"
 )
 
 // TestShadow_UntrackedFilePreservation tests that untracked files present at session start
@@ -44,7 +42,7 @@ func TestShadow_UntrackedFilePreservation(t *testing.T) {
 	env.WriteFile(".env.local", "DEBUG=true")
 
 	// Initialize Entire AFTER creating untracked files
-	env.InitEntire(strategy.StrategyNameManualCommit)
+	env.InitEntire()
 
 	initialHead := env.GetHeadHash()
 	t.Logf("Initial HEAD on feature/work: %s", initialHead[:7])
@@ -234,7 +232,7 @@ func TestShadow_UntrackedFilesAcrossMultipleSessions(t *testing.T) {
 	env.GitCommit("Initial commit")
 
 	env.GitCheckoutNewBranch("feature/multi-session")
-	env.InitEntire(strategy.StrategyNameManualCommit)
+	env.InitEntire()
 
 	_ = env.GetHeadHash() // Get initial head but we'll check new head later
 
@@ -360,7 +358,7 @@ func TestShadow_GitignoredFilesExcludedFromSessionState(t *testing.T) {
 	env.WriteFile("notes.txt", "my notes")
 
 	// Initialize Entire and start session
-	env.InitEntire(strategy.StrategyNameManualCommit)
+	env.InitEntire()
 
 	session := env.NewSession()
 	if err := env.SimulateUserPromptSubmit(session.ID); err != nil {
@@ -440,7 +438,7 @@ func TestShadow_GitignoredFilesPreservedDuringRewind(t *testing.T) {
 	// Create untracked (not ignored) file before session
 	env.WriteFile("config.yaml", "key: value")
 
-	env.InitEntire(strategy.StrategyNameManualCommit)
+	env.InitEntire()
 
 	initialHead := env.GetHeadHash()
 

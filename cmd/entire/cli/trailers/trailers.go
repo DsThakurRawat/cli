@@ -46,7 +46,7 @@ const (
 	EphemeralBranchTrailerKey = "Ephemeral-branch"
 
 	// AgentTrailerKey identifies the agent that created a checkpoint.
-	// Format: human-readable agent name e.g. "Claude Code", "Cursor"
+	// Format: human-readable agent name e.g. "Claude Code", "Cursor IDE"
 	AgentTrailerKey = "Entire-Agent"
 )
 

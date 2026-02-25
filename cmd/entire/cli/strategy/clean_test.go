@@ -312,7 +312,7 @@ func TestDeleteShadowBranches_Empty(t *testing.T) {
 // its first checkpoint yet would be incorrectly marked as orphaned because it has:
 // - A session state file
 // - No checkpoints on entire/checkpoints/v1
-// - No shadow branch (if using auto-commit strategy, or before first checkpoint)
+// - No shadow branch before first checkpoint
 //
 // This test should FAIL with the current implementation, demonstrating the bug.
 func TestListOrphanedSessionStates_RecentSessionNotOrphaned(t *testing.T) {

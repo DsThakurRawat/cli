@@ -113,7 +113,7 @@ type State struct {
 	// sessions that have been condensed at least once. Cleared on new prompt.
 	LastCheckpointID id.CheckpointID `json:"last_checkpoint_id,omitempty"`
 
-	// AgentType identifies the agent that created this session (e.g., "Claude Code", "Gemini CLI", "Cursor")
+	// AgentType identifies the agent that created this session (e.g., "Claude Code", "Gemini CLI", "Cursor IDE")
 	AgentType agent.AgentType `json:"agent_type,omitempty"`
 
 	// Token usage tracking (accumulated across all checkpoints in this session)
@@ -384,7 +384,7 @@ func (s *StateStore) stateFilePath(sessionID string) string {
 }
 
 // gitCommonDirCache caches the git common dir to avoid repeated subprocess calls.
-// Keyed by working directory to handle directory changes (same pattern as paths.RepoRoot).
+// Keyed by working directory to handle directory changes (same pattern as paths.WorktreeRoot).
 var (
 	gitCommonDirMu       sync.RWMutex
 	gitCommonDirCache    string

@@ -29,6 +29,8 @@ import (
 const (
 	branchMain   = "main"
 	branchMaster = "master"
+	// Strategy name constants
+	StrategyNameManualCommit = "manual-commit"
 )
 
 // errStop is a sentinel error used to break out of git log iteration.
@@ -44,6 +46,30 @@ var errStop = errors.New("stop iteration")
 func IsEmptyRepository(repo *git.Repository) bool {
 	_, err := repo.Head()
 	return errors.Is(err, plumbing.ErrReferenceNotFound)
+}
+
+// EnsureSetup ensures the strategy is properly set up.
+func EnsureSetup() error {
+	if err := EnsureEntireGitignore(); err != nil {
+		return err
+	}
+
+	// Ensure the entire/checkpoints/v1 orphan branch exists for permanent session storage
+	repo, err := OpenRepository()
+	if err != nil {
+		return fmt.Errorf("failed to open git repository: %w", err)
+	}
+	if err := EnsureMetadataBranch(repo); err != nil {
+		return fmt.Errorf("failed to ensure metadata branch: %w", err)
+	}
+
+	// Install generic hooks (they delegate to strategy at runtime)
+	if !IsGitHookInstalled() {
+		if _, err := InstallGitHook(true, isLocalDev()); err != nil {
+			return fmt.Errorf("failed to install git hooks: %w", err)
+		}
+	}
+	return nil
 }
 
 // IsAncestorOf checks if commit is an ancestor of (or equal to) target.
@@ -79,7 +105,6 @@ func IsAncestorOf(repo *git.Repository, commit, target plumbing.Hash) bool {
 
 // ListCheckpoints returns all checkpoints from the entire/checkpoints/v1 branch.
 // Scans sharded paths: <id[:2]>/<id[2:]>/ directories containing metadata.json.
-// Used by both manual-commit and auto-commit strategies.
 func ListCheckpoints() ([]CheckpointInfo, error) {
 	repo, err := OpenRepository()
 	if err != nil {
@@ -292,7 +317,7 @@ func EnsureMetadataBranch(repo *git.Repository) error {
 		TreeHash:  emptyTreeHash,
 		Author:    sig,
 		Committer: sig,
-		Message:   "Initialize metadata branch\n\nThis branch stores session metadata for the auto-commit strategy.\n",
+		Message:   "Initialize metadata branch\n\nThis branch stores session metadata.\n",
 	}
 	// Note: No ParentHashes - this is an orphan commit
 
@@ -558,7 +583,7 @@ func GetRemoteMetadataBranchTree(repo *git.Repository) (*object.Tree, error) {
 // The function first uses 'git rev-parse --show-toplevel' to find the repository
 // root, which works correctly even when called from a subdirectory within the repo.
 func OpenRepository() (*git.Repository, error) {
-	repoRoot, err := paths.RepoRoot()
+	repoRoot, err := paths.WorktreeRoot()
 	if err != nil {
 		// Fallback to current directory if git command fails
 		// (e.g., if git is not installed or we're not in a repo)
@@ -580,7 +605,7 @@ func OpenRepository() (*git.Repository, error) {
 // This function works correctly from any subdirectory within the repository.
 func IsInsideWorktree() bool {
 	// First find the repository root
-	repoRoot, err := GetWorktreePath()
+	repoRoot, err := paths.WorktreeRoot()
 	if err != nil {
 		return false
 	}
@@ -603,7 +628,7 @@ func IsInsideWorktree() bool {
 // See: https://git-scm.com/docs/gitrepository-layout
 func GetMainRepoRoot() (string, error) {
 	// First find the worktree/repo root
-	repoRoot, err := GetWorktreePath()
+	repoRoot, err := paths.WorktreeRoot()
 	if err != nil {
 		return "", fmt.Errorf("failed to get worktree path: %w", err)
 	}
@@ -652,18 +677,6 @@ func GetGitCommonDir() (string, error) {
 	}
 
 	return filepath.Clean(commonDir), nil
-}
-
-// GetWorktreePath returns the absolute path to the current worktree root.
-// This is the working directory path, not the git directory.
-func GetWorktreePath() (string, error) {
-	ctx := context.Background()
-	cmd := exec.CommandContext(ctx, "git", "rev-parse", "--show-toplevel")
-	output, err := cmd.Output()
-	if err != nil {
-		return "", fmt.Errorf("failed to get worktree path: %w", err)
-	}
-	return strings.TrimSpace(string(output)), nil
 }
 
 // EnsureEntireGitignore ensures all required entries are in .entire/.gitignore
@@ -720,73 +733,9 @@ func EnsureEntireGitignore() error {
 	return nil
 }
 
-// checkCanRewind checks if working directory is clean enough for rewind.
-// Returns (canRewind, reason, error). Shared by shadow and linear-shadow strategies.
-func checkCanRewind() (bool, string, error) {
-	repo, err := OpenRepository()
-	if err != nil {
-		return false, "", fmt.Errorf("failed to open git repository: %w", err)
-	}
-
-	worktree, err := repo.Worktree()
-	if err != nil {
-		return false, "", fmt.Errorf("failed to get worktree: %w", err)
-	}
-
-	status, err := worktree.Status()
-	if err != nil {
-		return false, "", fmt.Errorf("failed to get status: %w", err)
-	}
-
-	if status.IsClean() {
-		return true, "", nil
-	}
-
-	var modified, added, deleted []string
-	for file, st := range status {
-		// Skip .entire directory
-		if paths.IsInfrastructurePath(file) {
-			continue
-		}
-
-		// Skip untracked files
-		if st.Worktree == git.Untracked {
-			continue
-		}
-
-		switch {
-		case st.Staging == git.Added || st.Worktree == git.Added:
-			added = append(added, file)
-		case st.Staging == git.Deleted || st.Worktree == git.Deleted:
-			deleted = append(deleted, file)
-		case st.Staging == git.Modified || st.Worktree == git.Modified:
-			modified = append(modified, file)
-		}
-	}
-
-	if len(modified) == 0 && len(added) == 0 && len(deleted) == 0 {
-		return true, "", nil
-	}
-
-	var msg strings.Builder
-	msg.WriteString("You have uncommitted changes:\n")
-	for _, f := range modified {
-		msg.WriteString(fmt.Sprintf("  modified:   %s\n", f))
-	}
-	for _, f := range added {
-		msg.WriteString(fmt.Sprintf("  added:      %s\n", f))
-	}
-	for _, f := range deleted {
-		msg.WriteString(fmt.Sprintf("  deleted:    %s\n", f))
-	}
-	msg.WriteString("\nPlease commit or stash your changes before rewinding.")
-
-	return false, msg.String(), nil
-}
-
 // checkCanRewindWithWarning checks working directory and returns a warning with diff stats.
-// Unlike checkCanRewind, this always returns canRewind=true but includes a warning message
-// with +/- line stats for uncommitted changes. Used by manual-commit strategy.
+// Always returns canRewind=true but includes a warning message with +/- line stats for
+// uncommitted changes. Used by manual-commit strategy.
 func checkCanRewindWithWarning() (bool, string, error) {
 	repo, err := OpenRepository()
 	if err != nil {
@@ -833,9 +782,9 @@ func checkCanRewindWithWarning() (bool, string, error) {
 
 	var changes []fileChange
 	// Use repo root, not cwd - git status returns paths relative to repo root
-	repoRoot, err := GetWorktreePath()
+	repoRoot, err := paths.WorktreeRoot()
 	if err != nil {
-		return true, "", nil //nolint:nilerr // Rewind allowed even if repo root lookup fails
+		return true, "", nil //nolint:nilerr // Rewind allowed even if worktree root lookup fails
 	}
 
 	for file, st := range status {
@@ -1021,7 +970,7 @@ const (
 // The stageCtx parameter is used for user-facing messages to indicate whether
 // this is staging for a session checkpoint or a task checkpoint.
 func StageFiles(worktree *git.Worktree, modified, newFiles, deleted []string, stageCtx StageFilesContext) {
-	// Get repo root for resolving file paths
+	// Get worktree root for resolving file paths
 	// This is critical because fileExists() uses os.Stat() which resolves relative to CWD,
 	// but worktree.Add/Remove resolve relative to repo root. If CWD != repo root,
 	// fileExists() could return false for existing files, causing worktree.Remove()
@@ -1230,7 +1179,7 @@ func HardResetWithProtection(commitHash plumbing.Hash) (shortID string, err erro
 // avoiding bloated session state from large ignored directories like node_modules/.
 // Returns paths relative to the repository root.
 func collectUntrackedFiles() ([]string, error) {
-	repoRoot, err := GetWorktreePath()
+	repoRoot, err := paths.WorktreeRoot()
 	if err != nil {
 		repoRoot = "."
 	}
@@ -1327,7 +1276,7 @@ func createCommit(repo *git.Repository, treeHash, parentHash plumbing.Hash, mess
 //
 // If metadataDir is provided, looks for files at metadataDir/prompt.txt or metadataDir/context.md.
 // If metadataDir is empty, first tries the root of the tree (for when the tree is already
-// the session directory, e.g., auto-commit strategy's sharded metadata), then falls back to
+// the session directory), then falls back to
 // searching for .entire/metadata/*/prompt.txt or context.md (for full worktree trees).
 func getSessionDescriptionFromTree(tree *object.Tree, metadataDir string) string {
 	// Helper to read first line from a file in tree

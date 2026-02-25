@@ -387,10 +387,10 @@ func resumeSession(sessionID string, checkpointID id.CheckpointID, force bool) e
 		slog.String("session_id", sessionID),
 	)
 
-	// Get repo root for session directory lookup
-	repoRoot, err := paths.RepoRoot()
+	// Get worktree root for session directory lookup
+	repoRoot, err := paths.WorktreeRoot()
 	if err != nil {
-		return fmt.Errorf("failed to get repository root: %w", err)
+		return fmt.Errorf("failed to get worktree root: %w", err)
 	}
 
 	sessionDir, err := ag.GetSessionDir(repoRoot)
@@ -407,58 +407,50 @@ func resumeSession(sessionID string, checkpointID id.CheckpointID, force bool) e
 	strat := GetStrategy()
 
 	// Use RestoreLogsOnly via LogsOnlyRestorer interface for multi-session support
-	if restorer, ok := strat.(strategy.LogsOnlyRestorer); ok {
-		// Create a logs-only rewind point with Agent populated (same as rewind)
-		point := strategy.RewindPoint{
-			IsLogsOnly:   true,
-			CheckpointID: checkpointID,
-			Agent:        metadata.Agent,
+	// Create a logs-only rewind point with Agent populated (same as rewind)
+	point := strategy.RewindPoint{
+		IsLogsOnly:   true,
+		CheckpointID: checkpointID,
+		Agent:        metadata.Agent,
+	}
+
+	sessions, restoreErr := strat.RestoreLogsOnly(point, force)
+	if restoreErr != nil || len(sessions) == 0 {
+		// Fall back to single-session restore (e.g., old checkpoints without agent metadata)
+		return resumeSingleSession(ctx, ag, sessionID, checkpointID, repoRoot, force)
+	}
+
+	// Sort sessions by CreatedAt so the most recent is last (for display).
+	// This fixes ordering when subdirectory index doesn't reflect activity order.
+	sort.Slice(sessions, func(i, j int) bool {
+		return sessions[i].CreatedAt.Before(sessions[j].CreatedAt)
+	})
+
+	logging.Debug(ctx, "resume session completed",
+		slog.String("checkpoint_id", checkpointID.String()),
+		slog.Int("session_count", len(sessions)),
+	)
+
+	// Print per-session resume commands using returned sessions
+	if len(sessions) > 1 {
+		fmt.Fprintf(os.Stderr, "\nRestored %d sessions. To continue, run:\n", len(sessions))
+	} else if len(sessions) == 1 {
+		fmt.Fprintf(os.Stderr, "Session: %s\n", sessions[0].SessionID)
+		fmt.Fprintf(os.Stderr, "\nTo continue this session, run:\n")
+	}
+	for i, sess := range sessions {
+		sessionAgent, err := strategy.ResolveAgentForRewind(sess.Agent)
+		if err != nil {
+			return fmt.Errorf("failed to resolve agent for session %s: %w", sess.SessionID, err)
 		}
+		cmd := sessionAgent.FormatResumeCommand(sess.SessionID)
 
-		sessions, restoreErr := restorer.RestoreLogsOnly(point, force)
-		if restoreErr != nil || len(sessions) == 0 {
-			// Fall back to single-session restore (e.g., old checkpoints without agent metadata)
-			return resumeSingleSession(ctx, ag, sessionID, checkpointID, repoRoot, force)
-		}
-
-		// Sort sessions by CreatedAt so the most recent is last (for display).
-		// This fixes ordering when subdirectory index doesn't reflect activity order.
-		sort.Slice(sessions, func(i, j int) bool {
-			return sessions[i].CreatedAt.Before(sessions[j].CreatedAt)
-		})
-
-		logging.Debug(ctx, "resume session completed",
-			slog.String("checkpoint_id", checkpointID.String()),
-			slog.Int("session_count", len(sessions)),
-		)
-
-		// Print per-session resume commands using returned sessions
 		if len(sessions) > 1 {
-			fmt.Fprintf(os.Stderr, "\nRestored %d sessions. To continue, run:\n", len(sessions))
-		} else if len(sessions) == 1 {
-			fmt.Fprintf(os.Stderr, "Session: %s\n", sessions[0].SessionID)
-			fmt.Fprintf(os.Stderr, "\nTo continue this session, run:\n")
-		}
-		for i, sess := range sessions {
-			sessionAgent, err := strategy.ResolveAgentForRewind(sess.Agent)
-			if err != nil {
-				return fmt.Errorf("failed to resolve agent for session %s: %w", sess.SessionID, err)
-			}
-			cmd := sessionAgent.FormatResumeCommand(sess.SessionID)
-
-			if len(sessions) > 1 {
-				if i == len(sessions)-1 {
-					if sess.Prompt != "" {
-						fmt.Fprintf(os.Stderr, "  %s  # %s (most recent)\n", cmd, sess.Prompt)
-					} else {
-						fmt.Fprintf(os.Stderr, "  %s  # (most recent)\n", cmd)
-					}
+			if i == len(sessions)-1 {
+				if sess.Prompt != "" {
+					fmt.Fprintf(os.Stderr, "  %s  # %s (most recent)\n", cmd, sess.Prompt)
 				} else {
-					if sess.Prompt != "" {
-						fmt.Fprintf(os.Stderr, "  %s  # %s\n", cmd, sess.Prompt)
-					} else {
-						fmt.Fprintf(os.Stderr, "  %s\n", cmd)
-					}
+					fmt.Fprintf(os.Stderr, "  %s  # (most recent)\n", cmd)
 				}
 			} else {
 				if sess.Prompt != "" {
@@ -467,13 +459,16 @@ func resumeSession(sessionID string, checkpointID id.CheckpointID, force bool) e
 					fmt.Fprintf(os.Stderr, "  %s\n", cmd)
 				}
 			}
+		} else {
+			if sess.Prompt != "" {
+				fmt.Fprintf(os.Stderr, "  %s  # %s\n", cmd, sess.Prompt)
+			} else {
+				fmt.Fprintf(os.Stderr, "  %s\n", cmd)
+			}
 		}
-
-		return nil
 	}
 
-	// Strategy doesn't support LogsOnlyRestorer, fall back to single session
-	return resumeSingleSession(ctx, ag, sessionID, checkpointID, repoRoot, force)
+	return nil
 }
 
 // resumeSingleSession restores a single session (fallback when multi-session restore fails).

@@ -19,7 +19,7 @@ func TestLoad_RejectsUnknownKeys(t *testing.T) {
 
 	// Create settings.json with an unknown key
 	settingsFile := filepath.Join(entireDir, "settings.json")
-	settingsContent := `{"strategy": "manual-commit", "unknown_key": "value"}`
+	settingsContent := `{"enabled": true, "unknown_key": "value"}`
 	if err := os.WriteFile(settingsFile, []byte(settingsContent), 0644); err != nil {
 		t.Fatalf("failed to write settings file: %v", err)
 	}
@@ -54,7 +54,6 @@ func TestLoad_AcceptsValidKeys(t *testing.T) {
 	// Create settings.json with all valid keys
 	settingsFile := filepath.Join(entireDir, "settings.json")
 	settingsContent := `{
-		"strategy": "auto-commit",
 		"enabled": true,
 		"local_dev": false,
 		"log_level": "debug",
@@ -80,9 +79,6 @@ func TestLoad_AcceptsValidKeys(t *testing.T) {
 	}
 
 	// Verify values
-	if settings.Strategy != "auto-commit" {
-		t.Errorf("expected strategy 'auto-commit', got %q", settings.Strategy)
-	}
 	if !settings.Enabled {
 		t.Error("expected enabled to be true")
 	}
@@ -106,7 +102,7 @@ func TestLoad_LocalSettingsRejectsUnknownKeys(t *testing.T) {
 
 	// Create valid settings.json
 	settingsFile := filepath.Join(entireDir, "settings.json")
-	settingsContent := `{"strategy": "manual-commit"}`
+	settingsContent := `{"enabled": true}`
 	if err := os.WriteFile(settingsFile, []byte(settingsContent), 0644); err != nil {
 		t.Fatalf("failed to write settings file: %v", err)
 	}
@@ -132,6 +128,75 @@ func TestLoad_LocalSettingsRejectsUnknownKeys(t *testing.T) {
 		t.Error("expected error for unknown key in local settings, got nil")
 	} else if !containsUnknownField(err.Error()) {
 		t.Errorf("expected unknown field error, got: %v", err)
+	}
+}
+
+func TestLoad_AcceptsDeprecatedStrategyField(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	entireDir := filepath.Join(tmpDir, ".entire")
+	if err := os.MkdirAll(entireDir, 0o755); err != nil {
+		t.Fatalf("failed to create .entire directory: %v", err)
+	}
+
+	settingsFile := filepath.Join(entireDir, "settings.json")
+	if err := os.WriteFile(settingsFile, []byte(`{"enabled": true, "strategy": "auto-commit"}`), 0o644); err != nil {
+		t.Fatalf("failed to write settings file: %v", err)
+	}
+
+	if err := os.MkdirAll(filepath.Join(tmpDir, ".git"), 0o755); err != nil {
+		t.Fatalf("failed to create .git directory: %v", err)
+	}
+
+	t.Chdir(tmpDir)
+
+	s, err := Load()
+	if err != nil {
+		t.Fatalf("expected no error for deprecated strategy field, got: %v", err)
+	}
+	if s.Strategy != "auto-commit" {
+		t.Errorf("expected strategy 'auto-commit', got %q", s.Strategy)
+	}
+}
+
+func TestFilesWithDeprecatedStrategy(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	entireDir := filepath.Join(tmpDir, ".entire")
+	if err := os.MkdirAll(entireDir, 0o755); err != nil {
+		t.Fatalf("failed to create .entire directory: %v", err)
+	}
+
+	if err := os.MkdirAll(filepath.Join(tmpDir, ".git"), 0o755); err != nil {
+		t.Fatalf("failed to create .git directory: %v", err)
+	}
+
+	t.Chdir(tmpDir)
+
+	// No strategy field → empty result
+	if err := os.WriteFile(filepath.Join(entireDir, "settings.json"), []byte(`{"enabled": true}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if files := FilesWithDeprecatedStrategy(); len(files) != 0 {
+		t.Errorf("expected no deprecated files, got %v", files)
+	}
+
+	// Add strategy to project settings
+	if err := os.WriteFile(filepath.Join(entireDir, "settings.json"), []byte(`{"enabled": true, "strategy": "auto-commit"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	files := FilesWithDeprecatedStrategy()
+	if len(files) != 1 || files[0] != EntireSettingsFile {
+		t.Errorf("expected [%s], got %v", EntireSettingsFile, files)
+	}
+
+	// Also add strategy to local settings
+	if err := os.WriteFile(filepath.Join(entireDir, "settings.local.json"), []byte(`{"strategy": "manual-commit"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	files = FilesWithDeprecatedStrategy()
+	if len(files) != 2 {
+		t.Errorf("expected 2 deprecated files, got %v", files)
 	}
 }
 

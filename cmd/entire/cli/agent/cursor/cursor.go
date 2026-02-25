@@ -1,0 +1,163 @@
+// Package cursor implements the Agent interface for Cursor.
+package cursor
+
+import (
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"regexp"
+	"time"
+
+	"github.com/entireio/cli/cmd/entire/cli/agent"
+	"github.com/entireio/cli/cmd/entire/cli/paths"
+)
+
+//nolint:gochecknoinits // Agent self-registration is the intended pattern
+func init() {
+	agent.Register(agent.AgentNameCursor, NewCursorAgent)
+}
+
+// CursorAgent implements the Agent interface for Cursor IDE.
+//
+//nolint:revive // CursorAgent is clearer than Agent in this context
+type CursorAgent struct{}
+
+// NewCursorAgent creates a new Cursor agent instance.
+func NewCursorAgent() agent.Agent {
+	return &CursorAgent{}
+}
+
+// Name returns the agent registry key.
+func (c *CursorAgent) Name() agent.AgentName {
+	return agent.AgentNameCursor
+}
+
+// Type returns the agent type identifier.
+func (c *CursorAgent) Type() agent.AgentType {
+	return agent.AgentTypeCursor
+}
+
+// Description returns a human-readable description.
+func (c *CursorAgent) Description() string {
+	return "Cursor - AI-powered code editor"
+}
+
+func (c *CursorAgent) IsPreview() bool { return true }
+
+// DetectPresence checks if Cursor is configured in the repository.
+func (c *CursorAgent) DetectPresence() (bool, error) {
+	worktreeRoot, err := paths.WorktreeRoot()
+	if err != nil {
+		worktreeRoot = "."
+	}
+
+	cursorDir := filepath.Join(worktreeRoot, ".cursor")
+	if _, err := os.Stat(cursorDir); err == nil {
+		return true, nil
+	}
+	return false, nil
+}
+
+// GetSessionID extracts the session ID from hook input.
+func (c *CursorAgent) GetSessionID(input *agent.HookInput) string {
+	return input.SessionID
+}
+
+// ResolveSessionFile returns the path to a Cursor session file.
+// Cursor uses JSONL format like Claude Code.
+func (c *CursorAgent) ResolveSessionFile(sessionDir, agentSessionID string) string {
+	return filepath.Join(sessionDir, agentSessionID+".jsonl")
+}
+
+// ProtectedDirs returns directories that Cursor uses for config/state.
+func (c *CursorAgent) ProtectedDirs() []string { return []string{".cursor"} }
+
+// GetSessionDir returns the directory where Cursor stores session transcripts.
+func (c *CursorAgent) GetSessionDir(repoPath string) (string, error) {
+	if override := os.Getenv("ENTIRE_TEST_CURSOR_PROJECT_DIR"); override != "" {
+		return override, nil
+	}
+
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("failed to get home directory: %w", err)
+	}
+
+	projectDir := sanitizePathForCursor(repoPath)
+	return filepath.Join(homeDir, ".cursor", "projects", projectDir), nil
+}
+
+// ReadSession reads a session from Cursor's storage (JSONL transcript file).
+// Note: ModifiedFiles is left empty because Cursor's transcript format does not
+// contain tool_use blocks. File detection relies on git status instead.
+func (c *CursorAgent) ReadSession(input *agent.HookInput) (*agent.AgentSession, error) {
+	if input.SessionRef == "" {
+		return nil, errors.New("session reference (transcript path) is required")
+	}
+
+	data, err := os.ReadFile(input.SessionRef)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read transcript: %w", err)
+	}
+
+	return &agent.AgentSession{
+		SessionID:  input.SessionID,
+		AgentName:  c.Name(),
+		SessionRef: input.SessionRef,
+		StartTime:  time.Now(),
+		NativeData: data,
+	}, nil
+}
+
+// WriteSession writes a session to Cursor's storage (JSONL transcript file).
+func (c *CursorAgent) WriteSession(session *agent.AgentSession) error {
+	if session == nil {
+		return errors.New("session is nil")
+	}
+
+	if session.AgentName != "" && session.AgentName != c.Name() {
+		return fmt.Errorf("session belongs to agent %q, not %q", session.AgentName, c.Name())
+	}
+
+	if session.SessionRef == "" {
+		return errors.New("session reference (transcript path) is required")
+	}
+
+	if len(session.NativeData) == 0 {
+		return errors.New("session has no native data to write")
+	}
+
+	if err := os.WriteFile(session.SessionRef, session.NativeData, 0o600); err != nil {
+		return fmt.Errorf("failed to write transcript: %w", err)
+	}
+
+	return nil
+}
+
+// FormatResumeCommand returns an instruction to resume a Cursor session.
+// Cursor is a GUI IDE, so there's no CLI command to resume a session directly.
+func (c *CursorAgent) FormatResumeCommand(_ string) string {
+	return "Open this project in Cursor IDE to continue the session."
+}
+
+// sanitizePathForCursor converts a path to Cursor's project directory format.
+var nonAlphanumericRegex = regexp.MustCompile(`[^a-zA-Z0-9]`)
+
+func sanitizePathForCursor(path string) string {
+	return nonAlphanumericRegex.ReplaceAllString(path, "-")
+}
+
+// ChunkTranscript splits a JSONL transcript at line boundaries.
+func (c *CursorAgent) ChunkTranscript(content []byte, maxSize int) ([][]byte, error) {
+	chunks, err := agent.ChunkJSONL(content, maxSize)
+	if err != nil {
+		return nil, fmt.Errorf("failed to chunk JSONL transcript: %w", err)
+	}
+	return chunks, nil
+}
+
+// ReassembleTranscript concatenates JSONL chunks with newlines.
+func (c *CursorAgent) ReassembleTranscript(chunks [][]byte) ([]byte, error) {
+	return agent.ReassembleJSONL(chunks), nil
+}

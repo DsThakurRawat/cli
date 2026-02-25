@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"github.com/entireio/cli/cmd/entire/cli/session"
-	"github.com/entireio/cli/cmd/entire/cli/strategy"
 )
 
 // TestCarryForward_NewSessionCommitDoesNotCondenseOldSession verifies that when
@@ -42,7 +41,7 @@ func TestCarryForward_NewSessionCommitDoesNotCondenseOldSession(t *testing.T) {
 	env.GitAdd("README.md")
 	env.GitCommit("Initial commit")
 	env.GitCheckoutNewBranch("feature/multi-session-carry-forward")
-	env.InitEntire(strategy.StrategyNameManualCommit)
+	env.InitEntire()
 
 	// ========================================
 	// Phase 1: Session 1 creates files, partial commit, ends with carry-forward

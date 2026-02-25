@@ -19,7 +19,6 @@ import (
 )
 
 // pushSessionsBranchCommon is the shared implementation for pushing session branches.
-// Used by both manual-commit and auto-commit strategies.
 // By default, session logs are pushed automatically alongside user pushes.
 // Configuration (stored in .entire/settings.json under strategy_options.push_sessions):
 //   - false: disable automatic pushing

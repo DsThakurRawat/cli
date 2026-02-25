@@ -165,13 +165,9 @@ func TestEmptySession(t *testing.T) {
 func TestManualCommitStrategyImplementsSessionSource(t *testing.T) {
 	// Manual-commit strategy should implement SessionSource
 	var strat = NewManualCommitStrategy()
-	source, ok := strat.(SessionSource)
-	if !ok {
-		t.Fatal("ManualCommitStrategy should implement SessionSource interface")
-	}
 
 	// GetAdditionalSessions should be callable
-	_, err := source.GetAdditionalSessions()
+	_, err := strat.GetAdditionalSessions()
 	if err != nil {
 		t.Logf("GetAdditionalSessions returned error: %v", err)
 	}

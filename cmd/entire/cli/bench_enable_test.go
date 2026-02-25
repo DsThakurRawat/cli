@@ -29,12 +29,12 @@ func BenchmarkEnableCommand(b *testing.B) {
 			if err := os.Chdir(repo.Dir); err != nil {
 				b.Fatalf("chdir: %v", err)
 			}
-			paths.ClearRepoRootCache()
+			paths.ClearWorktreeRootCache()
 			strategy.ClearHooksDirCache()
 			b.StartTimer()
 
 			w := &bytes.Buffer{}
-			if err := setupAgentHooksNonInteractive(w, ag, "", true, false, false, false); err != nil {
+			if err := setupAgentHooksNonInteractive(w, ag, true, false, false, false); err != nil {
 				b.Fatalf("setupAgentHooksNonInteractive: %v", err)
 			}
 		}
@@ -44,24 +44,24 @@ func BenchmarkEnableCommand(b *testing.B) {
 		b.StopTimer()
 		repo := benchutil.NewBenchRepo(b, benchutil.RepoOpts{})
 		b.Chdir(repo.Dir)
-		paths.ClearRepoRootCache()
+		paths.ClearWorktreeRootCache()
 		strategy.ClearHooksDirCache()
 
 		// First enable to set up everything
 		w := &bytes.Buffer{}
-		if err := setupAgentHooksNonInteractive(w, ag, "", true, false, false, false); err != nil {
+		if err := setupAgentHooksNonInteractive(w, ag, true, false, false, false); err != nil {
 			b.Fatalf("initial enable: %v", err)
 		}
 		b.StartTimer()
 
 		for b.Loop() {
 			b.StopTimer()
-			paths.ClearRepoRootCache()
+			paths.ClearWorktreeRootCache()
 			strategy.ClearHooksDirCache()
 			b.StartTimer()
 
 			w.Reset()
-			if err := setupAgentHooksNonInteractive(w, ag, "", true, false, false, false); err != nil {
+			if err := setupAgentHooksNonInteractive(w, ag, true, false, false, false); err != nil {
 				b.Fatalf("setupAgentHooksNonInteractive: %v", err)
 			}
 		}
