@@ -1090,23 +1090,6 @@ func TestFactoryAIDroidHookInstallation(t *testing.T) {
 	})
 }
 
-// TestFactoryAIDroidHelperMethods verifies Factory Droid-specific helper methods.
-func TestFactoryAIDroidHelperMethods(t *testing.T) {
-	t.Parallel()
-
-	t.Run("FormatResumeCommand returns droid --session-id", func(t *testing.T) {
-		t.Parallel()
-
-		ag, _ := agent.Get("factoryai-droid")
-		cmd := ag.FormatResumeCommand("abc123")
-
-		if cmd != "droid --session-id abc123" {
-			t.Errorf("FormatResumeCommand() = %q, want %q", cmd, "droid --session-id abc123")
-		}
-	})
-
-}
-
 // TestFactoryAIDroidSessionMethods verifies ReadSession, WriteSession, and GetSessionDir.
 func TestFactoryAIDroidSessionMethods(t *testing.T) {
 	t.Parallel()

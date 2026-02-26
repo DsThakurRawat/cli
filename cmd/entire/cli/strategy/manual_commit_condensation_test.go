@@ -285,6 +285,46 @@ func TestGenerateContextFromPrompts_ShortCJKNotTruncated(t *testing.T) {
 	}
 }
 
+// droidSampleTranscript is a Droid JSONL transcript with user and assistant messages
+// in Droid's envelope format: {"type":"message","message":{"role":"...","content":[...]}}.
+var droidSampleTranscript = strings.Join([]string{
+	`{"type":"session_start","session":{"session_id":"s1"}}`,
+	`{"type":"message","id":"m1","message":{"role":"user","content":[{"type":"text","text":"create a file called hello.go"}]}}`,
+	`{"type":"message","id":"m2","message":{"role":"assistant","content":[{"type":"text","text":"I'll create that file."}]}}`,
+	`{"type":"message","id":"m3","message":{"role":"user","content":[{"type":"text","text":"<ide_opened_file>some content</ide_opened_file>now add a main function"}]}}`,
+	`{"type":"message","id":"m4","message":{"role":"assistant","content":[{"type":"text","text":"Added the main function."}]}}`,
+}, "\n") + "\n"
+
+func TestExtractUserPrompts_Droid(t *testing.T) {
+	t.Parallel()
+
+	prompts := extractUserPrompts(agent.AgentTypeFactoryAIDroid, droidSampleTranscript)
+	if len(prompts) != 2 {
+		t.Fatalf("extractUserPrompts(Droid) returned %d prompts, want 2", len(prompts))
+	}
+
+	if prompts[0] != "create a file called hello.go" {
+		t.Errorf("prompt[0] = %q, want %q", prompts[0], "create a file called hello.go")
+	}
+
+	// Verify IDE tags are stripped
+	if strings.Contains(prompts[1], "<ide_opened_file>") {
+		t.Errorf("prompt[1] still contains IDE tags: %q", prompts[1])
+	}
+	if prompts[1] != "now add a main function" {
+		t.Errorf("prompt[1] = %q, want %q", prompts[1], "now add a main function")
+	}
+}
+
+func TestExtractUserPrompts_DroidEmpty(t *testing.T) {
+	t.Parallel()
+
+	prompts := extractUserPrompts(agent.AgentTypeFactoryAIDroid, "")
+	if len(prompts) != 0 {
+		t.Errorf("extractUserPrompts(Droid, empty) = %v, want empty", prompts)
+	}
+}
+
 // droidMessage builds a Droid JSONL "message" line with the given id, role, and optional usage.
 func droidMessage(t *testing.T, id, role string, usage map[string]int) string {
 	t.Helper()
