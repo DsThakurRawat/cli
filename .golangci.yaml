@@ -70,6 +70,11 @@ linters:
     - whitespace
     - wrapcheck
   settings:
+    gosec:
+      excludes:
+        - G204 # subprocess with variables is expected for git/opencode CLI wrappers
+        - G702 # command injection via taint - controlled CLI inputs
+        - G705 # XSS not applicable to CLI stderr output
     dupl:
       # Token threshold for duplication detection
       # Lower = more sensitive (catches smaller duplicates)

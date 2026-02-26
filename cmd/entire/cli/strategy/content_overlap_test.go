@@ -329,7 +329,8 @@ func TestFilesWithRemainingAgentChanges_FullyCommitted(t *testing.T) {
 }
 
 // TestFilesWithRemainingAgentChanges_PartialCommit tests that files committed with
-// different content (partial commit via git add -p) ARE in the remaining list.
+// different content (partial commit via git add -p) ARE in the remaining list
+// when the working tree still has the full agent content.
 func TestFilesWithRemainingAgentChanges_PartialCommit(t *testing.T) {
 	t.Parallel()
 	dir := setupGitRepo(t)
@@ -356,15 +357,61 @@ func TestFilesWithRemainingAgentChanges_PartialCommit(t *testing.T) {
 	})
 	require.NoError(t, err)
 
+	// After a real git add -p, the working tree still has the full content.
+	// Simulate this by writing the full content back to disk after the commit.
+	require.NoError(t, os.WriteFile(testFile, fullContent, 0o644))
+
 	commit, err := repo.CommitObject(headCommit)
 	require.NoError(t, err)
 
 	shadowBranch := checkpoint.ShadowBranchNameForCommit("ghi9012", "e3b0c4")
 	committedFiles := map[string]struct{}{"test.txt": {}}
 
-	// Content doesn't match - file should be in remaining (has more agent changes)
+	// Content doesn't match and working tree is dirty - file should be in remaining
 	remaining := filesWithRemainingAgentChanges(repo, shadowBranch, commit, []string{"test.txt"}, committedFiles)
-	assert.Equal(t, []string{"test.txt"}, remaining, "Partially committed file should be in remaining")
+	assert.Equal(t, []string{"test.txt"}, remaining, "Partially committed file with dirty working tree should be in remaining")
+}
+
+// TestFilesWithRemainingAgentChanges_ReplacedContent tests that files committed with
+// different content but a CLEAN working tree are NOT in the remaining list.
+// This is the scenario where the user intentionally replaced the agent's content.
+func TestFilesWithRemainingAgentChanges_ReplacedContent(t *testing.T) {
+	t.Parallel()
+	dir := setupGitRepo(t)
+
+	repo, err := git.PlainOpen(dir)
+	require.NoError(t, err)
+
+	// Shadow branch has the agent's content
+	agentContent := []byte("func GetPort() int { return 8080 }\n")
+	createShadowBranchWithContent(t, repo, "rep1234", "e3b0c4", map[string][]byte{
+		"config.go": agentContent,
+	})
+
+	// User writes completely different content and commits
+	userContent := []byte("func GetHost() string { return \"localhost\" }\n")
+	testFile := filepath.Join(dir, "config.go")
+	require.NoError(t, os.WriteFile(testFile, userContent, 0o644))
+	wt, err := repo.Worktree()
+	require.NoError(t, err)
+	_, err = wt.Add("config.go")
+	require.NoError(t, err)
+	headCommit, err := wt.Commit("Replace config", &git.CommitOptions{
+		Author: &object.Signature{Name: "Test", Email: "test@test.com", When: time.Now()},
+	})
+	require.NoError(t, err)
+
+	// Working tree is clean — matches the commit (user committed everything)
+
+	commit, err := repo.CommitObject(headCommit)
+	require.NoError(t, err)
+
+	shadowBranch := checkpoint.ShadowBranchNameForCommit("rep1234", "e3b0c4")
+	committedFiles := map[string]struct{}{"config.go": {}}
+
+	// Content differs from shadow but working tree is clean — no carry-forward
+	remaining := filesWithRemainingAgentChanges(repo, shadowBranch, commit, []string{"config.go"}, committedFiles)
+	assert.Empty(t, remaining, "Replaced content with clean working tree should not be in remaining")
 }
 
 // TestFilesWithRemainingAgentChanges_NoShadowBranch tests fallback to file-level subtraction.
@@ -396,6 +443,223 @@ func TestFilesWithRemainingAgentChanges_NoShadowBranch(t *testing.T) {
 
 	// With file-level subtraction: test.txt is in committedFiles, other.txt is not
 	assert.Equal(t, []string{"other.txt"}, remaining, "Fallback should use file-level subtraction")
+}
+
+// resolveCommitTrees is a test helper that resolves HEAD tree, parent tree, and
+// shadow tree from a commit and shadow branch. Used to test cache equivalence.
+func resolveCommitTrees(t *testing.T, repo *git.Repository, commit *object.Commit, shadowBranchName string) (headTree, parentTree, shadowTree *object.Tree) {
+	t.Helper()
+
+	var err error
+	headTree, err = commit.Tree()
+	require.NoError(t, err)
+
+	if commit.NumParents() > 0 {
+		parent, err := commit.Parent(0)
+		require.NoError(t, err)
+		parentTree, err = parent.Tree()
+		require.NoError(t, err)
+	}
+
+	refName := plumbing.NewBranchReferenceName(shadowBranchName)
+	shadowRef, err := repo.Reference(refName, true)
+	if err == nil {
+		shadowCommit, err := repo.CommitObject(shadowRef.Hash())
+		require.NoError(t, err)
+		shadowTree, err = shadowCommit.Tree()
+		require.NoError(t, err)
+	}
+
+	return headTree, parentTree, shadowTree
+}
+
+// TestFilesOverlapWithContent_CacheEquivalence verifies that calling
+// filesOverlapWithContent with pre-resolved trees (cache hit) produces
+// the same result as calling without opts (cache miss / fallback).
+func TestFilesOverlapWithContent_CacheEquivalence(t *testing.T) {
+	t.Parallel()
+	dir := setupGitRepo(t)
+
+	repo, err := git.PlainOpen(dir)
+	require.NoError(t, err)
+
+	// Create initial file and commit
+	testFile := filepath.Join(dir, "test.txt")
+	require.NoError(t, os.WriteFile(testFile, []byte("original content"), 0o644))
+	wt, err := repo.Worktree()
+	require.NoError(t, err)
+	_, err = wt.Add("test.txt")
+	require.NoError(t, err)
+	_, err = wt.Commit("parent commit", &git.CommitOptions{
+		Author: &object.Signature{Name: "Test", Email: "test@test.com", When: time.Now()},
+	})
+	require.NoError(t, err)
+
+	// Create shadow branch
+	createShadowBranchWithContent(t, repo, "abc1234", "e3b0c4", map[string][]byte{
+		"test.txt": []byte("session modified"),
+	})
+
+	// Modify file and commit
+	require.NoError(t, os.WriteFile(testFile, []byte("user modified"), 0o644))
+	_, err = wt.Add("test.txt")
+	require.NoError(t, err)
+	headHash, err := wt.Commit("user commit", &git.CommitOptions{
+		Author: &object.Signature{Name: "Test", Email: "test@test.com", When: time.Now()},
+	})
+	require.NoError(t, err)
+
+	commit, err := repo.CommitObject(headHash)
+	require.NoError(t, err)
+
+	shadowBranch := checkpoint.ShadowBranchNameForCommit("abc1234", "e3b0c4")
+	headTree, parentTree, shadowTree := resolveCommitTrees(t, repo, commit, shadowBranch)
+
+	// Cache miss (no opts)
+	resultWithout := filesOverlapWithContent(repo, shadowBranch, commit, []string{"test.txt"})
+
+	// Cache hit (all trees pre-resolved)
+	resultWith := filesOverlapWithContent(repo, shadowBranch, commit, []string{"test.txt"}, overlapOpts{
+		headTree:      headTree,
+		shadowTree:    shadowTree,
+		parentTree:    parentTree,
+		hasParentTree: true,
+	})
+
+	assert.Equal(t, resultWithout, resultWith, "Cache hit and cache miss should produce the same result")
+	assert.True(t, resultWith, "Modified file should count as overlap")
+}
+
+// TestFilesOverlapWithContent_PartialCache verifies correct behavior when only
+// some trees are pre-resolved (e.g., headTree cached but shadowTree nil).
+func TestFilesOverlapWithContent_PartialCache(t *testing.T) {
+	t.Parallel()
+	dir := setupGitRepo(t)
+
+	repo, err := git.PlainOpen(dir)
+	require.NoError(t, err)
+
+	// Create shadow branch with new file
+	content := []byte("session content")
+	createShadowBranchWithContent(t, repo, "part1234", "e3b0c4", map[string][]byte{
+		"newfile.txt": content,
+	})
+
+	// Commit same file with same content
+	testFile := filepath.Join(dir, "newfile.txt")
+	require.NoError(t, os.WriteFile(testFile, content, 0o644))
+	wt, err := repo.Worktree()
+	require.NoError(t, err)
+	_, err = wt.Add("newfile.txt")
+	require.NoError(t, err)
+	headHash, err := wt.Commit("add new file", &git.CommitOptions{
+		Author: &object.Signature{Name: "Test", Email: "test@test.com", When: time.Now()},
+	})
+	require.NoError(t, err)
+
+	commit, err := repo.CommitObject(headHash)
+	require.NoError(t, err)
+
+	shadowBranch := checkpoint.ShadowBranchNameForCommit("part1234", "e3b0c4")
+	headTree, parentTree, _ := resolveCommitTrees(t, repo, commit, shadowBranch)
+
+	// Partial cache: headTree and parentTree provided, shadowTree nil (will be resolved from repo)
+	result := filesOverlapWithContent(repo, shadowBranch, commit, []string{"newfile.txt"}, overlapOpts{
+		headTree:      headTree,
+		parentTree:    parentTree,
+		hasParentTree: true,
+		// shadowTree intentionally nil — triggers fallback resolution
+	})
+
+	assert.True(t, result, "Partial cache (headTree only) should still detect overlap")
+}
+
+// TestFilesOverlapWithContent_CacheWithInitialCommit verifies cache behavior
+// when parentTree is nil (initial commit / no parent).
+func TestFilesOverlapWithContent_CacheWithInitialCommit(t *testing.T) {
+	t.Parallel()
+	// setupGitRepo creates one initial commit (no parent), so HEAD has NumParents() == 0
+	dir := setupGitRepo(t)
+	repo, err := git.PlainOpen(dir)
+	require.NoError(t, err)
+
+	head, err := repo.Head()
+	require.NoError(t, err)
+	commit, err := repo.CommitObject(head.Hash())
+	require.NoError(t, err)
+	require.Equal(t, 0, commit.NumParents(), "setupGitRepo should create an initial commit")
+
+	// Create shadow branch with content matching the initial commit's file
+	createShadowBranchWithContent(t, repo, "init123", "e3b0c4", map[string][]byte{
+		"test.txt": []byte("initial content"),
+	})
+
+	shadowBranch := checkpoint.ShadowBranchNameForCommit("init123", "e3b0c4")
+	headTree, err := commit.Tree()
+	require.NoError(t, err)
+
+	// Cache with hasParentTree=true and parentTree=nil (initial commit has no parent)
+	result := filesOverlapWithContent(repo, shadowBranch, commit, []string{"test.txt"}, overlapOpts{
+		headTree:      headTree,
+		parentTree:    nil,
+		hasParentTree: true, // Explicitly resolved as nil (initial commit)
+	})
+
+	assert.True(t, result, "Initial commit with matching content should count as overlap")
+}
+
+// TestFilesWithRemainingAgentChanges_CacheEquivalence verifies that calling
+// with pre-resolved trees produces the same result as without.
+func TestFilesWithRemainingAgentChanges_CacheEquivalence(t *testing.T) {
+	t.Parallel()
+	dir := setupGitRepo(t)
+
+	repo, err := git.PlainOpen(dir)
+	require.NoError(t, err)
+
+	// Create shadow branch with two files
+	createShadowBranchWithContent(t, repo, "rem1234", "e3b0c4", map[string][]byte{
+		"fileA.txt": []byte("agent content A"),
+		"fileB.txt": []byte("agent content B"),
+	})
+
+	// Commit only fileA with matching content
+	wt, err := repo.Worktree()
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "fileA.txt"), []byte("agent content A"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "fileB.txt"), []byte("agent content B"), 0o644))
+	_, err = wt.Add("fileA.txt")
+	require.NoError(t, err)
+	_, err = wt.Add("fileB.txt")
+	require.NoError(t, err)
+	headHash, err := wt.Commit("commit both files", &git.CommitOptions{
+		Author: &object.Signature{Name: "Test", Email: "test@test.com", When: time.Now()},
+	})
+	require.NoError(t, err)
+
+	commit, err := repo.CommitObject(headHash)
+	require.NoError(t, err)
+
+	shadowBranch := checkpoint.ShadowBranchNameForCommit("rem1234", "e3b0c4")
+	headTree, _, shadowTree := resolveCommitTrees(t, repo, commit, shadowBranch)
+
+	committedFiles := map[string]struct{}{"fileA.txt": {}}
+	filesTouched := []string{"fileA.txt", "fileB.txt"}
+
+	// Cache miss
+	resultWithout := filesWithRemainingAgentChanges(repo, shadowBranch, commit, filesTouched, committedFiles)
+
+	// Cache hit
+	resultWith := filesWithRemainingAgentChanges(repo, shadowBranch, commit, filesTouched, committedFiles, overlapOpts{
+		headTree:   headTree,
+		shadowTree: shadowTree,
+	})
+
+	assert.Equal(t, resultWithout, resultWith, "Cache hit and cache miss should produce the same result")
+	// fileB.txt was not committed, so it should be in remaining
+	assert.Contains(t, resultWith, "fileB.txt")
+	// fileA.txt was committed with matching content, so it should NOT be in remaining
+	assert.NotContains(t, resultWith, "fileA.txt")
 }
 
 // TestStagedFilesOverlapWithContent_ModifiedFile tests that a modified file

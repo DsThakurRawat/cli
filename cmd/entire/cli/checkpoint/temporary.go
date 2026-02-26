@@ -624,7 +624,7 @@ func (s *GitStore) ShadowBranchExists(baseCommit, worktreeID string) bool {
 // persist deletions with packed refs or worktrees.
 func (s *GitStore) DeleteShadowBranch(baseCommit, worktreeID string) error {
 	shadowBranchName := ShadowBranchNameForCommit(baseCommit, worktreeID)
-	cmd := exec.CommandContext(context.Background(), "git", "branch", "-D", "--", shadowBranchName) //nolint:gosec // shadowBranchName is constructed from commit hash, not user input
+	cmd := exec.CommandContext(context.Background(), "git", "branch", "-D", "--", shadowBranchName)
 	if output, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("failed to delete shadow branch %s: %s: %w", shadowBranchName, strings.TrimSpace(string(output)), err)
 	}

@@ -150,6 +150,7 @@ func saveCache(cache *VersionCache) error {
 	}
 
 	// Rename temp file to final location
+	//nolint:gosec // G703: filePath is constructed internally, not from user input
 	if err := os.Rename(tmpFile.Name(), filePath); err != nil {
 		return fmt.Errorf("renaming cache file: %w", err)
 	}
@@ -174,7 +175,7 @@ func fetchLatestVersion() (string, error) {
 	req.Header.Set("User-Agent", "entire-cli")
 
 	client := &http.Client{}
-	resp, err := client.Do(req)
+	resp, err := client.Do(req) //nolint:gosec // G704: intentional request to GitHub releases API
 	if err != nil {
 		return "", fmt.Errorf("fetching release info: %w", err)
 	}

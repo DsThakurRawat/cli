@@ -90,18 +90,28 @@ func TestMixedNewAndModifiedFiles(t *testing.T) {
 	})
 }
 
-// TestContentOverlapRevertNewFile: agent creates a file, user replaces its
-// content entirely with different text and commits. The content-aware overlap
-// detection should prevent a checkpoint trailer (content mismatch on new file).
-func TestContentOverlapRevertNewFile(t *testing.T) {
+// TestInteractiveContentOverlapRevertNewFile: agent creates a file, user replaces its
+// content entirely with different text and commits while the session is still
+// idle (not ended). The content-aware overlap detection should prevent a
+// checkpoint trailer (content mismatch on new file). The shadow branch
+// correctly persists because the session is still active and no condensation
+// occurred.
+func TestInteractiveContentOverlapRevertNewFile(t *testing.T) {
 	testutil.ForEachAgent(t, 2*time.Minute, func(t *testing.T, s *testutil.RepoState, ctx context.Context) {
-		_, err := s.RunPrompt(t, ctx,
-			"create a markdown file at docs/red.md with a paragraph about the colour red. Do not ask for confirmation, just make the change.")
-		if err != nil {
-			t.Fatalf("agent failed: %v", err)
-		}
-		testutil.AssertFileExists(t, s.Dir, "docs/red.md")
+		prompt := s.Agent.PromptPattern()
 
+		session := s.StartSession(t, ctx)
+		if session == nil {
+			t.Skipf("agent %s does not support interactive mode", s.Agent.Name())
+		}
+
+		s.WaitFor(t, session, prompt, 30*time.Second)
+
+		s.Send(t, session, "create a markdown file at docs/red.md with a paragraph about the colour red. Do not ask for confirmation, just make the change.")
+		s.WaitFor(t, session, prompt, 60*time.Second)
+		testutil.WaitForFileExists(t, s.Dir, "docs/red.md", 30*time.Second)
+
+		// Session is now idle (turn ended, waiting for next prompt).
 		// User replaces the content entirely.
 		if err := os.WriteFile(filepath.Join(s.Dir, "docs", "red.md"), []byte("# Completely different content\n\nNothing about red here.\n"), 0o644); err != nil {
 			t.Fatalf("overwrite file: %v", err)
@@ -115,7 +125,9 @@ func TestContentOverlapRevertNewFile(t *testing.T) {
 
 		testutil.AssertNoCheckpointTrailer(t, s.Dir, "HEAD")
 		testutil.AssertCheckpointNotAdvanced(t, s)
-		testutil.AssertNoShadowBranches(t, s.Dir)
+		// Shadow branch correctly persists: session is idle and no
+		// condensation occurred (content mismatch on new file).
+		testutil.AssertHasShadowBranches(t, s.Dir)
 	})
 }
 

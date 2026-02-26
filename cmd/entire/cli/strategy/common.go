@@ -867,15 +867,15 @@ func checkCanRewindWithWarning() (bool, string, error) {
 			stats = fmt.Sprintf("-%d", c.removed)
 		}
 
-		msg.WriteString(fmt.Sprintf("  %-10s %s", c.status+":", c.filename))
+		fmt.Fprintf(&msg, "  %-10s %s", c.status+":", c.filename)
 		if stats != "" {
-			msg.WriteString(fmt.Sprintf(" (%s)", stats))
+			fmt.Fprintf(&msg, " (%s)", stats)
 		}
 		msg.WriteString("\n")
 	}
 
 	if totalAdded > 0 || totalRemoved > 0 {
-		msg.WriteString(fmt.Sprintf("\nTotal: +%d/-%d lines\n", totalAdded, totalRemoved))
+		fmt.Fprintf(&msg, "\nTotal: +%d/-%d lines\n", totalAdded, totalRemoved)
 	}
 
 	return true, msg.String(), nil
@@ -1125,7 +1125,7 @@ func DeleteBranchCLI(branchName string) error {
 	// git show-ref exits 1 for "not found" and 128+ for fatal errors (corrupt
 	// repo, permissions, not a git directory). Only map exit code 1 to
 	// ErrBranchNotFound; propagate other failures as-is.
-	check := exec.CommandContext(ctx, "git", "show-ref", "--verify", "--quiet", "refs/heads/"+branchName) //nolint:gosec // branchName comes from internal shadow branch naming
+	check := exec.CommandContext(ctx, "git", "show-ref", "--verify", "--quiet", "refs/heads/"+branchName)
 	if err := check.Run(); err != nil {
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
@@ -1145,7 +1145,7 @@ func DeleteBranchCLI(branchName string) error {
 // Returns nil if the branch exists, or an error if it does not.
 func branchExistsCLI(branchName string) error {
 	ctx := context.Background()
-	cmd := exec.CommandContext(ctx, "git", "show-ref", "--verify", "--quiet", "refs/heads/"+branchName) //nolint:gosec // branchName comes from internal shadow branch naming
+	cmd := exec.CommandContext(ctx, "git", "show-ref", "--verify", "--quiet", "refs/heads/"+branchName)
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("branch %s not found: %w", branchName, err)
 	}
@@ -1159,7 +1159,7 @@ func branchExistsCLI(branchName string) error {
 func HardResetWithProtection(commitHash plumbing.Hash) (shortID string, err error) {
 	ctx := context.Background()
 	hashStr := commitHash.String()
-	cmd := exec.CommandContext(ctx, "git", "reset", "--hard", hashStr) //nolint:gosec // hashStr is a plumbing.Hash, not user input
+	cmd := exec.CommandContext(ctx, "git", "reset", "--hard", hashStr)
 	if output, err := cmd.CombinedOutput(); err != nil {
 		return "", fmt.Errorf("reset failed: %s: %w", strings.TrimSpace(string(output)), err)
 	}

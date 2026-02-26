@@ -93,10 +93,8 @@ func WaitForCheckpoint(t *testing.T, s *RepoState, timeout time.Duration) {
 	t.Fatalf("checkpoint branch did not advance within %s", timeout)
 }
 
-// AssertNoShadowBranches asserts that no shadow branches (entire/*) remain,
-// excluding entire/checkpoints/*. Shadow branches should be cleaned up after
-// commits condense session data to the metadata branch.
-func AssertNoShadowBranches(t *testing.T, dir string) {
+// shadowBranches returns all shadow branches (entire/*) excluding entire/checkpoints/*.
+func shadowBranches(t *testing.T, dir string) []string {
 	t.Helper()
 	branches := GitOutput(t, dir, "for-each-ref", "--format=%(refname:short)", "refs/heads/entire/")
 	var shadow []string
@@ -107,8 +105,27 @@ func AssertNoShadowBranches(t *testing.T, dir string) {
 		}
 		shadow = append(shadow, b)
 	}
+	return shadow
+}
+
+// AssertNoShadowBranches asserts that no shadow branches (entire/*) remain,
+// excluding entire/checkpoints/*. Shadow branches should be cleaned up after
+// commits condense session data to the metadata branch.
+func AssertNoShadowBranches(t *testing.T, dir string) {
+	t.Helper()
+	shadow := shadowBranches(t, dir)
 	assert.Empty(t, shadow,
 		"shadow branches should be cleaned up after commit, found: %v", shadow)
+}
+
+// AssertHasShadowBranches asserts that at least one shadow branch (entire/*)
+// exists, excluding entire/checkpoints/*. Use this when the shadow branch is
+// expected to persist (e.g., session is still idle).
+func AssertHasShadowBranches(t *testing.T, dir string) {
+	t.Helper()
+	shadow := shadowBranches(t, dir)
+	assert.NotEmpty(t, shadow,
+		"expected at least one shadow branch to persist, but none found")
 }
 
 // AssertCheckpointAdvanced asserts the checkpoint branch moved forward.

@@ -6,10 +6,10 @@ import (
 	"time"
 
 	"github.com/entireio/cli/cmd/entire/cli/agent"
-	"github.com/entireio/cli/cmd/entire/cli/buildinfo"
 	"github.com/entireio/cli/cmd/entire/cli/checkpoint"
 	"github.com/entireio/cli/cmd/entire/cli/checkpoint/id"
 	"github.com/entireio/cli/cmd/entire/cli/paths"
+	"github.com/entireio/cli/cmd/entire/cli/versioninfo"
 
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
@@ -226,7 +226,7 @@ func (s *ManualCommitStrategy) initializeSession(repo *git.Repository, sessionID
 	headHash := head.Hash().String()
 	state := &SessionState{
 		SessionID:             sessionID,
-		CLIVersion:            buildinfo.Version,
+		CLIVersion:            versioninfo.Version,
 		BaseCommit:            headHash,
 		AttributionBaseCommit: headHash,
 		WorktreePath:          worktreePath,
