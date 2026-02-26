@@ -227,8 +227,15 @@ func resumeMultipleCheckpoints(ctx context.Context, repo *git.Repository, checkp
 		}
 
 		sessions, restoreErr := strat.RestoreLogsOnly(ctx, point, force)
-		if restoreErr != nil || len(sessions) == 0 {
+		if restoreErr != nil {
 			logging.Debug(logCtx, "skipping checkpoint: restore failed",
+				slog.String("checkpoint_id", cpID.String()),
+				slog.String("error", restoreErr.Error()),
+			)
+			continue
+		}
+		if len(sessions) == 0 {
+			logging.Debug(logCtx, "skipping checkpoint: no sessions restored",
 				slog.String("checkpoint_id", cpID.String()),
 			)
 			continue
