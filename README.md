@@ -56,13 +56,13 @@ entire status
 entire enable
 ```
 
-This installs agent and git hooks to work with your AI agent (Claude Code, Gemini CLI, OpenCode, or Cursor IDE). You'll be prompted to select which agents to enable. To enable a specific agent non-interactively, use `entire enable --agent <name>` (e.g., `entire enable --agent cursor`).
+This installs agent and git hooks to work with your AI agent (Claude Code, Gemini CLI, OpenCode, or Cursor). You'll be prompted to select which agents to enable. To enable a specific agent non-interactively, use `entire enable --agent <name>` (e.g., `entire enable --agent cursor`).
 
 The hooks capture session data as you work. Checkpoints are created when you or the agent make a git commit. Your code commits stay clean, Entire never creates commits on your active branch. All session metadata is stored on a separate `entire/checkpoints/v1` branch.
 
 ### 2. Work with Your AI Agent
 
-Just use Claude Code, Gemini CLI, OpenCode, or Cursor IDE normally. Entire runs in the background, tracking your session:
+Just use Claude Code, Gemini CLI, OpenCode, or Cursor normally. Entire runs in the background, tracking your session:
 
 ```
 entire status  # Check current session status anytime
@@ -232,7 +232,7 @@ Each agent stores its hook configuration in its own directory. When you run `ent
 | Claude Code | `.claude/settings.json`       | JSON hooks config |
 | Gemini CLI  | `.gemini/settings.json`       | JSON hooks config |
 | OpenCode    | `.opencode/plugins/entire.ts` | TypeScript plugin |
-| Cursor IDE  | `.cursor/hooks.json`          | JSON hooks config |
+| Cursor  | `.cursor/hooks.json`          | JSON hooks config |
 
 You can enable multiple agents at the same time — each agent's hooks are independent. Entire detects which agents are active by checking for installed hooks, not by a setting in `settings.json`.
 
@@ -295,7 +295,7 @@ If you run into any issues with OpenCode integration, please [open an issue](htt
 
 Cursor support is currently in preview. Entire can work with [Cursor](https://www.cursor.com/) as an alternative to Claude Code, or alongside it — you can have multiple agents' hooks enabled at the same time.
 
-Entire supports Cursor IDE, but does not currently support Cursor Agent CLI tool.
+Entire supports Cursor IDE and Cursor Agent CLI tool.
 
 To enable:
 

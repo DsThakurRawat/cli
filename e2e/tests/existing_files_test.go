@@ -111,6 +111,11 @@ func TestInteractiveContentOverlapRevertNewFile(t *testing.T) {
 		s.WaitFor(t, session, prompt, 60*time.Second)
 		testutil.WaitForFileExists(t, s.Dir, "docs/red.md", 30*time.Second)
 
+		// Wait for session to transition from ACTIVE to IDLE. The prompt
+		// pattern may appear before the turn-end hook completes (race between
+		// TUI rendering and hook execution, especially with OpenCode).
+		testutil.WaitForSessionIdle(t, s.Dir, 15*time.Second)
+
 		// Session is now idle (turn ended, waiting for next prompt).
 		// User replaces the content entirely.
 		if err := os.WriteFile(filepath.Join(s.Dir, "docs", "red.md"), []byte("# Completely different content\n\nNothing about red here.\n"), 0o644); err != nil {

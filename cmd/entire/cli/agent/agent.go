@@ -9,7 +9,7 @@ import (
 )
 
 // Agent defines the interface for interacting with a coding agent.
-// Each agent implementation (Claude Code, Cursor IDE, Aider, etc.) converts its
+// Each agent implementation (Claude Code, Cursor, Aider, etc.) converts its
 // native format to the normalized types defined in this package.
 //
 // The interface is organized into three groups:
@@ -76,7 +76,7 @@ type Agent interface {
 }
 
 // HookSupport is implemented by agents with lifecycle hooks.
-// This optional interface allows agents like Claude Code and Cursor IDE to
+// This optional interface allows agents like Claude Code and Cursor to
 // install and manage hooks that notify Entire of agent events.
 //
 // The interface is organized into two groups:
@@ -167,7 +167,7 @@ type TokenCalculator interface {
 	Agent
 
 	// CalculateTokenUsage computes token usage from the transcript starting at the given offset.
-	CalculateTokenUsage(sessionRef string, fromOffset int) (*TokenUsage, error)
+	CalculateTokenUsage(transcriptData []byte, fromOffset int) (*TokenUsage, error)
 }
 
 // SubagentAwareExtractor provides methods for extracting files and tokens including subagents.
@@ -179,9 +179,9 @@ type SubagentAwareExtractor interface {
 	// ExtractAllModifiedFiles extracts files modified by both the main agent and any spawned subagents.
 	// The subagentsDir parameter specifies where subagent transcripts are stored.
 	// Returns a deduplicated list of all modified file paths.
-	ExtractAllModifiedFiles(sessionRef string, fromOffset int, subagentsDir string) ([]string, error)
+	ExtractAllModifiedFiles(transcriptData []byte, fromOffset int, subagentsDir string) ([]string, error)
 
 	// CalculateTotalTokenUsage computes token usage including all spawned subagents.
 	// The subagentsDir parameter specifies where subagent transcripts are stored.
-	CalculateTotalTokenUsage(sessionRef string, fromOffset int, subagentsDir string) (*TokenUsage, error)
+	CalculateTotalTokenUsage(transcriptData []byte, fromOffset int, subagentsDir string) (*TokenUsage, error)
 }

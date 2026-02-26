@@ -706,15 +706,7 @@ func (s *ManualCommitStrategy) RestoreLogsOnly(ctx context.Context, point Rewind
 }
 
 // ResolveAgentForRewind resolves the agent from checkpoint metadata.
-// Falls back to the default agent (Claude) for old checkpoints that lack agent info.
 func ResolveAgentForRewind(agentType agent.AgentType) (agent.Agent, error) {
-	if !isSpecificAgentType(agentType) {
-		ag := agent.Default()
-		if ag == nil {
-			return nil, errors.New("no default agent registered")
-		}
-		return ag, nil
-	}
 	ag, err := agent.GetByAgentType(agentType)
 	if err != nil {
 		return nil, fmt.Errorf("resolving agent %q: %w", agentType, err)

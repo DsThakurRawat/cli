@@ -10,7 +10,6 @@ import (
 	"strings"
 
 	"github.com/entireio/cli/cmd/entire/cli/agent"
-	"github.com/entireio/cli/cmd/entire/cli/agent/claudecode"
 	"github.com/entireio/cli/cmd/entire/cli/agent/factoryaidroid"
 	"github.com/entireio/cli/cmd/entire/cli/agent/geminicli"
 	"github.com/entireio/cli/cmd/entire/cli/agent/opencode"
@@ -120,6 +119,7 @@ type condenseOpts struct {
 // For mid-session commits (no Stop/SaveStep called yet), the shadow branch may not exist.
 // In this case, data is extracted from the live transcript instead.
 func (s *ManualCommitStrategy) CondenseSession(ctx context.Context, repo *git.Repository, checkpointID id.CheckpointID, state *SessionState, committedFiles map[string]struct{}, opts ...condenseOpts) (*CondenseResult, error) {
+	ag, _ := agent.GetByAgentType(state.AgentType) //nolint:errcheck // ag may be nil for unknown agent types; callers use type assertions so nil is safe
 	var o condenseOpts
 	if len(opts) > 0 {
 		o = opts[0]
@@ -162,7 +162,7 @@ func (s *ManualCommitStrategy) CondenseSession(ctx context.Context, repo *git.Re
 		// Only wait for flush when the session is active — for idle/ended sessions the
 		// transcript is already fully flushed (the Stop hook completed the flush).
 		if state.Phase.IsActive() {
-			prepareTranscriptIfNeeded(ctx, state.AgentType, state.TranscriptPath)
+			prepareTranscriptIfNeeded(ctx, ag, state.TranscriptPath)
 		}
 		var extractErr error
 		sessionData, extractErr = s.extractSessionDataFromLiveTranscript(ctx, state)
@@ -436,6 +436,7 @@ func calculateSessionAttributions(ctx context.Context, repo *git.Repository, sha
 // continued growing — the shadow branch copy would be stale.
 // checkpointTranscriptStart is the line offset (Claude) or message index (Gemini) where the current checkpoint began.
 func (s *ManualCommitStrategy) extractSessionData(ctx context.Context, repo *git.Repository, shadowRef plumbing.Hash, sessionID string, filesTouched []string, agentType agent.AgentType, liveTranscriptPath string, checkpointTranscriptStart int, isActive bool) (*ExtractedSessionData, error) {
+	ag, _ := agent.GetByAgentType(agentType) //nolint:errcheck // ag may be nil for unknown agent types; callers use type assertions so nil is safe
 	commit, err := repo.CommitObject(shadowRef)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get commit object: %w", err)
@@ -459,7 +460,7 @@ func (s *ManualCommitStrategy) extractSessionData(ctx context.Context, repo *git
 		// Only wait for flush when the session is active — for idle/ended sessions the
 		// transcript is already fully flushed (the Stop hook completed the flush).
 		if isActive {
-			prepareTranscriptIfNeeded(ctx, agentType, liveTranscriptPath)
+			prepareTranscriptIfNeeded(ctx, ag, liveTranscriptPath)
 		}
 		if liveData, readErr := os.ReadFile(liveTranscriptPath); readErr == nil && len(liveData) > 0 { //nolint:gosec // path from session state
 			fullTranscript = string(liveData)
@@ -491,7 +492,7 @@ func (s *ManualCommitStrategy) extractSessionData(ctx context.Context, repo *git
 
 	// Calculate token usage from the extracted transcript portion
 	if len(data.Transcript) > 0 {
-		data.TokenUsage = calculateTokenUsage(agentType, data.Transcript, checkpointTranscriptStart)
+		data.TokenUsage = agent.CalculateTokenUsage(ag, data.Transcript, checkpointTranscriptStart, "") //TODO: why do we not use here subagents dir?
 	}
 
 	return data, nil
@@ -501,6 +502,8 @@ func (s *ManualCommitStrategy) extractSessionData(ctx context.Context, repo *git
 // This is used for mid-session commits where no shadow branch exists yet.
 func (s *ManualCommitStrategy) extractSessionDataFromLiveTranscript(ctx context.Context, state *SessionState) (*ExtractedSessionData, error) {
 	data := &ExtractedSessionData{}
+
+	ag, _ := agent.GetByAgentType(state.AgentType) //nolint:errcheck // ag may be nil for unknown agent types; callers use type assertions so nil is safe
 
 	// Read the live transcript
 	if state.TranscriptPath == "" {
@@ -533,7 +536,7 @@ func (s *ManualCommitStrategy) extractSessionDataFromLiveTranscript(ctx context.
 
 	// Calculate token usage from the extracted transcript portion
 	if len(data.Transcript) > 0 {
-		data.TokenUsage = calculateTokenUsage(state.AgentType, data.Transcript, state.CheckpointTranscriptStart)
+		data.TokenUsage = agent.CalculateTokenUsage(ag, data.Transcript, state.CheckpointTranscriptStart, "") //TODO: why do we not use here subagents dir?
 	}
 
 	return data, nil
@@ -588,7 +591,7 @@ func extractUserPrompts(agentType agent.AgentType, content string) []string {
 
 	// Droid has its own envelope format — use its parser to normalize first
 	if agentType == agent.AgentTypeFactoryAIDroid {
-		lines, err := factoryaidroid.ParseDroidTranscriptFromBytes([]byte(content), 0)
+		lines, _, err := factoryaidroid.ParseDroidTranscriptFromBytes([]byte(content), 0)
 		if err != nil {
 			return nil
 		}
@@ -643,61 +646,6 @@ func extractUserPrompts(agentType agent.AgentType, content string) []string {
 
 	// Claude Code and other JSONL-based agents
 	return extractUserPromptsFromLines(strings.Split(content, "\n"))
-}
-
-// calculateTokenUsage calculates token usage from raw transcript data.
-// startOffset is the line number (Claude Code) or message index (Gemini CLI)
-// where the current checkpoint began, allowing calculation for only the portion
-// of the transcript since the last checkpoint.
-func calculateTokenUsage(agentType agent.AgentType, data []byte, startOffset int) *agent.TokenUsage {
-	// No token usage information from Cursor yet
-	if agentType == agent.AgentTypeCursor {
-		return nil
-	}
-
-	if len(data) == 0 {
-		return &agent.TokenUsage{}
-	}
-
-	// Droid has its own envelope format — use its parser to normalize first.
-	// startOffset is a raw JSONL line count, so pass it to the parser which
-	// applies the offset before filtering non-message entries.
-	if agentType == agent.AgentTypeFactoryAIDroid {
-		lines, err := factoryaidroid.ParseDroidTranscriptFromBytes(data, startOffset)
-		if err != nil || len(lines) == 0 {
-			return &agent.TokenUsage{}
-		}
-		return factoryaidroid.CalculateTokenUsage(lines)
-	}
-	// OpenCode uses JSONL with token info on assistant messages (different schema from Claude Code)
-	if agentType == agent.AgentTypeOpenCode {
-		return opencode.CalculateTokenUsageFromBytes(data, startOffset)
-	}
-
-	// Try Gemini format first if agentType is Gemini, or as fallback if Unknown
-	if agentType == agent.AgentTypeGemini || agentType == agent.AgentTypeUnknown {
-		// Attempt to parse as Gemini JSON
-		transcript, err := geminicli.ParseTranscript(data)
-		if err == nil && transcript != nil && len(transcript.Messages) > 0 {
-			return geminicli.CalculateTokenUsage(data, startOffset)
-		}
-		// If agentType is explicitly Gemini but parsing failed, return empty usage
-		if agentType == agent.AgentTypeGemini {
-			return &agent.TokenUsage{}
-		}
-		// Otherwise fall through to JSONL parsing for Unknown type
-	}
-
-	// Claude Code and other JSONL-based agents
-	lines, err := transcript.ParseFromBytes(data)
-	if err != nil || len(lines) == 0 {
-		return &agent.TokenUsage{}
-	}
-	// Slice transcript lines to only include checkpoint portion
-	if startOffset > 0 && startOffset < len(lines) {
-		lines = lines[startOffset:]
-	}
-	return claudecode.CalculateTokenUsage(lines)
 }
 
 // extractUserPromptsFromLines extracts user prompts from JSONL transcript lines.

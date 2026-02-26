@@ -371,18 +371,3 @@ func (c *ClaudeCodeAgent) ChunkTranscript(_ context.Context, content []byte, max
 func (c *ClaudeCodeAgent) ReassembleTranscript(chunks [][]byte) ([]byte, error) {
 	return agent.ReassembleJSONL(chunks), nil
 }
-
-// SubagentAwareExtractor interface implementation
-
-// ExtractAllModifiedFiles extracts files modified by both the main agent and any spawned subagents.
-// Claude Code spawns subagents via the Task tool; their transcripts are stored in subagentsDir.
-// Returns a deduplicated list of all modified file paths.
-func (c *ClaudeCodeAgent) ExtractAllModifiedFiles(sessionRef string, fromOffset int, subagentsDir string) ([]string, error) {
-	return ExtractAllModifiedFiles(sessionRef, fromOffset, subagentsDir)
-}
-
-// CalculateTotalTokenUsage computes token usage including all spawned subagents.
-// Claude Code spawns subagents via the Task tool; their transcripts are stored in subagentsDir.
-func (c *ClaudeCodeAgent) CalculateTotalTokenUsage(sessionRef string, fromOffset int, subagentsDir string) (*agent.TokenUsage, error) {
-	return CalculateTotalTokenUsage(sessionRef, fromOffset, subagentsDir)
-}

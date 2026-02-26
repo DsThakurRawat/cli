@@ -421,7 +421,7 @@ Test `ParseHookEvent` for every hook name your agent supports. See [Testing Patt
 
 The framework dispatcher (`DispatchLifecycleEvent` in `lifecycle.go`) handles each event type as follows:
 
-| Event Type | Framework Actions | Claude Code Hook | Gemini CLI Hook | Cursor IDE Hook | OpenCode Hook |
+| Event Type | Framework Actions | Claude Code Hook | Gemini CLI Hook | Cursor Hook | OpenCode Hook |
 |------------|-------------------|------------------|-----------------|-----------------|---------------|
 | `SessionStart` | Shows banner, checks concurrent sessions, fires state machine transition | `session-start` | `session-start` | `session-start` | `session-start` |
 | `TurnStart` | Captures pre-prompt state (git status, transcript position), ensures strategy setup, initializes session | `user-prompt-submit` | `before-agent` | `before-submit-prompt` | `turn-start` |
@@ -620,7 +620,7 @@ Key principles:
 
 Note: Gemini CLI requires `hooksConfig.enabled: true` and each hook entry requires a `name` field.
 
-### Example: Cursor IDE Hook Config
+### Example: Cursor Hook Config
 
 ```json
 {
@@ -774,9 +774,9 @@ func TestInstallHooks_Idempotent(t *testing.T) {
 - Gemini CLI lifecycle tests: `cmd/entire/cli/agent/geminicli/lifecycle_test.go`
 - Gemini CLI hooks tests: `cmd/entire/cli/agent/geminicli/hooks_test.go`
 - Gemini CLI transcript tests: `cmd/entire/cli/agent/geminicli/transcript_test.go`
-- Cursor IDE lifecycle tests: `cmd/entire/cli/agent/cursor/lifecycle_test.go`
-- Cursor IDE hooks tests: `cmd/entire/cli/agent/cursor/hooks_test.go`
-- Cursor IDE session tests: `cmd/entire/cli/agent/cursor/cursor_test.go`
+- Cursor IDE & CLI lifecycle tests: `cmd/entire/cli/agent/cursor/lifecycle_test.go`
+- Cursor IDE & CLI hooks tests: `cmd/entire/cli/agent/cursor/hooks_test.go`
+- Cursor IDE & CLI session tests: `cmd/entire/cli/agent/cursor/cursor_test.go`
 - OpenCode lifecycle tests: `cmd/entire/cli/agent/opencode/lifecycle_test.go`
 - OpenCode hooks tests: `cmd/entire/cli/agent/opencode/hooks_test.go`
 - OpenCode transcript tests: `cmd/entire/cli/agent/opencode/transcript_test.go`
@@ -822,7 +822,7 @@ Use `//nolint:nilnil` to suppress the linter warning on intentional nil returns.
 ### Agent Name vs Agent Type
 
 - `AgentName` is the **registry key** used in code (`"claude-code"`, `"gemini"`, `"cursor"`). It appears in CLI commands: `entire hooks cursor stop`.
-- `AgentType` is the **display name** stored in metadata and commit trailers (`"Claude Code"`, `"Gemini CLI"`, `"Cursor IDE"`). It's what users see.
+- `AgentType` is the **display name** stored in metadata and commit trailers (`"Claude Code"`, `"Gemini CLI"`, `"Cursor"`). It's what users see.
 
 Register constants for both in `cmd/entire/cli/agent/registry.go` when adding a new agent.
 

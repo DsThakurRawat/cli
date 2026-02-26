@@ -2,6 +2,7 @@ package geminicli
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -98,8 +99,39 @@ func (g *GeminiCLIAgent) ExtractSummary(sessionRef string) (string, error) {
 }
 
 // CalculateTokenUsage computes token usage from the transcript starting at the given message offset.
-func (g *GeminiCLIAgent) CalculateTokenUsage(sessionRef string, fromOffset int) (*agent.TokenUsage, error) {
-	return CalculateTokenUsageFromFile(sessionRef, fromOffset)
+func (g *GeminiCLIAgent) CalculateTokenUsage(transcriptData []byte, fromOffset int) (*agent.TokenUsage, error) {
+	var transcript struct {
+		Messages []geminiMessageWithTokens `json:"messages"`
+	}
+
+	if err := json.Unmarshal(transcriptData, &transcript); err != nil {
+		return &agent.TokenUsage{}, fmt.Errorf("failed to parse transcript for token usage: %w", err)
+	}
+
+	usage := &agent.TokenUsage{}
+
+	for i, msg := range transcript.Messages {
+		// Skip messages before startMessageIndex
+		if i < fromOffset {
+			continue
+		}
+
+		// Only count tokens from gemini (assistant) messages
+		if msg.Type != MessageTypeGemini {
+			continue
+		}
+
+		if msg.Tokens == nil {
+			continue
+		}
+
+		usage.APICallCount++
+		usage.InputTokens += msg.Tokens.Input
+		usage.OutputTokens += msg.Tokens.Output
+		usage.CacheReadTokens += msg.Tokens.Cached
+	}
+
+	return usage, nil
 }
 
 // --- Internal hook parsing functions ---

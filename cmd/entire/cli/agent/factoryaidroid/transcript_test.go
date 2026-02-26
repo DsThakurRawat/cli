@@ -19,7 +19,7 @@ func TestParseDroidTranscript_NormalizesEnvelope(t *testing.T) {
 			`{"type":"message","id":"m2","message":{"role":"assistant","content":[{"type":"text","text":"hi there"}]}}` + "\n",
 	)
 
-	lines, err := ParseDroidTranscriptFromBytes(data, 0)
+	lines, _, err := ParseDroidTranscriptFromBytes(data, 0)
 	if err != nil {
 		t.Fatalf("ParseDroidTranscriptFromBytes() error = %v", err)
 	}
@@ -98,7 +98,7 @@ func TestParseDroidTranscriptFromBytes_StartLineSkipsNonMessageEntries(t *testin
 	)
 
 	// With startLine=0, all 3 messages should be returned
-	allLines, err := ParseDroidTranscriptFromBytes(data, 0)
+	allLines, _, err := ParseDroidTranscriptFromBytes(data, 0)
 	if err != nil {
 		t.Fatalf("ParseDroidTranscriptFromBytes(0) error = %v", err)
 	}
@@ -108,7 +108,7 @@ func TestParseDroidTranscriptFromBytes_StartLineSkipsNonMessageEntries(t *testin
 
 	// With startLine=2, skip raw lines 0-1 (session_start + m1).
 	// Lines 2 (session_event) is skipped by filter, lines 3-4 (m2, m3) are messages.
-	fromLine2, err := ParseDroidTranscriptFromBytes(data, 2)
+	fromLine2, _, err := ParseDroidTranscriptFromBytes(data, 2)
 	if err != nil {
 		t.Fatalf("ParseDroidTranscriptFromBytes(2) error = %v", err)
 	}
@@ -124,7 +124,7 @@ func TestParseDroidTranscriptFromBytes_StartLineSkipsNonMessageEntries(t *testin
 
 	// With startLine=3, skip raw lines 0-2 (session_start + m1 + session_event).
 	// Lines 3-4 (m2, m3) are messages.
-	fromLine3, err := ParseDroidTranscriptFromBytes(data, 3)
+	fromLine3, _, err := ParseDroidTranscriptFromBytes(data, 3)
 	if err != nil {
 		t.Fatalf("ParseDroidTranscriptFromBytes(3) error = %v", err)
 	}
@@ -136,7 +136,7 @@ func TestParseDroidTranscriptFromBytes_StartLineSkipsNonMessageEntries(t *testin
 	}
 
 	// With startLine beyond end, should return no lines
-	beyondEnd, err := ParseDroidTranscriptFromBytes(data, 100)
+	beyondEnd, _, err := ParseDroidTranscriptFromBytes(data, 100)
 	if err != nil {
 		t.Fatalf("ParseDroidTranscriptFromBytes(100) error = %v", err)
 	}
@@ -157,7 +157,7 @@ func TestParseDroidTranscript_RealDroidFormat(t *testing.T) {
 			`{"type":"message","id":"msg-4","message":{"role":"assistant","content":[{"type":"text","text":"Done!"}]}}` + "\n",
 	)
 
-	lines, err := ParseDroidTranscriptFromBytes(data, 0)
+	lines, _, err := ParseDroidTranscriptFromBytes(data, 0)
 	if err != nil {
 		t.Fatalf("ParseDroidTranscriptFromBytes() error = %v", err)
 	}
@@ -186,7 +186,7 @@ func TestExtractModifiedFiles(t *testing.T) {
 {"type":"message","id":"a4","message":{"role":"assistant","content":[{"type":"tool_use","name":"Write","input":{"file_path":"foo.go"}}]}}
 `)
 
-	lines, err := ParseDroidTranscriptFromBytes(data, 0)
+	lines, _, err := ParseDroidTranscriptFromBytes(data, 0)
 	if err != nil {
 		t.Fatalf("ParseDroidTranscriptFromBytes() error = %v", err)
 	}
@@ -1070,7 +1070,7 @@ func TestParseDroidTranscript_MalformedLines(t *testing.T) {
 			`{"type":"session_event","data":"ignored"}` + "\n",
 	)
 
-	lines, err := ParseDroidTranscriptFromBytes(data, 0)
+	lines, _, err := ParseDroidTranscriptFromBytes(data, 0)
 	if err != nil {
 		t.Fatalf("ParseDroidTranscriptFromBytes() error = %v", err)
 	}

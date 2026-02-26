@@ -334,7 +334,7 @@ func (s *ManualCommitStrategy) PrepareCommitMsg(ctx context.Context, commitMsgFi
 	}
 
 	// Determine agent type and last prompt from session
-	agentType := DefaultAgentType // default for backward compatibility
+	var agentType agent.AgentType
 	var lastPrompt string
 	if len(sessionsWithContent) > 0 {
 		firstSession := sessionsWithContent[0]
@@ -1317,14 +1317,25 @@ func (s *ManualCommitStrategy) extractModifiedFilesFromLiveTranscript(ctx contex
 	// AND subagent transcripts in a single pass, avoiding redundant parsing.
 	if state.AgentType == agent.AgentTypeClaudeCode {
 		subagentsDir := filepath.Join(filepath.Dir(state.TranscriptPath), state.SessionID, "subagents")
-		allFiles, extractErr := claudecode.ExtractAllModifiedFiles(state.TranscriptPath, offset, subagentsDir)
-		if extractErr != nil {
-			logging.Debug(logCtx, "extractModifiedFilesFromLiveTranscript: extraction failed",
+		transcriptData, readErr := os.ReadFile(state.TranscriptPath)
+		if readErr != nil {
+			logging.Debug(logCtx, "extractModifiedFilesFromLiveTranscript: failed to read transcript",
 				slog.String("session_id", state.SessionID),
-				slog.String("error", extractErr.Error()),
+				slog.String("error", readErr.Error()),
 			)
 		} else {
-			modifiedFiles = allFiles
+			// TODO: fix when we refactor this area.
+			// rather than instantiating claude specifically, we should iterate agents.
+			c := &claudecode.ClaudeCodeAgent{}
+			allFiles, extractErr := c.ExtractAllModifiedFiles(transcriptData, offset, subagentsDir)
+			if extractErr != nil {
+				logging.Debug(logCtx, "extractModifiedFilesFromLiveTranscript: extraction failed",
+					slog.String("session_id", state.SessionID),
+					slog.String("error", extractErr.Error()),
+				)
+			} else {
+				modifiedFiles = allFiles
+			}
 		}
 	} else {
 		files, _, err := analyzer.ExtractModifiedFilesFromOffset(state.TranscriptPath, offset)
@@ -1544,8 +1555,8 @@ func (s *ManualCommitStrategy) InitializeSession(ctx context.Context, sessionID 
 		}
 		state.TurnID = turnID.String()
 
-		// Backfill AgentType if empty or set to the generic default "Agent"
-		if !isSpecificAgentType(state.AgentType) && agentType != "" {
+		// Set AgentType from hook context if not yet set
+		if state.AgentType == "" && agentType != "" {
 			state.AgentType = agentType
 		}
 

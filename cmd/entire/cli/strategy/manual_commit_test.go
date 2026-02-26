@@ -1655,8 +1655,7 @@ func TestSaveStep_EmptyBaseCommit_Recovery(t *testing.T) {
 }
 
 // TestSaveStep_UsesCtxAgentType_WhenNoSessionState tests that SaveStep uses
-// ctx.AgentType instead of DefaultAgentType ("Agent") when no session state exists.
-// This is the primary bug scenario for ENT-207.
+// ctx.AgentType when no session state exists.
 func TestSaveStep_UsesCtxAgentType_WhenNoSessionState(t *testing.T) {
 	dir := t.TempDir()
 	repo, err := git.PlainInit(dir, false)
@@ -1686,7 +1685,7 @@ func TestSaveStep_UsesCtxAgentType_WhenNoSessionState(t *testing.T) {
 	sessionID := "2026-02-06-agent-type-test"
 
 	// NO session state exists (simulates InitializeSession failure)
-	// SaveStep should use ctx.AgentType, not DefaultAgentType
+	// SaveStep should use ctx.AgentType
 
 	metadataDir := ".entire/metadata/" + sessionID
 	metadataDirAbs := filepath.Join(dir, metadataDir)
@@ -1795,47 +1794,6 @@ func TestSaveStep_UsesCtxAgentType_WhenPartialState(t *testing.T) {
 	}
 	if loaded.AgentType != agent.AgentTypeClaudeCode {
 		t.Errorf("AgentType = %q, want %q", loaded.AgentType, agent.AgentTypeClaudeCode)
-	}
-}
-
-// TestInitializeSession_BackfillsUnknownAgentType tests that InitializeSession
-// replaces the default "Agent" value with the correct agent type on subsequent calls.
-func TestInitializeSession_BackfillsUnknownAgentType(t *testing.T) {
-	dir := t.TempDir()
-	initTestRepo(t, dir)
-
-	t.Chdir(dir)
-
-	s := &ManualCommitStrategy{}
-	sessionID := "2026-02-06-backfill-agent-type"
-
-	// First call: initialize with correct type
-	if err := s.InitializeSession(context.Background(), sessionID, agent.AgentTypeClaudeCode, "", ""); err != nil {
-		t.Fatalf("InitializeSession() error = %v", err)
-	}
-
-	// Simulate the bug: manually set AgentType to "Agent" (as if session was created with default)
-	state, err := s.loadSessionState(context.Background(), sessionID)
-	if err != nil {
-		t.Fatalf("failed to load session state: %v", err)
-	}
-	state.AgentType = agent.AgentTypeUnknown
-	if err := s.saveSessionState(context.Background(), state); err != nil {
-		t.Fatalf("failed to save state: %v", err)
-	}
-
-	// Second call with correct agent type should fix the "Agent" value
-	if err := s.InitializeSession(context.Background(), sessionID, agent.AgentTypeClaudeCode, "", ""); err != nil {
-		t.Fatalf("InitializeSession() second call error = %v", err)
-	}
-
-	loaded, err := s.loadSessionState(context.Background(), sessionID)
-	if err != nil {
-		t.Fatalf("failed to load session state: %v", err)
-	}
-	if loaded.AgentType != agent.AgentTypeClaudeCode {
-		t.Errorf("AgentType = %q, want %q (should have been backfilled from %q)",
-			loaded.AgentType, agent.AgentTypeClaudeCode, agent.AgentTypeUnknown)
 	}
 }
 

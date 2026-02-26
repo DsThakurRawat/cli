@@ -481,7 +481,7 @@ func TestWriteActiveSessions(t *testing.T) {
 	if !strings.Contains(output, "Claude Code") {
 		t.Errorf("Expected agent label 'Claude Code', got: %s", output)
 	}
-	if !strings.Contains(output, "Cursor IDE") {
+	if !strings.Contains(output, "Cursor") {
 		t.Errorf("Expected agent label 'Cursor', got: %s", output)
 	}
 	// Session without AgentType should show unknown placeholder
@@ -516,7 +516,7 @@ func TestWriteActiveSessions(t *testing.T) {
 
 	// Session started 15m ago with no LastInteractionTime should NOT show "active" in stats
 	for _, line := range lines {
-		if strings.Contains(line, "Cursor IDE") {
+		if strings.Contains(line, "Cursor") {
 			if strings.Contains(line, "active") {
 				t.Errorf("Session without LastInteractionTime should not show 'active', got: %s", line)
 			}

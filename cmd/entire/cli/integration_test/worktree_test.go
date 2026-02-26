@@ -32,6 +32,7 @@ func TestWorktreeOpenRepository(t *testing.T) {
 
 	cmd := exec.Command("git", "worktree", "add", worktreeDir, "-b", "test-branch")
 	cmd.Dir = env.RepoDir
+	cmd.Env = gitIsolatedEnv()
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("failed to create worktree: %v\nOutput: %s", err, output)
 	}

@@ -109,7 +109,7 @@ func (f *FactoryAIDroidAgent) ExtractSummary(sessionRef string) (string, error) 
 	if err != nil {
 		return "", fmt.Errorf("failed to read transcript: %w", err)
 	}
-	lines, err := ParseDroidTranscriptFromBytes(data, 0)
+	lines, _, err := ParseDroidTranscriptFromBytes(data, 0)
 	if err != nil {
 		return "", fmt.Errorf("failed to parse transcript: %w", err)
 	}
@@ -133,21 +133,21 @@ func (f *FactoryAIDroidAgent) ExtractSummary(sessionRef string) (string, error) 
 
 // --- TokenCalculator ---
 
-// CalculateTokenUsage computes token usage from the transcript starting at the given line offset.
-func (f *FactoryAIDroidAgent) CalculateTokenUsage(sessionRef string, fromOffset int) (*agent.TokenUsage, error) {
-	return CalculateTotalTokenUsageFromTranscript(sessionRef, fromOffset, "")
+// CalculateTokenUsage computes token usage from pre-loaded transcript bytes starting at the given line offset.
+func (f *FactoryAIDroidAgent) CalculateTokenUsage(transcriptData []byte, fromOffset int) (*agent.TokenUsage, error) {
+	return CalculateTotalTokenUsageFromBytes(transcriptData, fromOffset, "")
 }
 
 // --- SubagentAwareExtractor ---
 
 // ExtractAllModifiedFiles extracts files modified by both the main agent and any spawned subagents.
-func (f *FactoryAIDroidAgent) ExtractAllModifiedFiles(sessionRef string, fromOffset int, subagentsDir string) ([]string, error) {
-	return ExtractAllModifiedFilesFromTranscript(sessionRef, fromOffset, subagentsDir)
+func (f *FactoryAIDroidAgent) ExtractAllModifiedFiles(transcriptData []byte, fromOffset int, subagentsDir string) ([]string, error) {
+	return ExtractAllModifiedFilesFromBytes(transcriptData, fromOffset, subagentsDir)
 }
 
 // CalculateTotalTokenUsage computes token usage including all spawned subagents.
-func (f *FactoryAIDroidAgent) CalculateTotalTokenUsage(sessionRef string, fromOffset int, subagentsDir string) (*agent.TokenUsage, error) {
-	return CalculateTotalTokenUsageFromTranscript(sessionRef, fromOffset, subagentsDir)
+func (f *FactoryAIDroidAgent) CalculateTotalTokenUsage(transcriptData []byte, fromOffset int, subagentsDir string) (*agent.TokenUsage, error) {
+	return CalculateTotalTokenUsageFromBytes(transcriptData, fromOffset, subagentsDir)
 }
 
 // --- Internal hook parsing functions ---

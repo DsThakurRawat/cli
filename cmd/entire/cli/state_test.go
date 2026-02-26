@@ -699,3 +699,66 @@ func TestDetectFileChanges_NilPreviouslyUntracked_ReturnsModified(t *testing.T) 
 		t.Errorf("DetectFileChanges(context.Background(),nil) Deleted = %v, want empty", changes.Deleted)
 	}
 }
+
+func TestMergeUnique(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		base  []string
+		extra []string
+		want  []string
+	}{
+		{
+			name:  "disjoint sets",
+			base:  []string{"a.go", "b.go"},
+			extra: []string{"c.go", "d.go"},
+			want:  []string{"a.go", "b.go", "c.go", "d.go"},
+		},
+		{
+			name:  "overlapping sets",
+			base:  []string{"a.go", "b.go"},
+			extra: []string{"b.go", "c.go"},
+			want:  []string{"a.go", "b.go", "c.go"},
+		},
+		{
+			name:  "empty extra",
+			base:  []string{"a.go"},
+			extra: nil,
+			want:  []string{"a.go"},
+		},
+		{
+			name:  "empty base",
+			base:  nil,
+			extra: []string{"a.go"},
+			want:  []string{"a.go"},
+		},
+		{
+			name:  "both empty",
+			base:  nil,
+			extra: nil,
+			want:  nil,
+		},
+		{
+			name:  "identical sets",
+			base:  []string{"a.go", "b.go"},
+			extra: []string{"a.go", "b.go"},
+			want:  []string{"a.go", "b.go"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := mergeUnique(tt.base, tt.extra)
+			if len(got) != len(tt.want) {
+				t.Fatalf("mergeUnique() = %v, want %v", got, tt.want)
+			}
+			for i := range got {
+				if got[i] != tt.want[i] {
+					t.Errorf("mergeUnique()[%d] = %q, want %q", i, got[i], tt.want[i])
+				}
+			}
+		})
+	}
+}

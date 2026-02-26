@@ -206,29 +206,11 @@ func TestShadowStrategy_PreviewRewind_LogsOnly(t *testing.T) {
 func TestResolveAgentForRewind(t *testing.T) {
 	t.Parallel()
 
-	t.Run("empty type falls back to default agent", func(t *testing.T) {
+	t.Run("empty type returns error", func(t *testing.T) {
 		t.Parallel()
-		ag, err := ResolveAgentForRewind("")
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if ag == nil {
-			t.Fatal("expected non-nil agent")
-		}
-		// Default is Claude
-		if ag.Name() != agent.AgentNameClaudeCode {
-			t.Errorf("Name() = %q, want %q", ag.Name(), agent.AgentNameClaudeCode)
-		}
-	})
-
-	t.Run("AgentTypeUnknown falls back to default agent", func(t *testing.T) {
-		t.Parallel()
-		ag, err := ResolveAgentForRewind("Agent")
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if ag.Name() != agent.AgentNameClaudeCode {
-			t.Errorf("Name() = %q, want %q", ag.Name(), agent.AgentNameClaudeCode)
+		_, err := ResolveAgentForRewind("")
+		if err == nil {
+			t.Error("expected error for empty agent type")
 		}
 	})
 

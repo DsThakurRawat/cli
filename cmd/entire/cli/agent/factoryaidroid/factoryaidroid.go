@@ -124,7 +124,7 @@ func (f *FactoryAIDroidAgent) ReadSession(input *agent.HookInput) (*agent.AgentS
 		return nil, fmt.Errorf("failed to read transcript: %w", err)
 	}
 
-	lines, err := ParseDroidTranscriptFromBytes(data, 0)
+	lines, _, err := ParseDroidTranscriptFromBytes(data, 0)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse transcript: %w", err)
 	}

@@ -16,7 +16,7 @@ func TestInstallHooks_FreshInstall(t *testing.T) {
 	t.Chdir(tempDir)
 
 	agent := &FactoryAIDroidAgent{}
-	count, err := agent.InstallHooks(context.Background(),false, false)
+	count, err := agent.InstallHooks(context.Background(), false, false)
 	if err != nil {
 		t.Fatalf("InstallHooks() error = %v", err)
 	}
@@ -75,7 +75,7 @@ func TestInstallHooks_Idempotent(t *testing.T) {
 	agent := &FactoryAIDroidAgent{}
 
 	// First install
-	count1, err := agent.InstallHooks(context.Background(),false, false)
+	count1, err := agent.InstallHooks(context.Background(), false, false)
 	if err != nil {
 		t.Fatalf("first InstallHooks() error = %v", err)
 	}
@@ -84,7 +84,7 @@ func TestInstallHooks_Idempotent(t *testing.T) {
 	}
 
 	// Second install should add 0 hooks
-	count2, err := agent.InstallHooks(context.Background(),false, false)
+	count2, err := agent.InstallHooks(context.Background(), false, false)
 	if err != nil {
 		t.Fatalf("second InstallHooks() error = %v", err)
 	}
@@ -107,7 +107,7 @@ func TestInstallHooks_LocalDev(t *testing.T) {
 	t.Chdir(tempDir)
 
 	agent := &FactoryAIDroidAgent{}
-	_, err := agent.InstallHooks(context.Background(),true, false)
+	_, err := agent.InstallHooks(context.Background(), true, false)
 	if err != nil {
 		t.Fatalf("InstallHooks() error = %v", err)
 	}
@@ -140,13 +140,13 @@ func TestInstallHooks_Force(t *testing.T) {
 	agent := &FactoryAIDroidAgent{}
 
 	// First install
-	_, err := agent.InstallHooks(context.Background(),false, false)
+	_, err := agent.InstallHooks(context.Background(), false, false)
 	if err != nil {
 		t.Fatalf("first InstallHooks() error = %v", err)
 	}
 
 	// Force reinstall should replace hooks
-	count, err := agent.InstallHooks(context.Background(),false, true)
+	count, err := agent.InstallHooks(context.Background(), false, true)
 	if err != nil {
 		t.Fatalf("force InstallHooks() error = %v", err)
 	}
@@ -160,7 +160,7 @@ func TestInstallHooks_PermissionsDeny_FreshInstall(t *testing.T) {
 	t.Chdir(tempDir)
 
 	agent := &FactoryAIDroidAgent{}
-	_, err := agent.InstallHooks(context.Background(),false, false)
+	_, err := agent.InstallHooks(context.Background(), false, false)
 	if err != nil {
 		t.Fatalf("InstallHooks() error = %v", err)
 	}
@@ -179,13 +179,13 @@ func TestInstallHooks_PermissionsDeny_Idempotent(t *testing.T) {
 
 	agent := &FactoryAIDroidAgent{}
 	// First install
-	_, err := agent.InstallHooks(context.Background(),false, false)
+	_, err := agent.InstallHooks(context.Background(), false, false)
 	if err != nil {
 		t.Fatalf("first InstallHooks() error = %v", err)
 	}
 
 	// Second install
-	_, err = agent.InstallHooks(context.Background(),false, false)
+	_, err = agent.InstallHooks(context.Background(), false, false)
 	if err != nil {
 		t.Fatalf("second InstallHooks() error = %v", err)
 	}
@@ -216,7 +216,7 @@ func TestInstallHooks_PermissionsDeny_PreservesUserRules(t *testing.T) {
 }`)
 
 	agent := &FactoryAIDroidAgent{}
-	_, err := agent.InstallHooks(context.Background(),false, false)
+	_, err := agent.InstallHooks(context.Background(), false, false)
 	if err != nil {
 		t.Fatalf("InstallHooks() error = %v", err)
 	}
@@ -246,7 +246,7 @@ func TestInstallHooks_PermissionsDeny_PreservesUnknownFields(t *testing.T) {
 }`)
 
 	agent := &FactoryAIDroidAgent{}
-	_, err := agent.InstallHooks(context.Background(),false, false)
+	_, err := agent.InstallHooks(context.Background(), false, false)
 	if err != nil {
 		t.Fatalf("InstallHooks() error = %v", err)
 	}
@@ -336,7 +336,7 @@ func TestInstallHooks_PreservesUserHooksOnSameType(t *testing.T) {
 }`)
 
 	agent := &FactoryAIDroidAgent{}
-	_, err := agent.InstallHooks(context.Background(),false, false)
+	_, err := agent.InstallHooks(context.Background(), false, false)
 	if err != nil {
 		t.Fatalf("InstallHooks() error = %v", err)
 	}
@@ -398,7 +398,7 @@ func TestInstallHooks_PreservesUnknownHookTypes(t *testing.T) {
 }`)
 
 	agent := &FactoryAIDroidAgent{}
-	_, err := agent.InstallHooks(context.Background(),false, false)
+	_, err := agent.InstallHooks(context.Background(), false, false)
 	if err != nil {
 		t.Fatalf("InstallHooks() error = %v", err)
 	}
@@ -464,7 +464,7 @@ func TestUninstallHooks(t *testing.T) {
 	agent := &FactoryAIDroidAgent{}
 
 	// First install
-	_, err := agent.InstallHooks(context.Background(),false, false)
+	_, err := agent.InstallHooks(context.Background(), false, false)
 	if err != nil {
 		t.Fatalf("InstallHooks() error = %v", err)
 	}
@@ -547,7 +547,7 @@ func TestUninstallHooks_RemovesDenyRule(t *testing.T) {
 	agent := &FactoryAIDroidAgent{}
 
 	// First install (which adds the deny rule)
-	_, err := agent.InstallHooks(context.Background(),false, false)
+	_, err := agent.InstallHooks(context.Background(), false, false)
 	if err != nil {
 		t.Fatalf("InstallHooks() error = %v", err)
 	}

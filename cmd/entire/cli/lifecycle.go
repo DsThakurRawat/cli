@@ -209,14 +209,14 @@ func handleLifecycleTurnEnd(ctx context.Context, ag agent.Agent, event *agent.Ev
 	// Determine transcript offset
 	transcriptOffset := resolveTranscriptOffset(ctx, preState, sessionID)
 
+	// Compute subagents directory for agents that support subagent extraction.
+	// Subagent transcripts live in <transcriptDir>/<modelSessionID>/subagents/
+	subagentsDir := filepath.Join(filepath.Dir(transcriptRef), event.SessionID, "subagents")
+
 	// Extract metadata via agent interface (prompts, summary, modified files)
 	var allPrompts []string
 	var summary string
 	var modifiedFiles []string
-
-	// Compute subagents directory for agents that support subagent extraction.
-	// Subagent transcripts live in <transcriptDir>/<modelSessionID>/subagents/
-	subagentsDir := filepath.Join(filepath.Dir(transcriptRef), event.SessionID, "subagents")
 
 	if analyzer, ok := ag.(agent.TranscriptAnalyzer); ok {
 		// Extract prompts
@@ -235,7 +235,7 @@ func handleLifecycleTurnEnd(ctx context.Context, ag agent.Agent, event *agent.Ev
 
 		// Extract modified files - prefer SubagentAwareExtractor if available to include subagent files
 		if subagentExtractor, subOk := ag.(agent.SubagentAwareExtractor); subOk {
-			if files, fileErr := subagentExtractor.ExtractAllModifiedFiles(transcriptRef, transcriptOffset, subagentsDir); fileErr != nil {
+			if files, fileErr := subagentExtractor.ExtractAllModifiedFiles(transcriptData, transcriptOffset, subagentsDir); fileErr != nil {
 				fmt.Fprintf(os.Stderr, "Warning: failed to extract modified files (with subagents): %v\n", fileErr)
 			} else {
 				modifiedFiles = files
@@ -297,6 +297,12 @@ func handleLifecycleTurnEnd(ctx context.Context, ag agent.Agent, event *agent.Ev
 	if changes != nil {
 		relNewFiles = FilterAndNormalizePaths(changes.New, repoRoot)
 		relDeletedFiles = FilterAndNormalizePaths(changes.Deleted, repoRoot)
+
+		// Merge git-status modified files as a fallback for transcript parsing.
+		// Transcript parsing is the primary source for modified files, but it can miss
+		// files if the agent uses an unrecognized tool or the transcript format changes.
+		// Git status catches any tracked file with working-tree changes.
+		relModifiedFiles = mergeUnique(relModifiedFiles, FilterAndNormalizePaths(changes.Modified, repoRoot))
 	}
 
 	// Filter transcript-extracted files to exclude files already committed to HEAD.
@@ -346,23 +352,7 @@ func handleLifecycleTurnEnd(ctx context.Context, ag agent.Agent, event *agent.Ev
 	}
 
 	// Calculate token usage - prefer SubagentAwareExtractor to include subagent tokens
-	var tokenUsage *agent.TokenUsage
-	if subagentExtractor, ok := ag.(agent.SubagentAwareExtractor); ok {
-		usage, tokenErr := subagentExtractor.CalculateTotalTokenUsage(transcriptRef, transcriptLinesAtStart, subagentsDir)
-		if tokenErr != nil {
-			fmt.Fprintf(os.Stderr, "Warning: failed to calculate token usage (with subagents): %v\n", tokenErr)
-		} else {
-			tokenUsage = usage
-		}
-	} else if calculator, ok := ag.(agent.TokenCalculator); ok {
-		// Fall back to basic token calculation (main transcript only)
-		usage, tokenErr := calculator.CalculateTokenUsage(transcriptRef, transcriptLinesAtStart)
-		if tokenErr != nil {
-			fmt.Fprintf(os.Stderr, "Warning: failed to calculate token usage: %v\n", tokenErr)
-		} else {
-			tokenUsage = usage
-		}
-	}
+	tokenUsage := agent.CalculateTokenUsage(ag, transcriptData, transcriptLinesAtStart, subagentsDir)
 
 	// Build fully-populated step context and delegate to strategy
 	stepCtx := strategy.StepContext{
@@ -549,6 +539,7 @@ func handleLifecycleSubagentEnd(ctx context.Context, ag agent.Agent, event *agen
 	if changes != nil {
 		relNewFiles = FilterAndNormalizePaths(changes.New, repoRoot)
 		relDeletedFiles = FilterAndNormalizePaths(changes.Deleted, repoRoot)
+		relModifiedFiles = mergeUnique(relModifiedFiles, FilterAndNormalizePaths(changes.Modified, repoRoot))
 	}
 
 	// If no changes, skip
@@ -561,7 +552,7 @@ func handleLifecycleSubagentEnd(ctx context.Context, ag agent.Agent, event *agen
 	// Find checkpoint UUID from main transcript (best-effort)
 	var checkpointUUID string
 	// Use the existing CLI-level checkpoint UUID finder
-	mainLines, _, _ := parseTranscriptForCheckpointUUID(event.SessionRef) //nolint:errcheck // best-effort
+	mainLines, _ := parseTranscriptForCheckpointUUID(event.SessionRef) //nolint:errcheck // best-effort
 	if mainLines != nil {
 		checkpointUUID, _ = FindCheckpointUUID(mainLines, event.ToolUseID)
 	}
@@ -655,12 +646,12 @@ func createContextFile(contextFile, commitMessage, sessionID string, prompts []s
 
 // parseTranscriptForCheckpointUUID is a thin wrapper around transcript parsing for checkpoint UUID lookup.
 // Returns parsed transcript lines for use with FindCheckpointUUID.
-func parseTranscriptForCheckpointUUID(transcriptPath string) ([]transcriptLine, int, error) {
-	lines, total, err := transcript.ParseFromFileAtLine(transcriptPath, 0)
+func parseTranscriptForCheckpointUUID(transcriptPath string) ([]transcriptLine, error) {
+	lines, err := transcript.ParseFromFileAtLine(transcriptPath, 0)
 	if err != nil {
-		return nil, 0, fmt.Errorf("parsing transcript for checkpoint UUID: %w", err)
+		return nil, fmt.Errorf("parsing transcript for checkpoint UUID: %w", err)
 	}
-	return lines, total, nil
+	return lines, nil
 }
 
 // transitionSessionTurnEnd transitions the session phase to IDLE and dispatches turn-end actions.

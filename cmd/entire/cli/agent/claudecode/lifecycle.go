@@ -73,7 +73,7 @@ func (c *ClaudeCodeAgent) ReadTranscript(sessionRef string) ([]byte, error) {
 
 // ExtractPrompts extracts user prompts from the transcript starting at the given line offset.
 func (c *ClaudeCodeAgent) ExtractPrompts(sessionRef string, fromOffset int) ([]string, error) {
-	lines, _, err := transcript.ParseFromFileAtLine(sessionRef, fromOffset)
+	lines, err := transcript.ParseFromFileAtLine(sessionRef, fromOffset)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse transcript: %w", err)
 	}
@@ -129,12 +129,8 @@ func (c *ClaudeCodeAgent) PrepareTranscript(ctx context.Context, sessionRef stri
 }
 
 // CalculateTokenUsage computes token usage from the transcript starting at the given line offset.
-func (c *ClaudeCodeAgent) CalculateTokenUsage(sessionRef string, fromOffset int) (*agent.TokenUsage, error) {
-	// Subagent transcripts live in <transcriptDir>/<sessionID>/subagents/
-	// but we don't have the sessionID here. The caller should pass the transcript path
-	// which may contain the session ID in its directory structure.
-	// For now, compute subagentsDir from the transcript path structure.
-	return CalculateTotalTokenUsage(sessionRef, fromOffset, "")
+func (c *ClaudeCodeAgent) CalculateTokenUsage(transcriptData []byte, fromOffset int) (*agent.TokenUsage, error) {
+	return c.CalculateTotalTokenUsage(transcriptData, fromOffset, "")
 }
 
 // --- Internal hook parsing functions ---

@@ -327,6 +327,24 @@ func FilterAndNormalizePaths(files []string, cwd string) []string {
 	return result
 }
 
+// mergeUnique appends elements from extra into base, skipping duplicates already in base.
+func mergeUnique(base, extra []string) []string {
+	if len(extra) == 0 {
+		return base
+	}
+	seen := make(map[string]bool, len(base))
+	for _, s := range base {
+		seen[s] = true
+	}
+	for _, s := range extra {
+		if !seen[s] {
+			seen[s] = true
+			base = append(base, s)
+		}
+	}
+	return base
+}
+
 // prePromptStateFile returns the absolute path to the pre-prompt state file for a session.
 // Works correctly from any subdirectory within the repository.
 func prePromptStateFile(ctx context.Context, sessionID string) string {

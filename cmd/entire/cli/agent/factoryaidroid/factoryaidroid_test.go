@@ -89,7 +89,7 @@ func TestChunkTranscript_LargeContent(t *testing.T) {
 	content := []byte(strings.Join(lines, "\n"))
 
 	maxSize := 2000
-	chunks, err := ag.ChunkTranscript(context.Background(),content, maxSize)
+	chunks, err := ag.ChunkTranscript(context.Background(), content, maxSize)
 	if err != nil {
 		t.Fatalf("ChunkTranscript() error = %v", err)
 	}
@@ -119,7 +119,7 @@ func TestChunkTranscript_RoundTrip(t *testing.T) {
 {"role":"assistant","content":"hi there"}
 {"role":"user","content":"thanks"}`
 
-	chunks, err := ag.ChunkTranscript(context.Background(),[]byte(original), 60)
+	chunks, err := ag.ChunkTranscript(context.Background(), []byte(original), 60)
 	if err != nil {
 		t.Fatalf("ChunkTranscript() error = %v", err)
 	}
@@ -225,7 +225,7 @@ func TestWriteSession(t *testing.T) {
 	nativeData := []byte(`{"type":"message","id":"msg1","message":{"role":"user","content":"hello"}}`)
 
 	ag := &FactoryAIDroidAgent{}
-	err := ag.WriteSession(context.Background(),&agent.AgentSession{
+	err := ag.WriteSession(context.Background(), &agent.AgentSession{
 		SessionID:  "test-session-456",
 		AgentName:  agent.AgentNameFactoryAIDroid,
 		SessionRef: transcriptPath,
@@ -248,7 +248,7 @@ func TestWriteSession(t *testing.T) {
 func TestWriteSession_NilSession(t *testing.T) {
 	t.Parallel()
 	ag := &FactoryAIDroidAgent{}
-	if err := ag.WriteSession(context.Background(),nil); err == nil {
+	if err := ag.WriteSession(context.Background(), nil); err == nil {
 		t.Error("WriteSession(nil) should error")
 	}
 }
@@ -256,7 +256,7 @@ func TestWriteSession_NilSession(t *testing.T) {
 func TestWriteSession_WrongAgent(t *testing.T) {
 	t.Parallel()
 	ag := &FactoryAIDroidAgent{}
-	err := ag.WriteSession(context.Background(),&agent.AgentSession{
+	err := ag.WriteSession(context.Background(), &agent.AgentSession{
 		AgentName:  "claude-code",
 		SessionRef: "/tmp/test.jsonl",
 		NativeData: []byte("data"),
@@ -269,7 +269,7 @@ func TestWriteSession_WrongAgent(t *testing.T) {
 func TestWriteSession_EmptyRef(t *testing.T) {
 	t.Parallel()
 	ag := &FactoryAIDroidAgent{}
-	err := ag.WriteSession(context.Background(),&agent.AgentSession{
+	err := ag.WriteSession(context.Background(), &agent.AgentSession{
 		AgentName:  agent.AgentNameFactoryAIDroid,
 		NativeData: []byte("data"),
 	})
@@ -281,7 +281,7 @@ func TestWriteSession_EmptyRef(t *testing.T) {
 func TestWriteSession_EmptyNativeData(t *testing.T) {
 	t.Parallel()
 	ag := &FactoryAIDroidAgent{}
-	err := ag.WriteSession(context.Background(),&agent.AgentSession{
+	err := ag.WriteSession(context.Background(), &agent.AgentSession{
 		AgentName:  agent.AgentNameFactoryAIDroid,
 		SessionRef: "/tmp/test.jsonl",
 	})
@@ -316,7 +316,7 @@ func TestReadWriteSession_RoundTrip(t *testing.T) {
 
 	// Write to new location
 	session.SessionRef = restoredPath
-	if err := ag.WriteSession(context.Background(),session); err != nil {
+	if err := ag.WriteSession(context.Background(), session); err != nil {
 		t.Fatalf("WriteSession() error = %v", err)
 	}
 

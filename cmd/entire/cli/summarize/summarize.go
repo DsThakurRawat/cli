@@ -218,7 +218,7 @@ func buildCondensedTranscriptFromOpenCode(content []byte) ([]Entry, error) {
 
 // buildCondensedTranscriptFromDroid parses Droid transcript and extracts a condensed view.
 func buildCondensedTranscriptFromDroid(content []byte) ([]Entry, error) {
-	droidLines, err := factoryaidroid.ParseDroidTranscriptFromBytes(content, 0)
+	droidLines, _, err := factoryaidroid.ParseDroidTranscriptFromBytes(content, 0)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse Droid transcript: %w", err)
 	}

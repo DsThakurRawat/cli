@@ -48,11 +48,11 @@ func ParseDroidTranscript(path string, startLine int) ([]transcript.Line, int, e
 
 // ParseDroidTranscriptFromBytes parses Droid JSONL content from a byte slice.
 // startLine skips the first N raw JSONL lines before parsing (0 = parse all).
+// Returns parsed lines, total raw line count, and any error.
 // This mirrors ParseDroidTranscript's startLine parameter, applying the offset
 // at the raw line level before filtering out non-message entries.
-func ParseDroidTranscriptFromBytes(content []byte, startLine int) ([]transcript.Line, error) {
-	lines, _, err := parseDroidTranscriptFromReader(bytes.NewReader(content), startLine)
-	return lines, err
+func ParseDroidTranscriptFromBytes(content []byte, startLine int) ([]transcript.Line, int, error) {
+	return parseDroidTranscriptFromReader(bytes.NewReader(content), startLine)
 }
 
 func parseDroidTranscriptFromReader(r io.Reader, startLine int) ([]transcript.Line, int, error) {
@@ -300,6 +300,85 @@ func extractAgentIDFromText(text string) string {
 		return text[start:end]
 	}
 	return ""
+}
+
+// CalculateTotalTokenUsageFromBytes calculates token usage from pre-loaded transcript bytes,
+// including subagents. It parses the main transcript bytes from startLine, extracts spawned
+// agent IDs, and calculates their token usage from transcript files in subagentsDir.
+func CalculateTotalTokenUsageFromBytes(data []byte, startLine int, subagentsDir string) (*agent.TokenUsage, error) {
+	if len(data) == 0 {
+		return &agent.TokenUsage{}, nil
+	}
+
+	parsed, _, err := ParseDroidTranscriptFromBytes(data, startLine)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse transcript: %w", err)
+	}
+
+	mainUsage := CalculateTokenUsage(parsed)
+
+	agentIDs := ExtractSpawnedAgentIDs(parsed)
+	if len(agentIDs) > 0 && subagentsDir != "" {
+		subagentUsage := &agent.TokenUsage{}
+		for agentID := range agentIDs {
+			agentPath := filepath.Join(subagentsDir, fmt.Sprintf("agent-%s.jsonl", agentID))
+			agentUsage, err := CalculateTokenUsageFromFile(agentPath, 0)
+			if err != nil {
+				continue
+			}
+			subagentUsage.InputTokens += agentUsage.InputTokens
+			subagentUsage.CacheCreationTokens += agentUsage.CacheCreationTokens
+			subagentUsage.CacheReadTokens += agentUsage.CacheReadTokens
+			subagentUsage.OutputTokens += agentUsage.OutputTokens
+			subagentUsage.APICallCount += agentUsage.APICallCount
+		}
+		if subagentUsage.APICallCount > 0 {
+			mainUsage.SubagentTokens = subagentUsage
+		}
+	}
+
+	return mainUsage, nil
+}
+
+// ExtractAllModifiedFilesFromBytes extracts files modified by both the main agent and
+// any subagents from pre-loaded transcript bytes. It parses the main transcript bytes from
+// startLine, collects modified files, then reads each subagent's transcript from
+// subagentsDir to collect their modified files too.
+func ExtractAllModifiedFilesFromBytes(data []byte, startLine int, subagentsDir string) ([]string, error) {
+	if len(data) == 0 {
+		return nil, nil
+	}
+
+	parsed, _, err := ParseDroidTranscriptFromBytes(data, startLine)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse transcript: %w", err)
+	}
+
+	files := ExtractModifiedFiles(parsed)
+	fileSet := make(map[string]bool, len(files))
+	for _, f := range files {
+		fileSet[f] = true
+	}
+
+	agentIDs := ExtractSpawnedAgentIDs(parsed)
+	if subagentsDir == "" {
+		return files, nil
+	}
+	for agentID := range agentIDs {
+		agentPath := filepath.Join(subagentsDir, fmt.Sprintf("agent-%s.jsonl", agentID))
+		agentLines, _, agentErr := ParseDroidTranscript(agentPath, 0)
+		if agentErr != nil {
+			continue
+		}
+		for _, f := range ExtractModifiedFiles(agentLines) {
+			if !fileSet[f] {
+				fileSet[f] = true
+				files = append(files, f)
+			}
+		}
+	}
+
+	return files, nil
 }
 
 // CalculateTotalTokenUsageFromTranscript calculates token usage for a turn, including subagents.
