@@ -46,8 +46,6 @@ var errStop = errors.New("stop iteration")
 
 // reconcileOnce ensures metadata branch reconciliation runs at most once per process.
 // reconcileResult caches the outcome so all callers see the same error (or nil).
-// Tests that trigger EnsureMetadataReconciled should call resetReconcileOnceForTest()
-// to avoid stale cached results leaking across tests.
 var ( //nolint:gochecknoglobals // intentional per-process gate
 	reconcileOnce   sync.Once
 	reconcileResult error //nolint:errname // not a sentinel — cached function result

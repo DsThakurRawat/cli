@@ -853,16 +853,6 @@ func resetProtectedDirsForTest() {
 	protectedDirsCache = nil
 }
 
-// resetReconcileOnceForTest resets the reconciliation gate so tests that
-// trigger EnsureMetadataReconciled (directly or via getCheckpointStore /
-// ListCheckpoints) don't leak cached results to subsequent tests.
-//
-//nolint:unused // Intentionally kept as a test utility for future tests that trigger reconciliation.
-func resetReconcileOnceForTest() {
-	reconcileOnce = sync.Once{}
-	reconcileResult = nil
-}
-
 func TestGetGitAuthorFromRepo(t *testing.T) {
 	// Cannot use t.Parallel() because subtests use t.Setenv to isolate global git config.
 
