@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/entireio/cli/cmd/entire/cli/agent"
+	"github.com/entireio/cli/cmd/entire/cli/agent/types"
 	"github.com/entireio/cli/cmd/entire/cli/checkpoint"
 	"github.com/entireio/cli/cmd/entire/cli/checkpoint/id"
 	"github.com/entireio/cli/cmd/entire/cli/paths"
@@ -269,7 +270,7 @@ var (
 
 // resolveAgentType picks the best agent type from the context and existing state.
 // Priority: existing state > context value.
-func resolveAgentType(ctxAgentType agent.AgentType, state *SessionState) agent.AgentType {
+func resolveAgentType(ctxAgentType types.AgentType, state *SessionState) types.AgentType {
 	if state != nil && state.AgentType != "" {
 		return state.AgentType
 	}
@@ -491,7 +492,7 @@ func ReadSessionPromptFromTree(tree *object.Tree, checkpointPath string) string 
 // If metadata.json doesn't exist (shadow branches), it falls back to detecting the agent
 // from the presence of agent-specific config files (.gemini/settings.json or .claude/).
 // Returns agent.AgentTypeUnknown if the agent type cannot be determined.
-func ReadAgentTypeFromTree(tree *object.Tree, checkpointPath string) agent.AgentType {
+func ReadAgentTypeFromTree(tree *object.Tree, checkpointPath string) types.AgentType {
 	// First, try to read from metadata.json (present in condensed/committed checkpoints)
 	metadataPath := checkpointPath + "/" + paths.MetadataFileName
 	if file, err := tree.File(metadataPath); err == nil {

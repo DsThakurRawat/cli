@@ -13,7 +13,7 @@ import (
 	"log/slog"
 	"os"
 
-	"github.com/entireio/cli/cmd/entire/cli/agent"
+	"github.com/entireio/cli/cmd/entire/cli/agent/types"
 	"github.com/entireio/cli/cmd/entire/cli/logging"
 	"github.com/entireio/cli/cmd/entire/cli/paths"
 	"github.com/entireio/cli/cmd/entire/cli/strategy"
@@ -110,7 +110,7 @@ func handleClaudeCodePostTodoFromReader(ctx context.Context, reader io.Reader) e
 	}
 
 	// Get agent type from the currently executing hook agent (authoritative source)
-	var agentType agent.AgentType
+	var agentType types.AgentType
 	if hookAgent, agentErr := GetCurrentHookAgent(); agentErr == nil {
 		agentType = hookAgent.Type()
 	}

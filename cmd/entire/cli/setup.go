@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/entireio/cli/cmd/entire/cli/agent"
+	"github.com/entireio/cli/cmd/entire/cli/agent/types"
 	"github.com/entireio/cli/cmd/entire/cli/paths"
 	"github.com/entireio/cli/cmd/entire/cli/session"
 	"github.com/entireio/cli/cmd/entire/cli/settings"
@@ -71,7 +72,7 @@ modifying your active branch.`,
 			}
 
 			if agentName != "" {
-				ag, err := agent.Get(agent.AgentName(agentName))
+				ag, err := agent.Get(types.AgentName(agentName))
 				if err != nil {
 					printWrongAgentError(cmd.ErrOrStderr(), agentName)
 					return NewSilentError(errors.New("wrong agent name"))
@@ -314,7 +315,7 @@ func uninstallDeselectedAgentHooks(ctx context.Context, w io.Writer, selectedAge
 		return nil
 	}
 
-	selectedSet := make(map[agent.AgentName]struct{}, len(selectedAgents))
+	selectedSet := make(map[types.AgentName]struct{}, len(selectedAgents))
 	for _, ag := range selectedAgents {
 		selectedSet[ag.Name()] = struct{}{}
 	}
@@ -429,7 +430,7 @@ func detectOrSelectAgent(ctx context.Context, w io.Writer, selectFn func(availab
 	// Build pre-selection set.
 	// On re-run: only pre-select agents with hooks installed (respect prior deselection).
 	// On first run: pre-select all detected agents.
-	preSelectedSet := make(map[agent.AgentName]struct{})
+	preSelectedSet := make(map[types.AgentName]struct{})
 	if hasInstalledHooks {
 		for _, name := range installedAgentNames {
 			preSelectedSet[name] = struct{}{}
@@ -502,7 +503,7 @@ func detectOrSelectAgent(ctx context.Context, w io.Writer, selectFn func(availab
 
 	selectedAgents := make([]agent.Agent, 0, len(selectedAgentNames))
 	for _, name := range selectedAgentNames {
-		selectedAgent, err := agent.Get(agent.AgentName(name))
+		selectedAgent, err := agent.Get(types.AgentName(name))
 		if err != nil {
 			return nil, fmt.Errorf("failed to get selected agent %s: %w", name, err)
 		}
