@@ -3,7 +3,6 @@ package cursor
 import (
 	"bufio"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -15,10 +14,6 @@ import (
 
 // Compile-time interface assertion.
 var _ agent.TranscriptAnalyzer = (*CursorAgent)(nil)
-
-// ErrNoToolUseBlocks indicates that Cursor transcripts do not contain tool_use blocks,
-// so file extraction from the transcript is not supported. File detection uses git status.
-var ErrNoToolUseBlocks = errors.New("cursor transcripts do not contain tool_use blocks; file detection uses git status")
 
 // GetTranscriptPosition returns the current line count of a Cursor transcript.
 // Cursor uses the same JSONL format as Claude Code, so position is the number of lines.
@@ -110,13 +105,9 @@ func (c *CursorAgent) ExtractSummary(sessionRef string) (string, error) {
 	return "", nil
 }
 
-// ExtractModifiedFilesFromOffset returns ErrNoToolUseBlocks because Cursor transcripts
+// ExtractModifiedFilesFromOffset returns nil, 0, nil because Cursor transcripts
 // do not contain tool_use blocks. File detection relies on git status instead.
-// All call sites handle this error gracefully by falling through to git-status-based detection.
-func (c *CursorAgent) ExtractModifiedFilesFromOffset(path string, _ int) ([]string, int, error) {
-	if path == "" {
-		return nil, 0, nil
-	}
-
-	return nil, 0, ErrNoToolUseBlocks
+// All call sites are expected to also use git-status-based detection.
+func (c *CursorAgent) ExtractModifiedFilesFromOffset(_ string, _ int) ([]string, int, error) {
+	return nil, 0, nil
 }

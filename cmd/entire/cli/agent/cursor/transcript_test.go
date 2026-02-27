@@ -1,7 +1,6 @@
 package cursor
 
 import (
-	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -167,8 +166,8 @@ func TestCursorAgent_ExtractModifiedFilesFromOffset(t *testing.T) {
 	path := writeSampleTranscript(t, tmpDir)
 
 	files, pos, err := ag.ExtractModifiedFilesFromOffset(path, 0)
-	if !errors.Is(err, ErrNoToolUseBlocks) {
-		t.Fatalf("ExtractModifiedFilesFromOffset() error = %v, want ErrNoToolUseBlocks", err)
+	if err != nil {
+		t.Fatalf("ExtractModifiedFilesFromOffset() error = %v, want nil", err)
 	}
 	if files != nil {
 		t.Errorf("ExtractModifiedFilesFromOffset() files = %v, want nil", files)
