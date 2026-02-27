@@ -8,7 +8,6 @@ import (
 	"os"
 	"os/exec"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
@@ -578,44 +577,6 @@ func extractPromptsFromTranscript(transcriptBytes []byte, agentType types.AgentT
 	return prompts
 }
 
-// readPromptFromMetadataTree reads the first prompt from a checkpoint's prompt.txt
-// on the metadata branch tree. This is O(1) tree lookups and reads a tiny file,
-// unlike ReadLatestSessionContent which reads multi-MB transcript blobs.
-func readPromptFromMetadataTree(tree *object.Tree, cpID id.CheckpointID, sessionCount int) string {
-	cpPath := cpID.Path()
-	cpTree, err := tree.Tree(cpPath)
-	if err != nil {
-		return ""
-	}
-
-	// Find the latest session subdirectory.
-	// Sessions use 0-based indexing: 0/, 1/, 2/, etc.
-	latestIndex := sessionCount - 1
-	if latestIndex < 0 {
-		latestIndex = 0
-	}
-	sessionTree, err := cpTree.Tree(strconv.Itoa(latestIndex))
-	if err != nil {
-		// Fall back to session 0 if the computed index doesn't exist
-		sessionTree, err = cpTree.Tree("0")
-		if err != nil {
-			return ""
-		}
-	}
-
-	file, err := sessionTree.File(paths.PromptFileName)
-	if err != nil {
-		return ""
-	}
-
-	content, err := file.Contents()
-	if err != nil {
-		return ""
-	}
-
-	return strategy.ExtractFirstPrompt(content)
-}
-
 // formatCheckpointOutput formats checkpoint data based on verbosity level.
 // When verbose is false: summary only (ID, session, timestamp, tokens, intent).
 // When verbose is true: adds files, associated commits, and scoped transcript for this checkpoint.
@@ -993,7 +954,7 @@ func getBranchCheckpoints(ctx context.Context, repo *git.Repository, limit int) 
 		// Read prompt.txt directly from the latest session subdirectory instead of
 		// parsing the full transcript — prompt.txt is tiny vs multi-MB transcripts.
 		if metadataTree != nil {
-			point.SessionPrompt = readPromptFromMetadataTree(metadataTree, cpID, cpInfo.SessionCount)
+			point.SessionPrompt = strategy.ReadLatestSessionPromptFromCommittedTree(metadataTree, cpID, cpInfo.SessionCount)
 		}
 
 		points = append(points, point)
