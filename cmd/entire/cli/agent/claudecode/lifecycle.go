@@ -239,6 +239,27 @@ func waitForTranscriptFlush(ctx context.Context, transcriptPath string, hookStar
 	)
 
 	logCtx := logging.WithComponent(ctx, "agent.claudecode")
+
+	// Fast path: skip the poll loop when the sentinel can't possibly appear.
+	// - File doesn't exist: nothing to poll.
+	// - File is stale (unmodified for 2+ min): agent isn't running anymore.
+	//   This avoids 3s timeouts per stale "active" session (e.g., agent crashed
+	//   without firing stop hook).
+	const staleThreshold = 2 * time.Minute
+	info, err := os.Stat(transcriptPath)
+	if err != nil {
+		// Most likely the file doesn't exist; other errors (permission, etc.)
+		// would also prevent polling, so skip the wait either way.
+		return
+	}
+	fileAge := time.Since(info.ModTime())
+	if fileAge > staleThreshold {
+		logging.Debug(logCtx, "transcript file is stale, skipping sentinel wait",
+			slog.Duration("file_age", fileAge),
+		)
+		return
+	}
+
 	deadline := time.Now().Add(maxWait)
 	for time.Now().Before(deadline) {
 		if checkStopSentinel(transcriptPath, tailBytes, hookStartTime, maxSkew) {
