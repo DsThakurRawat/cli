@@ -65,11 +65,12 @@ func (a *OpenCodeAgent) ParseHookEvent(ctx context.Context, hookName string, std
 			SessionID:  raw.SessionID,
 			SessionRef: transcriptPath,
 			Prompt:     raw.Prompt,
+			Model:      raw.Model,
 			Timestamp:  time.Now(),
 		}, nil
 
 	case HookNameTurnEnd:
-		raw, err := agent.ReadAndParseHookInput[sessionInfoRaw](stdin)
+		raw, err := agent.ReadAndParseHookInput[turnEndRaw](stdin)
 		if err != nil {
 			return nil, err
 		}
@@ -82,6 +83,7 @@ func (a *OpenCodeAgent) ParseHookEvent(ctx context.Context, hookName string, std
 			Type:       agent.TurnEnd,
 			SessionID:  raw.SessionID,
 			SessionRef: transcriptPath,
+			Model:      raw.Model,
 			Timestamp:  time.Now(),
 		}, nil
 

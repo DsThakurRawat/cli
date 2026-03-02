@@ -10,6 +10,8 @@ export const EntirePlugin: Plugin = async ({ $, directory }) => {
   const seenUserMessages = new Set<string>()
   // Track current session ID for message events (which don't include sessionID)
   let currentSessionID: string | null = null
+  // Track the model used by the most recent assistant message
+  let currentModel: string | null = null
   // In-memory store for message metadata (role, tokens, etc.)
   const messageStore = new Map<string, any>()
 
@@ -56,6 +58,7 @@ export const EntirePlugin: Plugin = async ({ $, directory }) => {
           if (currentSessionID !== session.id) {
             seenUserMessages.clear()
             messageStore.clear()
+            currentModel = null
           }
           currentSessionID = session.id
           await callHook("session-start", {
@@ -69,6 +72,10 @@ export const EntirePlugin: Plugin = async ({ $, directory }) => {
           if (!msg) break
           // Store message metadata (role, time, tokens, etc.)
           messageStore.set(msg.id, msg)
+          // Track model from assistant messages
+          if (msg.role === "assistant" && msg.modelID) {
+            currentModel = msg.modelID
+          }
           break
         }
 
@@ -85,6 +92,7 @@ export const EntirePlugin: Plugin = async ({ $, directory }) => {
               await callHook("turn-start", {
                 session_id: sessionID,
                 prompt: part.text ?? "",
+                model: currentModel ?? "",
               })
             }
           }
@@ -102,6 +110,7 @@ export const EntirePlugin: Plugin = async ({ $, directory }) => {
           // so an async hook would be killed before completing.
           callHookSync("turn-end", {
             session_id: sessionID,
+            model: currentModel ?? "",
           })
           break
         }

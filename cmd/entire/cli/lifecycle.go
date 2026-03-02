@@ -116,6 +116,7 @@ func handleLifecycleTurnStart(ctx context.Context, ag agent.Agent, event *agent.
 		slog.String("event", event.Type.String()),
 		slog.String("session_id", event.SessionID),
 		slog.String("session_ref", event.SessionRef),
+		slog.String("model", event.Model),
 	)
 
 	sessionID := event.SessionID
@@ -138,7 +139,7 @@ func handleLifecycleTurnStart(ctx context.Context, ag agent.Agent, event *agent.
 	}
 
 	strat := GetStrategy(ctx)
-	if err := strat.InitializeSession(ctx, sessionID, ag.Type(), event.SessionRef, event.Prompt); err != nil {
+	if err := strat.InitializeSession(ctx, sessionID, ag.Type(), event.SessionRef, event.Prompt, event.Model); err != nil {
 		logging.Warn(logCtx, "failed to initialize session state",
 			slog.String("error", err.Error()))
 	}
@@ -156,6 +157,7 @@ func handleLifecycleTurnEnd(ctx context.Context, ag agent.Agent, event *agent.Ev
 		slog.String("event", event.Type.String()),
 		slog.String("session_id", event.SessionID),
 		slog.String("session_ref", event.SessionRef),
+		slog.String("model", event.Model),
 	)
 
 	sessionID := event.SessionID
@@ -333,7 +335,7 @@ func handleLifecycleTurnEnd(ctx context.Context, ag agent.Agent, event *agent.Ev
 	totalChanges := len(relModifiedFiles) + len(relNewFiles) + len(relDeletedFiles)
 	if totalChanges == 0 {
 		logging.Info(logCtx, "no files modified during session, skipping checkpoint")
-		transitionSessionTurnEnd(ctx, sessionID)
+		transitionSessionTurnEnd(ctx, sessionID, event.Model)
 		if cleanupErr := CleanupPrePromptState(ctx, sessionID); cleanupErr != nil {
 			logging.Warn(logCtx, "failed to cleanup pre-prompt state",
 				slog.String("error", cleanupErr.Error()))
@@ -396,7 +398,7 @@ func handleLifecycleTurnEnd(ctx context.Context, ag agent.Agent, event *agent.Ev
 	}
 
 	// Transition session phase and cleanup
-	transitionSessionTurnEnd(ctx, sessionID)
+	transitionSessionTurnEnd(ctx, sessionID, event.Model)
 	if cleanupErr := CleanupPrePromptState(ctx, sessionID); cleanupErr != nil {
 		logging.Warn(logCtx, "failed to cleanup pre-prompt state",
 			slog.String("error", cleanupErr.Error()))
@@ -674,7 +676,7 @@ func parseTranscriptForCheckpointUUID(transcriptPath string) ([]transcriptLine, 
 }
 
 // transitionSessionTurnEnd transitions the session phase to IDLE and dispatches turn-end actions.
-func transitionSessionTurnEnd(ctx context.Context, sessionID string) {
+func transitionSessionTurnEnd(ctx context.Context, sessionID string, model string) {
 	logCtx := logging.WithComponent(ctx, "lifecycle")
 	turnState, loadErr := strategy.LoadSessionState(ctx, sessionID)
 	if loadErr != nil {
@@ -685,6 +687,12 @@ func transitionSessionTurnEnd(ctx context.Context, sessionID string) {
 	if turnState == nil {
 		return
 	}
+
+	// Update ModelName if provided (model is known by turn-end even on first turn)
+	if model != "" {
+		turnState.ModelName = model
+	}
+
 	if err := strategy.TransitionAndLog(ctx, turnState, session.EventTurnEnd, session.TransitionContext{}, session.NoOpActionHandler{}); err != nil {
 		logging.Warn(logCtx, "turn-end transition failed",
 			slog.String("error", err.Error()))

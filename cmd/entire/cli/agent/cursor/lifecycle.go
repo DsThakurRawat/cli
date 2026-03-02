@@ -95,6 +95,7 @@ func (c *CursorAgent) parseTurnStart(ctx context.Context, stdin io.Reader) (*age
 		SessionID:  raw.ConversationID,
 		SessionRef: c.resolveTranscriptRef(ctx, raw.ConversationID, raw.TranscriptPath),
 		Prompt:     raw.Prompt,
+		Model:      raw.Model,
 		Timestamp:  time.Now(),
 	}, nil
 }
@@ -108,6 +109,7 @@ func (c *CursorAgent) parseTurnEnd(ctx context.Context, stdin io.Reader) (*agent
 		Type:       agent.TurnEnd,
 		SessionID:  raw.ConversationID,
 		SessionRef: c.resolveTranscriptRef(ctx, raw.ConversationID, raw.TranscriptPath),
+		Model:      raw.Model,
 		Timestamp:  time.Now(),
 	}, nil
 }
