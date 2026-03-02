@@ -34,10 +34,12 @@ func NewTmuxSession(name string, dir string, unsetEnv []string, command string, 
 	// tmux session. Without this, tmux inherits the server's environment which may
 	// have an older binary (or none at all).
 	var parts []string
-	parts = append(parts, "env", "PATH="+shellQuote(os.Getenv("PATH")))
+	parts = append(parts, "env")
+	// Options (-u) must precede variable assignments for BSD env on macOS.
 	for _, v := range unsetEnv {
 		parts = append(parts, "-u", shellQuote(v))
 	}
+	parts = append(parts, "PATH="+shellQuote(os.Getenv("PATH")))
 	parts = append(parts, shellQuote(command))
 	for _, a := range args {
 		parts = append(parts, shellQuote(a))
