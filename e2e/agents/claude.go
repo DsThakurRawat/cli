@@ -121,7 +121,6 @@ func (c *Claude) RunPrompt(ctx context.Context, dir string, prompt string, opts 
 
 	env := append(cleanEnv(),
 		"ACCESSIBLE=1",
-		"ENTIRE_TEST_TTY=0",
 
 		// See https://code.claude.com/docs/en/settings - without this setting Claude was going off and
 		// trying to Git-clone its plugin marketplace, which meant calling git commands that could fail
@@ -177,7 +176,6 @@ func (c *Claude) StartSession(ctx context.Context, dir string) (Session, error) 
 
 	envArgs := []string{
 		"ACCESSIBLE=1",
-		"ENTIRE_TEST_TTY=0",
 
 		// See https://code.claude.com/docs/en/settings - without this setting Claude was going off and
 		// trying to Git-clone its plugin marketplace, which meant calling git commands that could fail
