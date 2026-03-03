@@ -70,7 +70,7 @@ func TestShadowStrategy_MidSessionCommit_FromTranscript(t *testing.T) {
 	shadowBranches := env.ListBranchesWithPrefix("entire/")
 	hasShadowBranch := false
 	for _, b := range shadowBranches {
-		if b != paths.MetadataBranchName {
+		if b != paths.MetadataBranchName && b != paths.TrailsBranchName {
 			hasShadowBranch = true
 			break
 		}
