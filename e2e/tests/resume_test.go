@@ -70,6 +70,11 @@ func TestResumeSquashMergeMultipleCheckpoints(t *testing.T) {
 	testutil.ForEachAgent(t, 5*time.Minute, func(t *testing.T, s *testutil.RepoState, ctx context.Context) {
 		mainBranch := testutil.GitOutput(t, s.Dir, "branch", "--show-current")
 
+		// Commit files from `entire enable` so main has a clean working tree
+		// for branch switching and squash merging.
+		s.Git(t, "add", ".")
+		s.Git(t, "commit", "-m", "Enable entire")
+
 		// Create feature branch with two agent-assisted commits.
 		s.Git(t, "checkout", "-b", "feature")
 
