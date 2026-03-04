@@ -269,14 +269,14 @@ func ClearSessionState(ctx context.Context, sessionID string) error {
 		return fmt.Errorf("failed to get session state file path: %w", err)
 	}
 
-	if err := os.Remove(stateFile); err != nil {
-		if os.IsNotExist(err) {
-			return nil // Already gone, not an error
-		}
+	if err := os.Remove(stateFile); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("failed to remove session state file: %w", err)
 	}
 
-	// Best-effort cleanup of the model hint file
+	// Best-effort cleanup of the model hint file.
+	// Must not be gated on the state file existing — the hint file can be
+	// written before the state file (e.g. Claude Code's SessionStart fires
+	// before TurnStart creates the state).
 	hintFile := stateFile[:len(stateFile)-len(".json")] + ".model"
 	if err := os.Remove(hintFile); err != nil && !os.IsNotExist(err) {
 		logging.Warn(logging.WithComponent(ctx, "session"), "failed to remove model hint file",
