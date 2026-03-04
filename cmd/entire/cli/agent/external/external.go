@@ -29,11 +29,12 @@ type Agent struct {
 
 // New creates an Agent by calling the binary's "info" subcommand
 // to cache its metadata. Returns an error if the binary cannot be invoked or returns
-// invalid/incompatible protocol data.
-func New(binaryPath string) (*Agent, error) {
+// invalid/incompatible protocol data. The provided context bounds the "info" call;
+// pass a context with a deadline to limit how long discovery waits for each binary.
+func New(ctx context.Context, binaryPath string) (*Agent, error) {
 	ea := &Agent{binaryPath: binaryPath}
 
-	stdout, err := ea.run(context.Background(), nil, "info")
+	stdout, err := ea.run(ctx, nil, "info")
 	if err != nil {
 		return nil, fmt.Errorf("info: %w", err)
 	}

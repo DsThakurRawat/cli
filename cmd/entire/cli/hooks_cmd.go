@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"time"
 
 	"github.com/entireio/cli/cmd/entire/cli/agent"
 	_ "github.com/entireio/cli/cmd/entire/cli/agent/claudecode" // register agent
@@ -25,8 +26,11 @@ func newHooksCmd() *cobra.Command {
 	// Git hooks are strategy-level (not agent-specific)
 	cmd.AddCommand(newHooksGitCmd())
 
-	// Discover external agent plugins from PATH before iterating
-	external.DiscoverAndRegister(context.Background())
+	// Discover external agent plugins from PATH.
+	// Use a bounded context so that N unresponsive binaries don't hang CLI startup.
+	discoveryCtx, discoveryCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer discoveryCancel()
+	external.DiscoverAndRegister(discoveryCtx)
 
 	// Dynamically add agent hook subcommands
 	// Each agent that implements HookSupport gets its own subcommand tree

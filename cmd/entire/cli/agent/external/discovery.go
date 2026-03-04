@@ -70,7 +70,7 @@ func DiscoverAndRegister(ctx context.Context) {
 				continue
 			}
 
-			ea, err := New(binPath)
+			ea, err := New(ctx, binPath)
 			if err != nil {
 				logging.Debug(ctx, "skipping external agent (info failed)",
 					slog.String("binary", binPath),

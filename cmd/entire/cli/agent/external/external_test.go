@@ -139,7 +139,7 @@ case "$1" in
 esac
 `
 	binPath := testBinaryDir(t, script)
-	ea, err := New(binPath)
+	ea, err := New(context.Background(), binPath)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -180,7 +180,7 @@ case "$1" in
 esac
 `
 	binPath := testBinaryDir(t, script)
-	ea, err := New(binPath)
+	ea, err := New(context.Background(), binPath)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -210,7 +210,7 @@ func TestNew_Valid(t *testing.T) {
 	}
 
 	binPath := testBinaryDir(t, mockInfoScript(validInfoJSON))
-	ea, err := New(binPath)
+	ea, err := New(context.Background(), binPath)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -233,7 +233,7 @@ func TestNew_WrongProtocolVersion(t *testing.T) {
 echo '{"protocol_version": 99, "name": "bad"}'
 `
 	binPath := testBinaryDir(t, script)
-	_, err := New(binPath)
+	_, err := New(context.Background(), binPath)
 	if err == nil {
 		t.Fatal("expected error for wrong protocol version")
 	}
@@ -242,7 +242,7 @@ echo '{"protocol_version": 99, "name": "bad"}'
 func TestNew_BinaryNotFound(t *testing.T) {
 	t.Parallel()
 
-	_, err := New("/nonexistent/entire-agent-nope")
+	_, err := New(context.Background(), "/nonexistent/entire-agent-nope")
 	if err == nil {
 		t.Fatal("expected error for missing binary")
 	}
@@ -259,7 +259,7 @@ func TestNew_InvalidJSON(t *testing.T) {
 echo 'not json'
 `
 	binPath := testBinaryDir(t, script)
-	_, err := New(binPath)
+	_, err := New(context.Background(), binPath)
 	if err == nil {
 		t.Fatal("expected error for invalid JSON")
 	}
@@ -273,7 +273,7 @@ func TestExternalAgent_Identity(t *testing.T) {
 	}
 
 	binPath := testBinaryDir(t, mockInfoScript(validInfoJSON))
-	ea, err := New(binPath)
+	ea, err := New(context.Background(), binPath)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -304,7 +304,7 @@ func TestExternalAgent_DetectPresence(t *testing.T) {
 	}
 
 	binPath := testBinaryDir(t, mockInfoScript(validInfoJSON))
-	ea, err := New(binPath)
+	ea, err := New(context.Background(), binPath)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -326,7 +326,7 @@ func TestExternalAgent_GetSessionDir(t *testing.T) {
 	}
 
 	binPath := testBinaryDir(t, mockInfoScript(validInfoJSON))
-	ea, err := New(binPath)
+	ea, err := New(context.Background(), binPath)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -348,7 +348,7 @@ func TestExternalAgent_TranscriptAnalyzer(t *testing.T) {
 	}
 
 	binPath := testBinaryDir(t, mockInfoScript(validInfoJSON))
-	ea, err := New(binPath)
+	ea, err := New(context.Background(), binPath)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -397,7 +397,7 @@ func TestExternalAgent_HookSupport(t *testing.T) {
 	}
 
 	binPath := testBinaryDir(t, mockInfoScript(validInfoJSON))
-	ea, err := New(binPath)
+	ea, err := New(context.Background(), binPath)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -439,7 +439,7 @@ case "$1" in
 esac
 `
 	binPath := testBinaryDir(t, script)
-	ea, err := New(binPath)
+	ea, err := New(context.Background(), binPath)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -461,7 +461,7 @@ func TestWrap_HooksAndAnalyzer(t *testing.T) {
 	}
 
 	binPath := testBinaryDir(t, mockInfoScript(validInfoJSON))
-	ea, err := New(binPath)
+	ea, err := New(context.Background(), binPath)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -508,7 +508,7 @@ func TestWrap_NoCapabilities(t *testing.T) {
 }`
 
 	binPath := testBinaryDir(t, mockInfoScript(noCapJSON))
-	ea, err := New(binPath)
+	ea, err := New(context.Background(), binPath)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -542,7 +542,7 @@ func TestWrap_HooksOnly(t *testing.T) {
 }`
 
 	binPath := testBinaryDir(t, mockInfoScript(hooksOnlyJSON))
-	ea, err := New(binPath)
+	ea, err := New(context.Background(), binPath)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -576,7 +576,7 @@ func TestWrap_PreparerOnly(t *testing.T) {
 }`
 
 	binPath := testBinaryDir(t, mockInfoScript(infoJSON))
-	ea, err := New(binPath)
+	ea, err := New(context.Background(), binPath)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -613,7 +613,7 @@ func TestWrap_AnalyzerAndPreparer(t *testing.T) {
 }`
 
 	binPath := testBinaryDir(t, mockInfoScript(infoJSON))
-	ea, err := New(binPath)
+	ea, err := New(context.Background(), binPath)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -650,7 +650,7 @@ func TestWrap_HooksAnalyzerPreparer(t *testing.T) {
 }`
 
 	binPath := testBinaryDir(t, mockInfoScript(infoJSON))
-	ea, err := New(binPath)
+	ea, err := New(context.Background(), binPath)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
