@@ -3,8 +3,11 @@ package claudecode
 import (
 	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/entireio/cli/cmd/entire/cli/agent"
 )
@@ -31,6 +34,37 @@ func TestParseHookEvent_SessionStart(t *testing.T) {
 	}
 	if event.SessionRef != "/tmp/transcript.jsonl" {
 		t.Errorf("expected session_ref '/tmp/transcript.jsonl', got %q", event.SessionRef)
+	}
+	if event.Timestamp.IsZero() {
+		t.Error("expected non-zero timestamp")
+	}
+}
+
+func TestParseHookEvent_SessionStart_WithModel(t *testing.T) {
+	t.Parallel()
+
+	ag := &ClaudeCodeAgent{}
+	input := `{"session_id": "test-session-456", "transcript_path": "/tmp/transcript.jsonl", "model": "claude-opus-4-6"}`
+
+	event, err := ag.ParseHookEvent(context.Background(), HookNameSessionStart, strings.NewReader(input))
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if event == nil {
+		t.Fatal("expected event, got nil")
+	}
+	if event.Type != agent.SessionStart {
+		t.Errorf("expected event type %v, got %v", agent.SessionStart, event.Type)
+	}
+	if event.SessionID != "test-session-456" {
+		t.Errorf("expected session_id 'test-session-456', got %q", event.SessionID)
+	}
+	if event.SessionRef != "/tmp/transcript.jsonl" {
+		t.Errorf("expected session_ref '/tmp/transcript.jsonl', got %q", event.SessionRef)
+	}
+	if event.Model != "claude-opus-4-6" {
+		t.Errorf("expected model 'claude-opus-4-6', got %q", event.Model)
 	}
 	if event.Timestamp.IsZero() {
 		t.Error("expected non-zero timestamp")
@@ -426,5 +460,62 @@ func TestReadAndParse_ExtraFields(t *testing.T) {
 	}
 	if result.SessionID != "test" {
 		t.Errorf("expected session_id 'test', got %q", result.SessionID)
+	}
+}
+
+func TestWaitForTranscriptFlush_StaleFile_SkipsWait(t *testing.T) {
+	t.Parallel()
+
+	// Create a transcript file and backdate its mtime to make it "stale"
+	transcriptFile := filepath.Join(t.TempDir(), "transcript.jsonl")
+	if err := os.WriteFile(transcriptFile, []byte(`{"type":"human"}`+"\n"), 0o644); err != nil {
+		t.Fatalf("failed to write transcript: %v", err)
+	}
+	staleTime := time.Now().Add(-10 * time.Minute)
+	if err := os.Chtimes(transcriptFile, staleTime, staleTime); err != nil {
+		t.Fatalf("failed to set mtime: %v", err)
+	}
+
+	// waitForTranscriptFlush should return almost instantly for stale files
+	// (not wait the full 3 seconds)
+	start := time.Now()
+	waitForTranscriptFlush(context.Background(), transcriptFile, time.Now())
+	elapsed := time.Since(start)
+
+	if elapsed > 500*time.Millisecond {
+		t.Errorf("expected fast return for stale transcript, but took %v", elapsed)
+	}
+}
+
+func TestWaitForTranscriptFlush_RecentFile_WaitsForSentinel(t *testing.T) {
+	t.Parallel()
+
+	// Create a transcript file with recent mtime (no sentinel present)
+	transcriptFile := filepath.Join(t.TempDir(), "transcript.jsonl")
+	if err := os.WriteFile(transcriptFile, []byte(`{"type":"human"}`+"\n"), 0o644); err != nil {
+		t.Fatalf("failed to write transcript: %v", err)
+	}
+	// File was just created, so mtime is now — should NOT skip the wait
+
+	start := time.Now()
+	waitForTranscriptFlush(context.Background(), transcriptFile, time.Now())
+	elapsed := time.Since(start)
+
+	// Should wait close to maxWait (3s) since no sentinel will be found
+	if elapsed < 2*time.Second {
+		t.Errorf("expected to wait ~3s for recent file without sentinel, but only took %v", elapsed)
+	}
+}
+
+func TestWaitForTranscriptFlush_NonexistentFile_ReturnsImmediately(t *testing.T) {
+	t.Parallel()
+
+	// File doesn't exist — os.Stat fails, return immediately (nothing to poll).
+	start := time.Now()
+	waitForTranscriptFlush(context.Background(), "/nonexistent/transcript.jsonl", time.Now())
+	elapsed := time.Since(start)
+
+	if elapsed > 500*time.Millisecond {
+		t.Errorf("expected immediate return for nonexistent file, but took %v", elapsed)
 	}
 }

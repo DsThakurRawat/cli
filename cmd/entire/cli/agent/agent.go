@@ -172,6 +172,29 @@ type TokenCalculator interface {
 	CalculateTokenUsage(transcriptData []byte, fromOffset int) (*TokenUsage, error)
 }
 
+// TextGenerator is an optional interface for agents whose CLI supports
+// non-interactive text generation (e.g., claude --print).
+// Used for AI-powered metadata generation (trail titles, summaries).
+type TextGenerator interface {
+	Agent
+
+	// GenerateText sends a prompt to the agent's CLI and returns the raw text response.
+	// model is a hint (e.g., "haiku", "sonnet"). Implementations may ignore if not applicable.
+	GenerateText(ctx context.Context, prompt string, model string) (string, error)
+}
+
+// HookResponseWriter is implemented by agents that support structured hook responses.
+// Agents that implement this can output messages (e.g., banners) to the user via
+// the agent's response protocol. For example, Claude Code outputs JSON with a
+// systemMessage field to stdout. Agents that don't implement this will silently
+// skip hook response output.
+type HookResponseWriter interface {
+	Agent
+
+	// WriteHookResponse outputs a message to the user via the agent's hook response protocol.
+	WriteHookResponse(message string) error
+}
+
 // SubagentAwareExtractor provides methods for extracting files and tokens including subagents.
 // Agents that support spawning subagents (like Claude Code's Task tool) should implement this
 // to ensure subagent contributions are included in checkpoints.

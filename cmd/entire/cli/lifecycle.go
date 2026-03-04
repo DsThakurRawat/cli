@@ -64,6 +64,7 @@ func handleLifecycleSessionStart(ctx context.Context, ag agent.Agent, event *age
 		slog.String("event", event.Type.String()),
 		slog.String("session_id", event.SessionID),
 		slog.String("session_ref", event.SessionRef),
+		slog.String("model", event.Model),
 	)
 
 	if event.SessionID == "" {
@@ -82,12 +83,16 @@ func handleLifecycleSessionStart(ctx context.Context, ag agent.Agent, event *age
 		message += fmt.Sprintf("\n  %d other active conversation(s) in this workspace will also be included.\n  Use 'entire status' for more information.", count)
 	}
 
-	// Output informational message
+	// Output informational message if the agent supports hook responses.
+	// Claude Code reads JSON from stdout; agents that don't implement
+	// HookResponseWriter silently skip (avoids raw JSON in their terminal).
 	if event.ResponseMessage != "" {
 		message = event.ResponseMessage
 	}
-	if err := outputHookResponse(message); err != nil {
-		return err
+	if writer, ok := ag.(agent.HookResponseWriter); ok {
+		if err := writer.WriteHookResponse(message); err != nil {
+			return fmt.Errorf("failed to write hook response: %w", err)
+		}
 	}
 
 	// Fire EventSessionStart for the current session (if state exists).
@@ -95,6 +100,7 @@ func handleLifecycleSessionStart(ctx context.Context, ag agent.Agent, event *age
 		logging.Warn(logCtx, "failed to load session state on start",
 			slog.String("error", loadErr.Error()))
 	} else if state != nil {
+		persistEventMetadataToState(event, state)
 		if transErr := strategy.TransitionAndLog(ctx, state, session.EventSessionStart, session.TransitionContext{}, session.NoOpActionHandler{}); transErr != nil {
 			logging.Warn(logCtx, "session start transition failed",
 				slog.String("error", transErr.Error()))
@@ -116,6 +122,7 @@ func handleLifecycleTurnStart(ctx context.Context, ag agent.Agent, event *agent.
 		slog.String("event", event.Type.String()),
 		slog.String("session_id", event.SessionID),
 		slog.String("session_ref", event.SessionRef),
+		slog.String("model", event.Model),
 	)
 
 	sessionID := event.SessionID
@@ -138,7 +145,7 @@ func handleLifecycleTurnStart(ctx context.Context, ag agent.Agent, event *agent.
 	}
 
 	strat := GetStrategy(ctx)
-	if err := strat.InitializeSession(ctx, sessionID, ag.Type(), event.SessionRef, event.Prompt); err != nil {
+	if err := strat.InitializeSession(ctx, sessionID, ag.Type(), event.SessionRef, event.Prompt, event.Model); err != nil {
 		logging.Warn(logCtx, "failed to initialize session state",
 			slog.String("error", err.Error()))
 	}
@@ -156,6 +163,7 @@ func handleLifecycleTurnEnd(ctx context.Context, ag agent.Agent, event *agent.Ev
 		slog.String("event", event.Type.String()),
 		slog.String("session_id", event.SessionID),
 		slog.String("session_ref", event.SessionRef),
+		slog.String("model", event.Model),
 	)
 
 	sessionID := event.SessionID
@@ -167,6 +175,19 @@ func handleLifecycleTurnEnd(ctx context.Context, ag agent.Agent, event *agent.Ev
 	if transcriptRef == "" {
 		return errors.New("transcript file not specified")
 	}
+
+	// If agent implements TranscriptPreparer, materialize the transcript file.
+	// This must run BEFORE fileExists: agents like OpenCode lazily fetch transcripts
+	// via `opencode export`, so the file doesn't exist until PrepareTranscript creates it.
+	// Claude Code's PrepareTranscript just flushes (always succeeds). Agents without
+	// TranscriptPreparer (Gemini, Droid) are unaffected.
+	if preparer, ok := ag.(agent.TranscriptPreparer); ok {
+		if err := preparer.PrepareTranscript(ctx, transcriptRef); err != nil {
+			logging.Warn(logCtx, "failed to prepare transcript",
+				slog.String("error", err.Error()))
+		}
+	}
+
 	if !fileExists(transcriptRef) {
 		return fmt.Errorf("transcript file not found: %s", transcriptRef)
 	}
@@ -185,14 +206,6 @@ func handleLifecycleTurnEnd(ctx context.Context, ag agent.Agent, event *agent.Ev
 	}
 	if err := os.MkdirAll(sessionDirAbs, 0o750); err != nil {
 		return fmt.Errorf("failed to create session directory: %w", err)
-	}
-
-	// If agent implements TranscriptPreparer, wait for transcript to be ready
-	if preparer, ok := ag.(agent.TranscriptPreparer); ok {
-		if err := preparer.PrepareTranscript(ctx, transcriptRef); err != nil {
-			logging.Warn(logCtx, "failed to prepare transcript",
-				slog.String("error", err.Error()))
-		}
 	}
 
 	// Copy transcript to session directory
@@ -285,7 +298,7 @@ func handleLifecycleTurnEnd(ctx context.Context, ag agent.Agent, event *agent.Ev
 	if len(allPrompts) > 0 {
 		lastPrompt = allPrompts[len(allPrompts)-1]
 	}
-	commitMessage := generateCommitMessage(lastPrompt)
+	commitMessage := generateCommitMessage(lastPrompt, ag.Type())
 	logging.Debug(logCtx, "using commit message",
 		slog.Int("message_length", len(commitMessage)))
 
@@ -333,7 +346,7 @@ func handleLifecycleTurnEnd(ctx context.Context, ag agent.Agent, event *agent.Ev
 	totalChanges := len(relModifiedFiles) + len(relNewFiles) + len(relDeletedFiles)
 	if totalChanges == 0 {
 		logging.Info(logCtx, "no files modified during session, skipping checkpoint")
-		transitionSessionTurnEnd(ctx, sessionID)
+		transitionSessionTurnEnd(ctx, sessionID, event)
 		if cleanupErr := CleanupPrePromptState(ctx, sessionID); cleanupErr != nil {
 			logging.Warn(logCtx, "failed to cleanup pre-prompt state",
 				slog.String("error", cleanupErr.Error()))
@@ -396,7 +409,7 @@ func handleLifecycleTurnEnd(ctx context.Context, ag agent.Agent, event *agent.Ev
 	}
 
 	// Transition session phase and cleanup
-	transitionSessionTurnEnd(ctx, sessionID)
+	transitionSessionTurnEnd(ctx, sessionID, event)
 	if cleanupErr := CleanupPrePromptState(ctx, sessionID); cleanupErr != nil {
 		logging.Warn(logCtx, "failed to cleanup pre-prompt state",
 			slog.String("error", cleanupErr.Error()))
@@ -702,7 +715,7 @@ func parseTranscriptForCheckpointUUID(transcriptPath string) ([]transcriptLine, 
 }
 
 // transitionSessionTurnEnd transitions the session phase to IDLE and dispatches turn-end actions.
-func transitionSessionTurnEnd(ctx context.Context, sessionID string) {
+func transitionSessionTurnEnd(ctx context.Context, sessionID string, event *agent.Event) {
 	logCtx := logging.WithComponent(ctx, "lifecycle")
 	turnState, loadErr := strategy.LoadSessionState(ctx, sessionID)
 	if loadErr != nil {
@@ -713,6 +726,9 @@ func transitionSessionTurnEnd(ctx context.Context, sessionID string) {
 	if turnState == nil {
 		return
 	}
+
+	persistEventMetadataToState(event, turnState)
+
 	if err := strategy.TransitionAndLog(ctx, turnState, session.EventTurnEnd, session.TransitionContext{}, session.NoOpActionHandler{}); err != nil {
 		logging.Warn(logCtx, "turn-end transition failed",
 			slog.String("error", err.Error()))
@@ -763,4 +779,11 @@ func logFileChanges(ctx context.Context, modified, newFiles, deleted []string) {
 		slog.Int("modified", len(modified)),
 		slog.Int("new", len(newFiles)),
 		slog.Int("deleted", len(deleted)))
+}
+
+func persistEventMetadataToState(event *agent.Event, state *strategy.SessionState) {
+	// Update ModelName if provided (model is known by turn-end even on first turn)
+	if event.Model != "" {
+		state.ModelName = event.Model
+	}
 }
