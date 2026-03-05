@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
-	"unicode/utf8"
 
 	"github.com/entireio/cli/cmd/entire/cli/agent"
 	"github.com/entireio/cli/cmd/entire/cli/agent/types"
@@ -204,126 +203,6 @@ func TestCalculateTokenUsage_CursorWithOffset(t *testing.T) {
 	result := agent.CalculateTokenUsage(context.Background(), ag, []byte(cursorSampleTranscript), 3, "")
 	if result != nil {
 		t.Errorf("CalculateTokenUsage(Cursor, offset=3) = %+v, want nil", result)
-	}
-}
-
-func TestGenerateContextFromPrompts_CJKTruncation(t *testing.T) {
-	t.Parallel()
-
-	// 600 CJK characters exceeds the 500-rune truncation limit.
-	prompt := strings.Repeat("あ", 600)
-
-	result := generateContextFromPrompts([]string{prompt})
-
-	if !utf8.Valid(result) {
-		t.Error("generateContextFromPrompts produced invalid UTF-8 when truncating a CJK prompt")
-	}
-
-	resultStr := string(result)
-	if !strings.Contains(resultStr, "...") {
-		t.Error("expected truncated CJK prompt to contain '...' suffix")
-	}
-	// Should not contain more than 500 CJK characters
-	if strings.Contains(resultStr, strings.Repeat("あ", 501)) {
-		t.Error("CJK prompt was not truncated")
-	}
-}
-
-func TestGenerateContextFromPrompts_EmojiTruncation(t *testing.T) {
-	t.Parallel()
-
-	// 600 emoji exceeds the 500-rune truncation limit.
-	prompt := strings.Repeat("🎉", 600)
-
-	result := generateContextFromPrompts([]string{prompt})
-
-	if !utf8.Valid(result) {
-		t.Error("generateContextFromPrompts produced invalid UTF-8 when truncating an emoji prompt")
-	}
-
-	resultStr := string(result)
-	if !strings.Contains(resultStr, "...") {
-		t.Error("expected truncated emoji prompt to contain '...' suffix")
-	}
-}
-
-func TestGenerateContextFromPrompts_ASCIITruncation(t *testing.T) {
-	t.Parallel()
-
-	// Pure ASCII: should truncate at 500 runes with "..." suffix.
-	prompt := strings.Repeat("a", 600)
-
-	result := generateContextFromPrompts([]string{prompt})
-
-	if !utf8.Valid(result) {
-		t.Error("generateContextFromPrompts produced invalid UTF-8 when truncating an ASCII prompt")
-	}
-
-	resultStr := string(result)
-	if !strings.Contains(resultStr, "...") {
-		t.Error("expected truncated prompt to contain '...' suffix")
-	}
-
-	if strings.Contains(resultStr, strings.Repeat("a", 501)) {
-		t.Error("prompt was not truncated")
-	}
-}
-
-func TestGenerateContextFromPrompts_ShortCJKNotTruncated(t *testing.T) {
-	t.Parallel()
-
-	// 200 CJK characters is under the 500-rune limit, should not be truncated.
-	prompt := strings.Repeat("あ", 200)
-
-	result := generateContextFromPrompts([]string{prompt})
-
-	if !utf8.Valid(result) {
-		t.Error("generateContextFromPrompts produced invalid UTF-8")
-	}
-
-	resultStr := string(result)
-	if strings.Contains(resultStr, "...") {
-		t.Error("short CJK prompt should not be truncated")
-	}
-}
-
-// droidSampleTranscript is a Droid JSONL transcript with user and assistant messages
-// in Droid's envelope format: {"type":"message","message":{"role":"...","content":[...]}}.
-var droidSampleTranscript = strings.Join([]string{
-	`{"type":"session_start","session":{"session_id":"s1"}}`,
-	`{"type":"message","id":"m1","message":{"role":"user","content":[{"type":"text","text":"create a file called hello.go"}]}}`,
-	`{"type":"message","id":"m2","message":{"role":"assistant","content":[{"type":"text","text":"I'll create that file."}]}}`,
-	`{"type":"message","id":"m3","message":{"role":"user","content":[{"type":"text","text":"<ide_opened_file>some content</ide_opened_file>now add a main function"}]}}`,
-	`{"type":"message","id":"m4","message":{"role":"assistant","content":[{"type":"text","text":"Added the main function."}]}}`,
-}, "\n") + "\n"
-
-func TestExtractUserPrompts_Droid(t *testing.T) {
-	t.Parallel()
-
-	prompts := extractUserPrompts(agent.AgentTypeFactoryAIDroid, droidSampleTranscript)
-	if len(prompts) != 2 {
-		t.Fatalf("extractUserPrompts(Droid) returned %d prompts, want 2", len(prompts))
-	}
-
-	if prompts[0] != "create a file called hello.go" {
-		t.Errorf("prompt[0] = %q, want %q", prompts[0], "create a file called hello.go")
-	}
-
-	// Verify IDE tags are stripped
-	if strings.Contains(prompts[1], "<ide_opened_file>") {
-		t.Errorf("prompt[1] still contains IDE tags: %q", prompts[1])
-	}
-	if prompts[1] != "now add a main function" {
-		t.Errorf("prompt[1] = %q, want %q", prompts[1], "now add a main function")
-	}
-}
-
-func TestExtractUserPrompts_DroidEmpty(t *testing.T) {
-	t.Parallel()
-
-	prompts := extractUserPrompts(agent.AgentTypeFactoryAIDroid, "")
-	if len(prompts) != 0 {
-		t.Errorf("extractUserPrompts(Droid, empty) = %v, want empty", prompts)
 	}
 }
 

@@ -316,8 +316,8 @@ func writeActiveSessions(ctx context.Context, w io.Writer, sty statusStyles) {
 			}
 
 			// Line 2: > "first prompt" (chevron + quoted, truncated)
-			if st.FirstPrompt != "" {
-				prompt := stringutil.TruncateRunes(st.FirstPrompt, 60, "...")
+			if st.LastPrompt != "" {
+				prompt := stringutil.TruncateRunes(st.LastPrompt, 60, "...")
 				fmt.Fprintf(w, "%s \"%s\"\n", sty.render(sty.dim, ">"), prompt)
 			}
 

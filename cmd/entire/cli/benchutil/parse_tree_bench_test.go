@@ -35,14 +35,14 @@ func benchCreateBlob(b *testing.B, repo *gogit.Repository, content string) plumb
 }
 
 // buildShardedMetadataTree builds a realistic metadata branch tree with N checkpoints
-// distributed across shards. Each checkpoint has 5 files (metadata.json, full.jsonl,
-// prompt.txt, context.md, content_hash.txt) matching the real storage format.
+// distributed across shards. Each checkpoint has 4 files (metadata.json, full.jsonl,
+// prompt.txt, content_hash.txt) matching the real storage format.
 //
 // Returns the root tree hash.
 func buildShardedMetadataTree(b *testing.B, repo *gogit.Repository, checkpointCount int) plumbing.Hash {
 	b.Helper()
 
-	entries := make(map[string]object.TreeEntry, checkpointCount*5)
+	entries := make(map[string]object.TreeEntry, checkpointCount*4)
 	for i := range checkpointCount {
 		// Generate a fake checkpoint ID (12 hex chars) spread across shards
 		cpID := fmt.Sprintf("%02x%010d", i%256, i)

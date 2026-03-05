@@ -191,7 +191,7 @@ func (s *ManualCommitStrategy) CountOtherActiveSessionsWithCheckpoints(ctx conte
 // A partial state may exist if the concurrent session warning was shown.
 // agentType is the human-readable name of the agent (e.g., "Claude Code").
 // transcriptPath is the path to the live transcript file (for mid-session commit detection).
-// userPrompt is the user's prompt text (stored truncated as FirstPrompt for display).
+// userPrompt is the user's prompt text (stored truncated as LastPrompt for display).
 func (s *ManualCommitStrategy) initializeSession(ctx context.Context, repo *git.Repository, sessionID string, agentType types.AgentType, transcriptPath string, userPrompt string, model string) (*SessionState, error) {
 	head, err := repo.Head()
 	if err != nil {
@@ -239,7 +239,7 @@ func (s *ManualCommitStrategy) initializeSession(ctx context.Context, repo *git.
 		AgentType:             agentType,
 		ModelName:             model,
 		TranscriptPath:        transcriptPath,
-		FirstPrompt:           truncatePromptForStorage(userPrompt),
+		LastPrompt:            truncatePromptForStorage(userPrompt),
 	}
 
 	if err := s.saveSessionState(ctx, state); err != nil {

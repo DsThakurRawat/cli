@@ -1252,13 +1252,13 @@ func createCommit(repo *git.Repository, treeHash, parentHash plumbing.Hash, mess
 	return hash, nil
 }
 
-// getSessionDescriptionFromTree reads the first line of prompt.txt or context.md from a git tree.
+// getSessionDescriptionFromTree reads the first line of prompt.txt from a git tree.
 // This is the tree-based equivalent of getSessionDescription (which reads from filesystem).
 //
-// If metadataDir is provided, looks for files at metadataDir/prompt.txt or metadataDir/context.md.
+// If metadataDir is provided, looks for files at metadataDir/prompt.txt.
 // If metadataDir is empty, first tries the root of the tree (for when the tree is already
 // the session directory), then falls back to
-// searching for .entire/metadata/*/prompt.txt or context.md (for full worktree trees).
+// searching for .entire/metadata/*/prompt.txt (for full worktree trees).
 func getSessionDescriptionFromTree(tree *object.Tree, metadataDir string) string {
 	// Helper to read first line from a file in tree
 	readFirstLine := func(path string) string {
@@ -1272,9 +1272,7 @@ func getSessionDescriptionFromTree(tree *object.Tree, metadataDir string) string
 		}
 		lines := strings.SplitN(content, "\n", 2)
 		if len(lines) > 0 && lines[0] != "" {
-			desc := strings.TrimSpace(lines[0])
-			// Remove markdown header prefix if present
-			return strings.TrimPrefix(desc, "# ")
+			return strings.TrimSpace(lines[0])
 		}
 		return ""
 	}
@@ -1282,9 +1280,6 @@ func getSessionDescriptionFromTree(tree *object.Tree, metadataDir string) string
 	// If metadataDir is provided, look there directly
 	if metadataDir != "" {
 		if desc := readFirstLine(metadataDir + "/" + paths.PromptFileName); desc != "" {
-			return desc
-		}
-		if desc := readFirstLine(metadataDir + "/" + paths.ContextFileName); desc != "" {
 			return desc
 		}
 		return NoDescription
@@ -1295,11 +1290,8 @@ func getSessionDescriptionFromTree(tree *object.Tree, metadataDir string) string
 	if desc := readFirstLine(paths.PromptFileName); desc != "" {
 		return desc
 	}
-	if desc := readFirstLine(paths.ContextFileName); desc != "" {
-		return desc
-	}
 
-	// Fall back to searching for .entire/metadata/*/prompt.txt or context.md
+	// Fall back to searching for .entire/metadata/*/prompt.txt
 	// (used when the tree is the full worktree)
 	var desc string
 	//nolint:errcheck // We ignore errors here as we're just searching for a description
@@ -1308,17 +1300,14 @@ func getSessionDescriptionFromTree(tree *object.Tree, metadataDir string) string
 			return nil // Already found description
 		}
 		name := f.Name
-		if strings.Contains(name, ".entire/metadata/") {
-			if strings.HasSuffix(name, "/"+paths.PromptFileName) || strings.HasSuffix(name, "/"+paths.ContextFileName) {
-				content, err := f.Contents()
-				if err != nil {
-					return nil //nolint:nilerr // Skip files we can't read, continue searching
-				}
-				lines := strings.SplitN(content, "\n", 2)
-				if len(lines) > 0 && lines[0] != "" {
-					desc = strings.TrimSpace(lines[0])
-					desc = strings.TrimPrefix(desc, "# ")
-				}
+		if strings.Contains(name, ".entire/metadata/") && strings.HasSuffix(name, "/"+paths.PromptFileName) {
+			content, err := f.Contents()
+			if err != nil {
+				return nil //nolint:nilerr // Skip files we can't read, continue searching
+			}
+			lines := strings.SplitN(content, "\n", 2)
+			if len(lines) > 0 && lines[0] != "" {
+				desc = strings.TrimSpace(lines[0])
 			}
 		}
 		return nil

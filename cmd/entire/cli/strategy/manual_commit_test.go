@@ -2979,6 +2979,11 @@ func TestCondenseSession_GeminiTranscript(t *testing.T) {
 		t.Fatalf("failed to write transcript: %v", err)
 	}
 
+	// Write prompt.txt (simulating what lifecycle does at turn start / turn end)
+	if err := os.WriteFile(filepath.Join(metadataDirAbs, paths.PromptFileName), []byte("Create a new file"), 0o644); err != nil {
+		t.Fatalf("failed to write prompt file: %v", err)
+	}
+
 	// Create modified file
 	if err := os.WriteFile(testFile, []byte("modified by gemini"), 0o644); err != nil {
 		t.Fatalf("failed to modify file: %v", err)
@@ -3133,6 +3138,11 @@ func TestCondenseSession_GeminiMultiCheckpoint(t *testing.T) {
 		t.Fatalf("failed to write transcript: %v", err)
 	}
 
+	// Write prompt.txt for checkpoint 1 (simulating what lifecycle does)
+	if err := os.WriteFile(filepath.Join(metadataDirAbs, paths.PromptFileName), []byte("Add a main function"), 0o644); err != nil {
+		t.Fatalf("failed to write prompt file: %v", err)
+	}
+
 	// Modify file for checkpoint 1
 	if err := os.WriteFile(testFile, []byte("package main\n\nfunc main() {}\n"), 0o644); err != nil {
 		t.Fatalf("failed to modify file: %v", err)
@@ -3200,6 +3210,12 @@ func TestCondenseSession_GeminiMultiCheckpoint(t *testing.T) {
 
 	if err := os.WriteFile(transcriptPath, []byte(checkpoint2Transcript), 0o644); err != nil {
 		t.Fatalf("failed to update transcript: %v", err)
+	}
+
+	// Simulate condensation clearing prompt.txt (condenseAndUpdateState does this),
+	// then lifecycle appending the new prompt at turn start.
+	if err := os.WriteFile(filepath.Join(metadataDirAbs, paths.PromptFileName), []byte("Now add error handling"), 0o644); err != nil {
+		t.Fatalf("failed to write prompt file: %v", err)
 	}
 
 	// Modify file for checkpoint 2
@@ -3290,12 +3306,12 @@ func TestCondenseSession_GeminiMultiCheckpoint(t *testing.T) {
 		t.Error("Full transcript should be stored")
 	}
 
-	// Verify both prompts are present (even though tokens only count from second prompt)
-	if !strings.Contains(content.Prompts, "Add a main function") {
-		t.Error("Prompts should contain first prompt")
+	// Verify only checkpoint-scoped prompts are present (from CheckpointTranscriptStart onwards)
+	if strings.Contains(content.Prompts, "Add a main function") {
+		t.Error("Prompts should NOT contain first prompt (before checkpoint start)")
 	}
 	if !strings.Contains(content.Prompts, "Now add error handling") {
-		t.Error("Prompts should contain second prompt")
+		t.Error("Prompts should contain second prompt (checkpoint-scoped)")
 	}
 }
 

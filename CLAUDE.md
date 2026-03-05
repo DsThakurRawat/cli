@@ -381,8 +381,7 @@ The state machine emits **actions** (e.g., `ActionCondense`, `ActionUpdateLastIn
 ```
 .entire/metadata/<session-id>/
 ├── full.jsonl               # Session transcript
-├── prompt.txt               # User prompts
-├── context.md               # Generated context
+├── prompt.txt               # Checkpoint-scoped user prompts
 └── tasks/<tool-use-id>/     # Task checkpoints
     ├── checkpoint.json      # UUID mapping for rewind
     └── agent-<id>.jsonl     # Subagent transcript
@@ -396,8 +395,7 @@ The state machine emits **actions** (e.g., `ActionCondense`, `ActionUpdateLastIn
 ├── 0/                       # First session (0-based indexing)
 │   ├── metadata.json        # Session-specific metadata
 │   ├── full.jsonl           # Session transcript
-│   ├── prompt.txt           # User prompts
-│   ├── context.md           # Generated context
+│   ├── prompt.txt           # Checkpoint-scoped user prompts
 │   ├── content_hash.txt     # SHA256 of transcript
 │   └── tasks/<tool-use-id>/ # Task checkpoints (if applicable)
 │       ├── checkpoint.json  # UUID mapping
@@ -486,8 +484,7 @@ entire/checkpoints/v1 commit:
   Tree: a3/b2c4d5e6f7/
     ├── metadata.json (checkpoint_id: "a3b2c4d5e6f7")
     ├── full.jsonl (session transcript)
-    ├── prompt.txt
-    └── context.md
+    └── prompt.txt
 ```
 
 #### Commit Trailers

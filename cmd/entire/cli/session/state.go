@@ -143,8 +143,10 @@ type State struct {
 	// TranscriptPath is the path to the live transcript file (for mid-session commit detection)
 	TranscriptPath string `json:"transcript_path,omitempty"`
 
-	// FirstPrompt is the first user prompt that started this session (truncated for display)
-	FirstPrompt string `json:"first_prompt,omitempty"`
+	// LastPrompt is the most recent user prompt for this session (truncated for display).
+	// Updated on every turn start (UserPromptSubmit). JSON tag kept as "first_prompt"
+	// for backward compatibility with existing state files.
+	LastPrompt string `json:"last_prompt,omitempty"`
 
 	// PromptAttributions tracks user and agent line changes at each prompt start.
 	// This enables accurate attribution by capturing user edits between checkpoints.

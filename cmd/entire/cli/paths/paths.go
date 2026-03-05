@@ -22,9 +22,7 @@ const (
 
 // Metadata file names
 const (
-	ContextFileName          = "context.md"
 	PromptFileName           = "prompt.txt"
-	SummaryFileName          = "summary.txt"
 	TranscriptFileName       = "full.jsonl"
 	TranscriptFileNameLegacy = "full.log"
 	MetadataFileName         = "metadata.json"

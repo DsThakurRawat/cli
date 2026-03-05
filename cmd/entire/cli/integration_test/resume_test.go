@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/entireio/cli/cmd/entire/cli/testutil"
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
 )
@@ -488,7 +489,7 @@ func (env *TestEnv) RunResume(branchName string) (string, error) {
 	ctx := env.T.Context()
 	cmd := exec.CommandContext(ctx, getTestBinary(), "resume", branchName)
 	cmd.Dir = env.RepoDir
-	cmd.Env = append(gitIsolatedEnv(),
+	cmd.Env = append(testutil.GitIsolatedEnv(),
 		"ENTIRE_TEST_CLAUDE_PROJECT_DIR="+env.ClaudeProjectDir,
 	)
 	// Detach from controlling terminal so huh can't open /dev/tty for interactive prompts
@@ -505,7 +506,7 @@ func (env *TestEnv) RunResumeForce(branchName string) (string, error) {
 	ctx := env.T.Context()
 	cmd := exec.CommandContext(ctx, getTestBinary(), "resume", "--force", branchName)
 	cmd.Dir = env.RepoDir
-	cmd.Env = append(gitIsolatedEnv(),
+	cmd.Env = append(testutil.GitIsolatedEnv(),
 		"ENTIRE_TEST_CLAUDE_PROJECT_DIR="+env.ClaudeProjectDir,
 	)
 
@@ -1077,7 +1078,7 @@ func TestResume_LocalLogNoTimestamp(t *testing.T) {
 // 1. Developer creates feature branch with multiple commits, each with its own checkpoint
 // 2. PR is squash-merged to main, combining all commit messages (and their checkpoint trailers)
 // 3. Feature branch is deleted
-// 4. Running "entire resume main" should discover and restore all sessions from the squash commit
+// 4. Running "entire resume main" should resume only from the latest checkpoint (most recent session)
 func TestResume_SquashMergeMultipleCheckpoints(t *testing.T) {
 	t.Parallel()
 	env := NewFeatureBranchEnv(t)
@@ -1160,20 +1161,20 @@ func TestResume_SquashMergeMultipleCheckpoints(t *testing.T) {
 
 	t.Logf("Resume output:\n%s", output)
 
-	// Should restore both sessions (multi-checkpoint path)
-	if !strings.Contains(output, "Restored 2 sessions") {
-		t.Errorf("expected 'Restored 2 sessions' in output, got: %s", output)
+	// Should show info about skipped checkpoints
+	if !strings.Contains(output, "older checkpoints skipped") {
+		t.Errorf("expected 'older checkpoints skipped' in output, got: %s", output)
 	}
 
-	// Should contain resume commands for both sessions
-	if !strings.Contains(output, session1.ID) {
-		t.Errorf("expected session1 ID %s in output, got: %s", session1.ID, output)
+	// Should only resume the latest session (session2), not session1
+	if strings.Contains(output, session1.ID) {
+		t.Errorf("session1 ID %s should NOT appear in output (older checkpoint was skipped), got: %s", session1.ID, output)
 	}
 	if !strings.Contains(output, session2.ID) {
 		t.Errorf("expected session2 ID %s in output, got: %s", session2.ID, output)
 	}
 
-	// Should contain claude -r commands
+	// Should contain claude -r command
 	if !strings.Contains(output, "claude -r") {
 		t.Errorf("expected 'claude -r' in output, got: %s", output)
 	}

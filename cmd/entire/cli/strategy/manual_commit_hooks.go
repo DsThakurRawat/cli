@@ -19,6 +19,7 @@ import (
 
 	"github.com/entireio/cli/cmd/entire/cli/checkpoint"
 	"github.com/entireio/cli/cmd/entire/cli/checkpoint/id"
+	"github.com/entireio/cli/cmd/entire/cli/gitops"
 	"github.com/entireio/cli/cmd/entire/cli/logging"
 	"github.com/entireio/cli/cmd/entire/cli/paths"
 	"github.com/entireio/cli/cmd/entire/cli/session"
@@ -608,6 +609,7 @@ type postCommitActionHandler struct {
 	head                   *plumbing.Reference
 	commit                 *object.Commit
 	newHead                string
+	repoDir                string
 	shadowBranchName       string
 	shadowBranchesToDelete map[string]struct{}
 	committedFileSet       map[string]struct{}
@@ -640,8 +642,10 @@ func (h *postCommitActionHandler) HandleCondense(state *session.State) error {
 
 	if shouldCondense {
 		h.condensed = h.s.condenseAndUpdateState(h.ctx, h.repo, h.checkpointID, state, h.head, h.shadowBranchName, h.shadowBranchesToDelete, h.committedFileSet, condenseOpts{
-			shadowRef: h.shadowRef,
-			headTree:  h.headTree,
+			shadowRef:      h.shadowRef,
+			headTree:       h.headTree,
+			repoDir:        h.repoDir,
+			headCommitHash: h.newHead,
 		})
 	} else {
 		h.s.updateBaseCommitIfChanged(h.ctx, state, h.newHead)
@@ -664,8 +668,10 @@ func (h *postCommitActionHandler) HandleCondenseIfFilesTouched(state *session.St
 
 	if shouldCondense {
 		h.condensed = h.s.condenseAndUpdateState(h.ctx, h.repo, h.checkpointID, state, h.head, h.shadowBranchName, h.shadowBranchesToDelete, h.committedFileSet, condenseOpts{
-			shadowRef: h.shadowRef,
-			headTree:  h.headTree,
+			shadowRef:      h.shadowRef,
+			headTree:       h.headTree,
+			repoDir:        h.repoDir,
+			headCommitHash: h.newHead,
 		})
 	} else {
 		h.s.updateBaseCommitIfChanged(h.ctx, state, h.newHead)
@@ -824,8 +830,8 @@ func (s *ManualCommitStrategy) PostCommit(ctx context.Context) error { //nolint:
 
 	// Pre-resolve HEAD tree and parent tree once for the entire PostCommit.
 	// These are immutable within this hook invocation and used by multiple
-	// per-session functions (filesChangedInCommit, filesOverlapWithContent,
-	// filesWithRemainingAgentChanges, calculateSessionAttributions).
+	// per-session functions (filesOverlapWithContent, filesWithRemainingAgentChanges,
+	// calculateSessionAttributions).
 	_, resolveTreesSpan := perf.Start(ctx, "resolve_commit_trees")
 	var headTree *object.Tree
 	if t, err := commit.Tree(); err == nil {
@@ -840,7 +846,7 @@ func (s *ManualCommitStrategy) PostCommit(ctx context.Context) error { //nolint:
 		}
 	}
 
-	committedFileSet := filesChangedInCommit(commit, headTree, parentTree)
+	committedFileSet := filesChangedInCommit(ctx, worktreePath, commit)
 	resolveTreesSpan.End()
 
 	_, processSessionsSpan := perf.Start(ctx, "process_sessions")
@@ -851,7 +857,7 @@ func (s *ManualCommitStrategy) PostCommit(ctx context.Context) error { //nolint:
 			continue
 		}
 		s.postCommitProcessSession(ctx, repo, state, &transitionCtx, checkpointID,
-			head, commit, newHead, headTree, parentTree, committedFileSet,
+			head, commit, newHead, worktreePath, headTree, parentTree, committedFileSet,
 			shadowBranchesToDelete, uncondensedActiveOnBranch)
 	}
 	processSessionsSpan.End()
@@ -894,6 +900,7 @@ func (s *ManualCommitStrategy) postCommitProcessSession(
 	head *plumbing.Reference,
 	commit *object.Commit,
 	newHead string,
+	repoDir string,
 	headTree, parentTree *object.Tree,
 	committedFileSet map[string]struct{},
 	shadowBranchesToDelete map[string]struct{},
@@ -976,6 +983,7 @@ func (s *ManualCommitStrategy) postCommitProcessSession(
 		head:                   head,
 		commit:                 commit,
 		newHead:                newHead,
+		repoDir:                repoDir,
 		shadowBranchName:       shadowBranchName,
 		shadowBranchesToDelete: shadowBranchesToDelete,
 		committedFileSet:       committedFileSet,
@@ -1024,6 +1032,13 @@ func (s *ManualCommitStrategy) postCommitProcessSession(
 		)
 		if len(remainingFiles) > 0 {
 			s.carryForwardToNewShadowBranch(ctx, repo, state, remainingFiles)
+		}
+
+		// Clear filesystem prompt.txt only when ALL files are committed.
+		// If carry-forward files remain, the prompt must persist so the next
+		// condensation (triggered by the next commit) can read it.
+		if len(remainingFiles) == 0 {
+			clearFilesystemPrompt(ctx, state.SessionID)
 		}
 	}
 	carryForwardSpan.End()
@@ -1098,6 +1113,10 @@ func (s *ManualCommitStrategy) condenseAndUpdateState(
 	state.PromptAttributions = nil
 	state.PendingPromptAttribution = nil
 	state.FilesTouched = nil
+
+	// NOTE: filesystem prompt.txt is NOT cleared here. The caller (PostCommit handler)
+	// decides whether to clear it based on carry-forward: if remaining files exist,
+	// the prompt must persist so the next condensation can read it.
 
 	// Save checkpoint ID so subsequent commits can reuse it (e.g., amend restores trailer)
 	state.LastCheckpointID = checkpointID
@@ -1732,7 +1751,7 @@ func addCheckpointTrailerWithComment(message string, checkpointID id.CheckpointI
 //
 // agentType is the human-readable name of the agent (e.g., "Claude Code").
 // transcriptPath is the path to the live transcript file (for mid-session commit detection).
-// userPrompt is the user's prompt text (stored truncated as FirstPrompt for display).
+// userPrompt is the user's prompt text (stored truncated as LastPrompt for display).
 func (s *ManualCommitStrategy) InitializeSession(ctx context.Context, sessionID string, agentType types.AgentType, transcriptPath string, userPrompt string, model string) error {
 	repo, err := OpenRepository(ctx)
 	if err != nil {
@@ -1770,9 +1789,9 @@ func (s *ManualCommitStrategy) InitializeSession(ctx context.Context, sessionID 
 			state.ModelName = model
 		}
 
-		// Backfill FirstPrompt if empty (for sessions created before the first_prompt field was added)
-		if state.FirstPrompt == "" && userPrompt != "" {
-			state.FirstPrompt = truncatePromptForStorage(userPrompt)
+		// Update LastPrompt on every turn so condensation always has the current prompt
+		if userPrompt != "" {
+			state.LastPrompt = truncatePromptForStorage(userPrompt)
 		}
 
 		// Update transcript path if provided (may change on session resume)
@@ -2033,6 +2052,42 @@ func extractLastPrompt(content string) string {
 	return ""
 }
 
+// TODO: check if its duplicated
+// readPromptsFromShadowBranch reads prompt.txt from the shadow branch tree.
+// Returns all prompts split on "\n\n---\n\n", or nil if prompt.txt is not available.
+func readPromptsFromShadowBranch(_ context.Context, repo *git.Repository, state *SessionState) []string {
+	shadowBranchName := getShadowBranchNameForCommit(state.BaseCommit, state.WorktreeID)
+	refName := plumbing.NewBranchReferenceName(shadowBranchName)
+	ref, err := repo.Reference(refName, true)
+	if err != nil {
+		return nil
+	}
+
+	commit, err := repo.CommitObject(ref.Hash())
+	if err != nil {
+		return nil
+	}
+
+	tree, err := commit.Tree()
+	if err != nil {
+		return nil
+	}
+
+	metadataDir := paths.EntireMetadataDir + "/" + state.SessionID
+	promptPath := metadataDir + "/" + paths.PromptFileName
+	file, err := tree.File(promptPath)
+	if err != nil {
+		return nil
+	}
+
+	content, err := file.Contents()
+	if err != nil {
+		return nil
+	}
+
+	return splitPromptContent(content)
+}
+
 // HandleTurnEnd dispatches strategy-specific actions emitted when an agent turn ends.
 // The primary job is to finalize all checkpoints from this turn with the full transcript.
 //
@@ -2105,9 +2160,20 @@ func (s *ManualCommitStrategy) finalizeAllTurnCheckpoints(ctx context.Context, s
 		return 1 // Count as error - all checkpoints will be skipped
 	}
 
-	// Extract prompts and context from the full transcript
-	prompts := extractUserPrompts(state.AgentType, string(fullTranscript))
-	contextBytes := generateContextFromPrompts(prompts)
+	// Open repository (needed for shadow branch prompt reading and checkpoint store)
+	repo, err := OpenRepository(ctx)
+	if err != nil {
+		logging.Warn(logCtx, "finalize: failed to open repository",
+			slog.String("error", err.Error()),
+		)
+		state.TurnCheckpointIDs = nil
+		return 1 // Count as error - all checkpoints will be skipped
+	}
+
+	prompts := readPromptsFromShadowBranch(ctx, repo, state)
+	if len(prompts) == 0 {
+		prompts = readPromptsFromFilesystem(ctx, state.SessionID)
+	}
 
 	// Redact secrets before writing — matches WriteCommitted behavior.
 	// The live transcript on disk contains raw content; redaction must happen
@@ -2124,17 +2190,7 @@ func (s *ManualCommitStrategy) finalizeAllTurnCheckpoints(ctx context.Context, s
 	for i, p := range prompts {
 		prompts[i] = redact.String(p)
 	}
-	contextBytes = redact.Bytes(contextBytes)
 
-	// Open repository and create checkpoint store
-	repo, err := OpenRepository(ctx)
-	if err != nil {
-		logging.Warn(logCtx, "finalize: failed to open repository",
-			slog.String("error", err.Error()),
-		)
-		state.TurnCheckpointIDs = nil
-		return 1 // Count as error - all checkpoints will be skipped
-	}
 	store := checkpoint.NewGitStore(repo)
 
 	// Update each checkpoint with the full transcript
@@ -2154,7 +2210,6 @@ func (s *ManualCommitStrategy) finalizeAllTurnCheckpoints(ctx context.Context, s
 			SessionID:    state.SessionID,
 			Transcript:   fullTranscript,
 			Prompts:      prompts,
-			Context:      contextBytes,
 			Agent:        state.AgentType,
 		})
 		if updateErr != nil {
@@ -2182,52 +2237,20 @@ func (s *ManualCommitStrategy) finalizeAllTurnCheckpoints(ctx context.Context, s
 	return errCount
 }
 
-// filesChangedInCommit returns the set of files changed in a commit by diffing against its parent.
-// When headTree and parentTree are provided, they are used directly to avoid redundant reads.
-func filesChangedInCommit(commit *object.Commit, headTree, parentTree *object.Tree) map[string]struct{} {
-	result := make(map[string]struct{})
-
-	commitTree := headTree
-	if commitTree == nil {
-		var err error
-		commitTree, err = commit.Tree()
-		if err != nil {
-			return result
-		}
+// filesChangedInCommit returns the set of files changed in a commit using git diff-tree.
+// Uses the git CLI for faster performance vs go-git tree walks (lower constant factors).
+func filesChangedInCommit(ctx context.Context, repoDir string, commit *object.Commit) map[string]struct{} {
+	var parentHash string
+	if commit.NumParents() > 0 {
+		parentHash = commit.ParentHashes[0].String()
 	}
-
-	if parentTree == nil && commit.NumParents() > 0 {
-		parent, err := commit.Parent(0)
-		if err != nil {
-			return result
-		}
-		parentTree, err = parent.Tree()
-		if err != nil {
-			return result
-		}
-	}
-
-	if parentTree == nil {
-		// Initial commit — all files are new
-		if iterErr := commitTree.Files().ForEach(func(f *object.File) error {
-			result[f.Name] = struct{}{}
-			return nil
-		}); iterErr != nil {
-			return result
-		}
-		return result
-	}
-
-	changes, err := parentTree.Diff(commitTree)
+	result, err := gitops.DiffTreeFiles(ctx, repoDir, parentHash, commit.Hash.String())
 	if err != nil {
-		return result
-	}
-	for _, change := range changes {
-		name := change.To.Name
-		if name == "" {
-			name = change.From.Name
-		}
-		result[name] = struct{}{}
+		logging.Warn(ctx, "post-commit: git diff-tree failed; condensation and carry-forward may be affected",
+			slog.String("commit", commit.Hash.String()),
+			slog.String("error", err.Error()),
+		)
+		return make(map[string]struct{})
 	}
 	return result
 }

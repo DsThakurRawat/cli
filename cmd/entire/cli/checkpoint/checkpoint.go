@@ -87,13 +87,13 @@ type Store interface {
 
 	// ReadCommitted reads a committed checkpoint's summary by ID.
 	// Returns only the CheckpointSummary (paths + aggregated stats), not actual content.
-	// Use ReadSessionContent to read actual transcript/prompts/context.
+	// Use ReadSessionContent to read actual transcript/prompts.
 	// Returns nil, nil if the checkpoint does not exist.
 	ReadCommitted(ctx context.Context, checkpointID id.CheckpointID) (*CheckpointSummary, error)
 
 	// ReadSessionContent reads the actual content for a specific session within a checkpoint.
 	// sessionIndex is 0-based (0 for first session, 1 for second, etc.).
-	// Returns the session's metadata, transcript, prompts, and context.
+	// Returns the session's metadata, transcript, and prompts.
 	ReadSessionContent(ctx context.Context, checkpointID id.CheckpointID, sessionIndex int) (*SessionContent, error)
 
 	// ReadSessionContentByID reads a session's content by its session ID.
@@ -103,7 +103,7 @@ type Store interface {
 	// ListCommitted lists all committed checkpoints.
 	ListCommitted(ctx context.Context) ([]CommittedInfo, error)
 
-	// UpdateCommitted replaces the transcript, prompts, and context for an existing
+	// UpdateCommitted replaces the transcript and prompts for an existing
 	// committed checkpoint. Used at stop time to finalize checkpoints with the full
 	// session transcript (prompt to stop event).
 	// Returns ErrCheckpointNotFound if the checkpoint doesn't exist.
@@ -217,9 +217,6 @@ type WriteCommittedOptions struct {
 	// Prompts contains user prompts from the session
 	Prompts []string
 
-	// Context is the generated context.md content
-	Context []byte
-
 	// FilesTouched are files modified during the session
 	FilesTouched []string
 
@@ -289,7 +286,7 @@ type WriteCommittedOptions struct {
 }
 
 // UpdateCommittedOptions contains options for updating an existing committed checkpoint.
-// Uses replace semantics: the transcript, prompts, and context are fully replaced,
+// Uses replace semantics: the transcript and prompts are fully replaced,
 // not appended. At stop time we have the complete session transcript and want every
 // checkpoint to contain it identically.
 type UpdateCommittedOptions struct {
@@ -304,9 +301,6 @@ type UpdateCommittedOptions struct {
 
 	// Prompts contains all user prompts (replaces existing)
 	Prompts []string
-
-	// Context is the updated context.md content (replaces existing)
-	Context []byte
 
 	// Agent identifies the agent type (needed for transcript chunking)
 	Agent types.AgentType
@@ -355,9 +349,6 @@ type SessionContent struct {
 
 	// Prompts contains user prompts from this session
 	Prompts string
-
-	// Context is the context.md content
-	Context string
 }
 
 // CommittedMetadata contains the metadata stored in metadata.json for each checkpoint.
@@ -416,7 +407,6 @@ func (m CommittedMetadata) GetTranscriptStart() int {
 type SessionFilePaths struct {
 	Metadata    string `json:"metadata"`
 	Transcript  string `json:"transcript"`
-	Context     string `json:"context"`
 	ContentHash string `json:"content_hash"`
 	Prompt      string `json:"prompt"`
 }
@@ -434,7 +424,6 @@ type SessionFilePaths struct {
 //	│   ├── metadata.json     # Session-specific CommittedMetadata
 //	│   ├── full.jsonl
 //	│   ├── prompt.txt
-//	│   ├── context.md
 //	│   └── content_hash.txt
 //	├── 2/                    # Second session
 //	└── 3/                    # Third session...

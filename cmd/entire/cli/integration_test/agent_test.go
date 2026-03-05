@@ -320,34 +320,6 @@ func TestAgentSessionOperations(t *testing.T) {
 func TestClaudeCodeHelperMethods(t *testing.T) {
 	t.Parallel()
 
-	t.Run("GetLastUserPrompt extracts last user message", func(t *testing.T) {
-		t.Parallel()
-		env := NewTestEnv(t)
-
-		transcriptPath := filepath.Join(env.RepoDir, "transcript.jsonl")
-		content := `{"type":"user","uuid":"u1","message":{"content":"first prompt"}}
-{"type":"assistant","uuid":"a1","message":{"content":[]}}
-{"type":"user","uuid":"u2","message":{"content":"second prompt"}}
-{"type":"assistant","uuid":"a2","message":{"content":[]}}
-`
-		if err := os.WriteFile(transcriptPath, []byte(content), 0o644); err != nil {
-			t.Fatalf("failed to write transcript: %v", err)
-		}
-
-		ag, _ := agent.Get("claude-code")
-		ccAgent := ag.(*claudecode.ClaudeCodeAgent)
-
-		session, _ := ag.ReadSession(&agent.HookInput{
-			SessionID:  "test",
-			SessionRef: transcriptPath,
-		})
-
-		prompt := ccAgent.GetLastUserPrompt(session)
-		if prompt != "second prompt" {
-			t.Errorf("GetLastUserPrompt() = %q, want %q", prompt, "second prompt")
-		}
-	})
-
 	t.Run("TruncateAtUUID truncates transcript", func(t *testing.T) {
 		t.Parallel()
 		env := NewTestEnv(t)
