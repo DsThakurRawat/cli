@@ -259,9 +259,11 @@ func (c *CopilotCLIAgent) AreHooksInstalled(ctx context.Context) bool {
 }
 
 // GetSupportedHooks returns the normalized lifecycle events this agent supports.
-// Note: HookNames() returns 8 hooks (including preToolUse, postToolUse, errorOccurred),
-// but GetSupportedHooks() returns only 6. The extra hooks are registered so `entire hooks install`
-// sets them up, but ParseHookEvent returns nil for them (pass-through, no lifecycle action).
+// Note: HookNames() returns 8 hooks but GetSupportedHooks() returns only 6.
+// The two not listed here are:
+//   - subagentStop: handled by ParseHookEvent (returns SubagentEnd), but there is no
+//     HookType constant for subagent events (they use EventType instead).
+//   - errorOccurred: pass-through hook with no lifecycle action (ParseHookEvent returns nil).
 func (c *CopilotCLIAgent) GetSupportedHooks() []agent.HookType {
 	return []agent.HookType{
 		agent.HookSessionStart,

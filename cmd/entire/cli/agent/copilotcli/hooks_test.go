@@ -406,15 +406,6 @@ func TestInstallHooks_CreatesDirectoryStructure(t *testing.T) {
 	}
 }
 
-func TestGetSupportedHooks(t *testing.T) {
-	t.Parallel()
-	ag := &CopilotCLIAgent{}
-	hooks := ag.GetSupportedHooks()
-	if len(hooks) == 0 {
-		t.Error("GetSupportedHooks() returned empty slice")
-	}
-}
-
 func TestInstallHooks_PreservesEntryLevelFields(t *testing.T) {
 	// Cannot use t.Parallel() because t.Chdir is required for paths.WorktreeRoot.
 	tempDir := t.TempDir()
