@@ -272,6 +272,9 @@ type WriteCommittedOptions struct {
 	// TokenUsage contains the token usage for this checkpoint
 	TokenUsage *agent.TokenUsage
 
+	// SessionMetrics contains hook-provided session metrics (duration, turns, context usage)
+	SessionMetrics *SessionMetrics
+
 	// InitialAttribution is line-level attribution calculated at commit time
 	// comparing checkpoint tree (agent work) to committed tree (may include human edits)
 	InitialAttribution *InitialAttribution
@@ -384,6 +387,10 @@ type CommittedMetadata struct {
 	// Token usage for this checkpoint
 	TokenUsage *agent.TokenUsage `json:"token_usage,omitempty"`
 
+	// SessionMetrics contains hook-provided session metrics (duration, turns, context usage).
+	// Populated for agents that provide these metrics via hooks (e.g., Cursor).
+	SessionMetrics *SessionMetrics `json:"session_metrics,omitempty"`
+
 	// AI-generated summary of the checkpoint
 	Summary *Summary `json:"summary,omitempty"`
 
@@ -438,6 +445,16 @@ type CheckpointSummary struct {
 	FilesTouched     []string           `json:"files_touched"`
 	Sessions         []SessionFilePaths `json:"sessions"`
 	TokenUsage       *agent.TokenUsage  `json:"token_usage,omitempty"`
+}
+
+// SessionMetrics contains hook-provided session metrics from agents that report
+// them via lifecycle hooks (e.g., Cursor). These supplement transcript-derived
+// metrics for agents whose transcripts lack usage/timing data.
+type SessionMetrics struct {
+	DurationMs        int64 `json:"duration_ms,omitempty"`
+	TurnCount         int   `json:"turn_count,omitempty"`
+	ContextTokens     int   `json:"context_tokens,omitempty"`
+	ContextWindowSize int   `json:"context_window_size,omitempty"`
 }
 
 // Summary contains AI-generated summary of a checkpoint.

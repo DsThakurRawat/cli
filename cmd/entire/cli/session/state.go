@@ -132,6 +132,12 @@ type State struct {
 	// Token usage tracking (accumulated across all checkpoints in this session)
 	TokenUsage *agent.TokenUsage `json:"token_usage,omitempty"`
 
+	// Hook-provided session metrics (for agents like Cursor that report via hooks)
+	SessionDurationMs int64 `json:"session_duration_ms,omitempty"`
+	SessionTurnCount  int   `json:"session_turn_count,omitempty"`
+	ContextTokens     int   `json:"context_tokens,omitempty"`
+	ContextWindowSize int   `json:"context_window_size,omitempty"`
+
 	// Deprecated: TranscriptLinesAtStart is replaced by CheckpointTranscriptStart.
 	// Kept for backward compatibility with existing state files.
 	TranscriptLinesAtStart int `json:"transcript_lines_at_start,omitempty"`

@@ -414,6 +414,8 @@ func handleLifecycleCompaction(ctx context.Context, ag agent.Agent, event *agent
 			slog.String("error", loadErr.Error()))
 	}
 	if sessionState != nil {
+		persistEventMetadataToState(event, sessionState)
+
 		if transErr := strategy.TransitionAndLog(ctx, sessionState, session.EventCompaction, session.TransitionContext{}, session.NoOpActionHandler{}); transErr != nil {
 			logging.Warn(logCtx, "compaction transition failed",
 				slog.String("error", transErr.Error()))
@@ -446,7 +448,7 @@ func handleLifecycleSessionEnd(ctx context.Context, ag agent.Agent, event *agent
 	// the transcript to extract file changes. Cleanup is handled by
 	// `entire clean` or when the session state is fully removed.
 
-	if err := markSessionEnded(ctx, event.SessionID); err != nil {
+	if err := markSessionEnded(ctx, event, event.SessionID); err != nil {
 		logging.Warn(logCtx, "failed to mark session ended",
 			slog.String("error", err.Error()))
 	}
@@ -672,13 +674,18 @@ func transitionSessionTurnEnd(ctx context.Context, sessionID string, event *agen
 }
 
 // markSessionEnded transitions the session to ENDED phase via the state machine.
-func markSessionEnded(ctx context.Context, sessionID string) error {
+// If event is non-nil, hook-provided metrics are persisted to state before saving.
+func markSessionEnded(ctx context.Context, event *agent.Event, sessionID string) error {
 	state, err := strategy.LoadSessionState(ctx, sessionID)
 	if err != nil {
 		return fmt.Errorf("failed to load session state: %w", err)
 	}
 	if state == nil {
 		return nil // No state file, nothing to update
+	}
+
+	if event != nil {
+		persistEventMetadataToState(event, state)
 	}
 
 	if transErr := strategy.TransitionAndLog(ctx, state, session.EventSessionStop, session.TransitionContext{}, session.NoOpActionHandler{}); transErr != nil {
@@ -708,5 +715,25 @@ func persistEventMetadataToState(event *agent.Event, state *strategy.SessionStat
 	// Update ModelName if provided (model is known by turn-end even on first turn)
 	if event.Model != "" {
 		state.ModelName = event.Model
+	}
+
+	// Persist hook-provided session metrics (e.g., from Cursor hooks)
+	if event.DurationMs > 0 {
+		state.SessionDurationMs = event.DurationMs
+	}
+	// Use hook-reported turn count if available (take max); otherwise
+	// increment on each TurnEnd event to count turns ourselves.
+	if event.TurnCount > 0 {
+		if event.TurnCount > state.SessionTurnCount {
+			state.SessionTurnCount = event.TurnCount
+		}
+	} else if event.Type == agent.TurnEnd {
+		state.SessionTurnCount++
+	}
+	if event.ContextTokens > 0 {
+		state.ContextTokens = event.ContextTokens
+	}
+	if event.ContextWindowSize > 0 {
+		state.ContextWindowSize = event.ContextWindowSize
 	}
 }

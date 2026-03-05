@@ -108,6 +108,12 @@ type Event struct {
 	// ResponseMessage is an optional message to display to the user via the agent.
 	ResponseMessage string
 
+	// Hook-provided session metrics (populated by agents that report these via hooks).
+	DurationMs        int64 // Session duration from agent hook (e.g., Cursor SessionEnd)
+	TurnCount         int   // Number of agent turns/loops (e.g., Cursor Stop hook)
+	ContextTokens     int   // Context window tokens used (e.g., Cursor PreCompact hook)
+	ContextWindowSize int   // Total context window size (e.g., Cursor PreCompact hook)
+
 	// Metadata holds agent-specific state that the framework stores and makes available
 	// on subsequent events. Examples: Pi's activeLeafId, Cursor's is_background_agent.
 	Metadata map[string]string
