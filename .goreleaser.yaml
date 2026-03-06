@@ -1,4 +1,6 @@
+# yaml-language-server: $schema=https://goreleaser.com/static/schema-pro.json
 version: 2
+pro: true
 
 before:
   hooks:
@@ -59,13 +61,6 @@ archives:
 checksum:
   name_template: "checksums.txt"
 
-changelog:
-  sort: asc
-  filters:
-    exclude:
-      - "^docs:"
-      - "^test:"
-      - "^chore:"
 
 homebrew_casks:
   - name: entire

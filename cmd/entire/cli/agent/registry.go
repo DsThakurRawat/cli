@@ -101,19 +101,21 @@ func Detect(ctx context.Context) (Agent, error) {
 // Agent name constants (registry keys)
 const (
 	AgentNameClaudeCode     types.AgentName = "claude-code"
+	AgentNameCopilotCLI     types.AgentName = "copilot-cli"
 	AgentNameCursor         types.AgentName = "cursor"
+	AgentNameFactoryAIDroid types.AgentName = "factoryai-droid"
 	AgentNameGemini         types.AgentName = "gemini"
 	AgentNameOpenCode       types.AgentName = "opencode"
-	AgentNameFactoryAIDroid types.AgentName = "factoryai-droid"
 )
 
 // Agent type constants (type identifiers stored in metadata/trailers)
 const (
 	AgentTypeClaudeCode     types.AgentType = "Claude Code"
+	AgentTypeCopilotCLI     types.AgentType = "Copilot CLI"
 	AgentTypeCursor         types.AgentType = "Cursor"
+	AgentTypeFactoryAIDroid types.AgentType = "Factory AI Droid"
 	AgentTypeGemini         types.AgentType = "Gemini CLI"
 	AgentTypeOpenCode       types.AgentType = "OpenCode"
-	AgentTypeFactoryAIDroid types.AgentType = "Factory AI Droid"
 	AgentTypeUnknown        types.AgentType = "Agent" // Fallback for backwards compatibility
 )
 

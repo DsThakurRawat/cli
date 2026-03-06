@@ -13,6 +13,7 @@ import (
 	"github.com/entireio/cli/cmd/entire/cli/agent/types"
 	"github.com/entireio/cli/cmd/entire/cli/paths"
 	"github.com/entireio/cli/cmd/entire/cli/strategy"
+	"github.com/entireio/cli/cmd/entire/cli/testutil"
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing/object"
 )
@@ -440,7 +441,16 @@ func TestResolveTranscriptOffset_ZeroOffsetInPrePromptState(t *testing.T) {
 // --- Event type routing tests ---
 
 func TestDispatchLifecycleEvent_RoutesToCorrectHandler(t *testing.T) {
-	t.Parallel()
+	// NOT parallel: uses t.Chdir to isolate from real repo state.
+	// Without this, the SubagentEnd case creates .git/entire-sessions/test.json
+	// in the real repo whenever untracked files exist, because DetectFileChanges
+	// reports them as new files and SaveTaskStep falls back to initializeSession.
+	tmpDir := t.TempDir()
+	testutil.InitRepo(t, tmpDir)
+	testutil.WriteFile(t, tmpDir, "init.txt", "init")
+	testutil.GitAdd(t, tmpDir, "init.txt")
+	testutil.GitCommit(t, tmpDir, "init")
+	t.Chdir(tmpDir)
 
 	// Test that each event type is routed (we can't easily verify which handler
 	// was called without dependency injection, but we can verify no panic and
@@ -515,8 +525,6 @@ func TestDispatchLifecycleEvent_RoutesToCorrectHandler(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-
 			ag := newMockAgent()
 			event := &agent.Event{
 				Type:      tc.eventType,
