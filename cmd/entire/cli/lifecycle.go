@@ -378,7 +378,7 @@ func handleLifecycleTurnEnd(ctx context.Context, ag agent.Agent, event *agent.Ev
 	extractSpan.End()
 
 	// Generate commit message from last prompt (read from session state, set at TurnStart)
-	_, writeFilesSpan := perf.Start(ctx, "write_session_files")
+	_, commitMsgSpan := perf.Start(ctx, "generate_commit_message")
 	lastPrompt := ""
 	if sessionState, stateErr := strategy.LoadSessionState(ctx, sessionID); stateErr == nil && sessionState != nil {
 		lastPrompt = sessionState.LastPrompt
@@ -386,7 +386,7 @@ func handleLifecycleTurnEnd(ctx context.Context, ag agent.Agent, event *agent.Ev
 	commitMessage := generateCommitMessage(lastPrompt, ag.Type())
 	logging.Debug(logCtx, "using commit message",
 		slog.Int("message_length", len(commitMessage)))
-	writeFilesSpan.End()
+	commitMsgSpan.End()
 
 	// Get worktree root for path normalization
 	_, detectSpan := perf.Start(ctx, "detect_file_changes")
