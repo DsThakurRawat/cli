@@ -254,18 +254,18 @@ func renderPerfEntries(w io.Writer, entries []perfEntry) {
 			continue
 		}
 
-		// Compute max step name width (at least len("STEP")),
-		// including sub-step names with tree prefix.
-		const treePrefix = "    " // "  ├─ " or "  └─ " — 4 chars of visual indent
+		// Compute max name display width (at least len("STEP")).
+		// Sub-steps are indented 5 extra display columns relative to parent rows
+		// ("    " + "├─ " = 7 display cols vs "  " = 2 display cols).
+		const subExtraIndent = 5
 		nameWidth := len("STEP")
 		for _, s := range entry.Steps {
 			if len(s.Name) > nameWidth {
 				nameWidth = len(s.Name)
 			}
 			for _, sub := range s.SubSteps {
-				subWidth := len(treePrefix) + len(sub.Name)
-				if subWidth > nameWidth {
-					nameWidth = subWidth
+				if needed := len(sub.Name) + subExtraIndent; needed > nameWidth {
+					nameWidth = needed
 				}
 			}
 		}
@@ -282,15 +282,20 @@ func renderPerfEntries(w io.Writer, entries []perfEntry) {
 			}
 			fmt.Fprintln(w, line)
 
-			// Sub-step rows with ASCII tree connectors
+			// Sub-step rows with ASCII tree connectors.
+			// Pad manually to avoid multi-byte UTF-8 box-drawing chars
+			// (├─, └─) breaking Go's byte-based %-*s alignment.
 			for i, sub := range s.SubSteps {
 				connector := "├─"
 				if i == len(s.SubSteps)-1 {
 					connector = "└─"
 				}
-				subName := fmt.Sprintf("%s %s", connector, sub.Name)
 				subDur := fmt.Sprintf("%dms", sub.DurationMs)
-				subLine := fmt.Sprintf("    %-*s  %8s", nameWidth, subName, subDur)
+				pad := nameWidth - subExtraIndent - len(sub.Name)
+				if pad < 0 {
+					pad = 0
+				}
+				subLine := fmt.Sprintf("    %s %s%s  %8s", connector, sub.Name, strings.Repeat(" ", pad), subDur)
 				if sub.Error {
 					subLine += "  x"
 				}
