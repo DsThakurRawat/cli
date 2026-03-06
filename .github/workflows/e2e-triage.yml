@@ -43,6 +43,28 @@ jobs:
           chmod +x scripts/download-e2e-artifacts.sh
           scripts/download-e2e-artifacts.sh "$WORKFLOW_RUN_ID"
 
+      - name: Notify Slack - triage started
+        if: ${{ secrets.E2E_SLACK_WEBHOOK_URL != '' }}
+        uses: slackapi/slack-github-action@91efab103c0de0a537f72a35f6b8cda0ee76bf0a
+        env:
+          RUN_URL: ${{ github.event.workflow_run.html_url }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+        with:
+          webhook: ${{ secrets.E2E_SLACK_WEBHOOK_URL }}
+          webhook-type: incoming-webhook
+          payload: |
+            {
+              "blocks": [
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": ":mag: *Claude is triaging E2E failures* from <${{ env.RUN_URL }}|run #${{ env.RUN_ID }}>..."
+                  }
+                }
+              ]
+            }
+
       - name: Run triage
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -62,3 +84,51 @@ jobs:
              For flaky fixes: create a PR.
              For real bugs: create or comment on GitHub issues.
              Print a summary table at the end."
+
+      - name: Build Slack summary
+        if: always()
+        id: slack-summary
+        env:
+          WORKFLOW_RUN_ID: ${{ github.event.workflow_run.id }}
+          WORKFLOW_RUN_URL: ${{ github.event.workflow_run.html_url }}
+          TRIAGE_LOG_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          SUMMARY_FILE="e2e/artifacts/ci-${WORKFLOW_RUN_ID}/triage-summary.json"
+          if [ -f "$SUMMARY_FILE" ]; then
+            # Build a formatted summary from triage-summary.json
+            LINES=$(jq -r '.actions[] | "• *\(.test)* (\(.agents | join(", "))): \(.classification) → <\(.link)|\(.action_description)>"' "$SUMMARY_FILE" 2>/dev/null)
+            if [ -n "$LINES" ]; then
+              ACTION_COUNT=$(jq '.actions | length' "$SUMMARY_FILE")
+              FLAKY_COUNT=$(jq '[.actions[] | select(.classification == "flaky")] | length' "$SUMMARY_FILE")
+              BUG_COUNT=$(jq '[.actions[] | select(.classification == "real-bug")] | length' "$SUMMARY_FILE")
+              SUMMARY=":white_check_mark: *E2E triage complete* for <${WORKFLOW_RUN_URL}|run #${WORKFLOW_RUN_ID}>\n${ACTION_COUNT} failures triaged: ${FLAKY_COUNT} flaky, ${BUG_COUNT} real bugs\n\n${LINES}"
+            else
+              SUMMARY=":white_check_mark: *E2E triage complete* for <${WORKFLOW_RUN_URL}|run #${WORKFLOW_RUN_ID}> — no actions in summary"
+            fi
+          else
+            SUMMARY=":warning: *E2E triage finished* for <${WORKFLOW_RUN_URL}|run #${WORKFLOW_RUN_ID}> but no summary was produced. Check the <${TRIAGE_LOG_URL}|triage workflow logs>."
+          fi
+          # Escape for GitHub Actions multiline output
+          EOF=$(dd if=/dev/urandom bs=15 count=1 status=none | base64)
+          echo "message<<$EOF" >> "$GITHUB_OUTPUT"
+          echo -e "$SUMMARY" >> "$GITHUB_OUTPUT"
+          echo "$EOF" >> "$GITHUB_OUTPUT"
+
+      - name: Notify Slack - triage complete
+        if: always()
+        uses: slackapi/slack-github-action@91efab103c0de0a537f72a35f6b8cda0ee76bf0a
+        with:
+          webhook: ${{ secrets.E2E_SLACK_WEBHOOK_URL }}
+          webhook-type: incoming-webhook
+          payload: |
+            {
+              "blocks": [
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "${{ steps.slack-summary.outputs.message }}"
+                  }
+                }
+              ]
+            }

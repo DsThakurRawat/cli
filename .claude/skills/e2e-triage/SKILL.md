@@ -138,3 +138,24 @@ Print a summary table:
 | TestBar | all agents | real-bug | Issue #456 (existing, commented) | url |
 | TestBaz | opencode | real-bug | Issue #457 (new) | url |
 ```
+
+**Write `triage-summary.json`** in the artifact directory for Slack notifications:
+
+```bash
+cat > "${ARTIFACT_DIR}/triage-summary.json" << 'TEMPLATE'
+{
+  "actions": [
+    {
+      "test": "TestName",
+      "agents": ["claude-code", "opencode"],
+      "classification": "flaky|real-bug",
+      "action_type": "pr|issue|comment",
+      "action_description": "PR #123|Issue #456 (new)|Issue #456 (commented)",
+      "link": "https://github.com/entireio/cli/pull/123"
+    }
+  ]
+}
+TEMPLATE
+```
+
+Each entry in `actions` corresponds to one row in the summary table. Include all failures that had an action taken. The `link` field must be the full URL to the PR or issue.
