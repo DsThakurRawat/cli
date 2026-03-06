@@ -2,11 +2,12 @@ package external
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -45,7 +46,7 @@ func newExternalAgent(t *testing.T, binPath string) *Agent {
 		if err == nil {
 			return ea
 		}
-		if !strings.Contains(err.Error(), "text file busy") {
+		if !errors.Is(err, syscall.ETXTBSY) {
 			break
 		}
 		time.Sleep(10 * time.Millisecond)
