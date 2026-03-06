@@ -12,9 +12,9 @@ import (
 	"github.com/entireio/cli/cmd/entire/cli/paths"
 	"github.com/entireio/cli/cmd/entire/cli/testutil"
 
-	"github.com/go-git/go-git/v5"
-	"github.com/go-git/go-git/v5/plumbing"
-	"github.com/go-git/go-git/v5/plumbing/object"
+	"github.com/go-git/go-git/v6"
+	"github.com/go-git/go-git/v6/plumbing"
+	"github.com/go-git/go-git/v6/plumbing/object"
 )
 
 func TestOpenRepository(t *testing.T) {
@@ -1045,7 +1045,7 @@ func TestEnsureMetadataBranch(t *testing.T) {
 			t.Fatalf("clone failed: %v\n%s", err, out)
 		}
 
-		repo, err := git.PlainOpenWithOptions(cloneDir, &git.PlainOpenOptions{EnableDotGitCommonDir: true})
+		repo, err := git.PlainOpen(cloneDir)
 		if err != nil {
 			t.Fatalf("failed to open repo: %v", err)
 		}
@@ -1081,7 +1081,7 @@ func TestEnsureMetadataBranch(t *testing.T) {
 			t.Fatalf("clone failed: %v\n%s", err, out)
 		}
 
-		repo, err := git.PlainOpenWithOptions(cloneDir, &git.PlainOpenOptions{EnableDotGitCommonDir: true})
+		repo, err := git.PlainOpen(cloneDir)
 		if err != nil {
 			t.Fatalf("failed to open repo: %v", err)
 		}
@@ -1203,7 +1203,7 @@ func TestEnsureMetadataBranch_DisconnectedBranchesNotReconciledInEnable(t *testi
 	run("commit", "-m", "Checkpoint: abcdef012345")
 	run("branch", "-f", paths.MetadataBranchName, "temp-orphan")
 
-	repo, err := git.PlainOpenWithOptions(cloneDir, &git.PlainOpenOptions{EnableDotGitCommonDir: true})
+	repo, err := git.PlainOpen(cloneDir)
 	if err != nil {
 		t.Fatalf("failed to open repo: %v", err)
 	}
@@ -1238,7 +1238,7 @@ func TestEnsureMetadataBranch_DoesNotFastForwardWhenBehind(t *testing.T) {
 	cloneDir, run := cloneWithConfig(t, bareDir)
 
 	// Create local branch from remote (normal state)
-	repo, err := git.PlainOpenWithOptions(cloneDir, &git.PlainOpenOptions{EnableDotGitCommonDir: true})
+	repo, err := git.PlainOpen(cloneDir)
 	if err != nil {
 		t.Fatalf("failed to open repo: %v", err)
 	}
@@ -1277,7 +1277,7 @@ func TestEnsureMetadataBranch_DoesNotFastForwardWhenBehind(t *testing.T) {
 	}
 
 	// Re-open to clear caches
-	repo, err = git.PlainOpenWithOptions(cloneDir, &git.PlainOpenOptions{EnableDotGitCommonDir: true})
+	repo, err = git.PlainOpen(cloneDir)
 	if err != nil {
 		t.Fatalf("failed to reopen repo: %v", err)
 	}
