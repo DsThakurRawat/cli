@@ -128,6 +128,9 @@ func (c *CopilotCLI) StartSession(ctx context.Context, dir string) (Session, err
 	// Forward critical env vars into the tmux session. tmux starts a new
 	// shell that doesn't inherit Go's os.Environ(), so without this the
 	// session lacks auth tokens (COPILOT_GITHUB_TOKEN) and HOME (for gh auth).
+	if os.Getenv("COPILOT_GITHUB_TOKEN") == "" {
+		return nil, errors.New("COPILOT_GITHUB_TOKEN is not set; copilot-cli interactive session requires authentication")
+	}
 	var envArgs []string
 	for _, key := range []string{"COPILOT_GITHUB_TOKEN", "PATH", "HOME", "TERM"} {
 		if v := os.Getenv(key); v != "" {
@@ -159,7 +162,10 @@ func (c *CopilotCLI) StartSession(ctx context.Context, dir string) (Session, err
 			foundPrompt = true
 			break
 		}
-		_ = s.SendKeys("Enter")
+		if err := s.SendKeys("Enter"); err != nil {
+			_ = s.Close()
+			return nil, fmt.Errorf("dismissing startup dialog: %w", err)
+		}
 		time.Sleep(500 * time.Millisecond)
 	}
 	if !foundPrompt {
