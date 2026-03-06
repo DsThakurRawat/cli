@@ -77,6 +77,9 @@ func (s *Span) End() {
 	// Add child step durations (and error flags) as flat keys.
 	// Disambiguate duplicate child names (from loops) with .1, .2, etc. suffixes
 	// to prevent later values from overwriting earlier ones in JSON output.
+	//
+	// Group spans (children that have their own children) also emit grandchildren
+	// with 0-based indexing: steps.<name>.0_ms, steps.<name>.1_ms, etc.
 	seen := make(map[string]int, len(s.children))
 	for _, child := range s.children {
 		// Auto-end children that were not explicitly ended
@@ -89,6 +92,19 @@ func (s *Span) End() {
 		if child.err != nil {
 			errKey := fmt.Sprintf("steps.%s_err", stepKey)
 			attrs = append(attrs, slog.Bool(errKey, true))
+		}
+
+		// Emit grandchildren (group iterations) with 0-based indexing
+		for i, gc := range child.children {
+			if !gc.ended {
+				gc.End()
+			}
+			gcKey := fmt.Sprintf("steps.%s.%d_ms", stepKey, i)
+			attrs = append(attrs, slog.Int64(gcKey, gc.duration.Milliseconds()))
+			if gc.err != nil {
+				gcErrKey := fmt.Sprintf("steps.%s.%d_err", stepKey, i)
+				attrs = append(attrs, slog.Bool(gcErrKey, true))
+			}
 		}
 	}
 
@@ -110,4 +126,38 @@ func childStepKey(name string, seen map[string]int) string {
 		return name
 	}
 	return fmt.Sprintf("%s.%d", name, n)
+}
+
+// LoopSpan wraps a Span that groups loop iterations. Each call to Iteration
+// creates a child span representing one pass through the loop.
+//
+// Usage:
+//
+//	ctx, loop := perf.StartLoop(ctx, "process_sessions")
+//	for _, item := range items {
+//	    iterCtx, iterSpan := loop.Iteration(ctx)
+//	    doWork(iterCtx, item)
+//	    iterSpan.End()
+//	}
+//	loop.End()
+type LoopSpan struct {
+	span *Span
+}
+
+// StartLoop begins a new loop span. The returned context contains the loop span
+// and should be passed to Iteration. Call loop.End() after the loop completes.
+func StartLoop(ctx context.Context, name string, attrs ...slog.Attr) (context.Context, *LoopSpan) {
+	ctx, s := Start(ctx, name, attrs...)
+	return ctx, &LoopSpan{span: s}
+}
+
+// Iteration creates a child span for a single loop iteration. The caller must
+// call End() on the returned span when the iteration completes.
+func (l *LoopSpan) Iteration(ctx context.Context) (context.Context, *Span) {
+	return Start(ctx, l.span.name)
+}
+
+// End completes the loop span and auto-ends any unended iteration spans.
+func (l *LoopSpan) End() {
+	l.span.End()
 }

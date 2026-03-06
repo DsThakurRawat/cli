@@ -288,6 +288,80 @@ func TestEnd_DuplicateChildNames_AllPreserved(t *testing.T) {
 	}
 }
 
+func TestStartLoop_CreatesGroupSpan(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	ctx, root := Start(ctx, "post-commit")
+
+	loopCtx, loop := StartLoop(ctx, "process_sessions")
+	_, iter0 := loop.Iteration(loopCtx)
+	iter0.duration = 100 * time.Millisecond
+	iter0.ended = true
+	_, iter1 := loop.Iteration(loopCtx)
+	iter1.duration = 200 * time.Millisecond
+	iter1.ended = true
+	loop.span.duration = 300 * time.Millisecond
+	loop.span.ended = true
+
+	root.End()
+
+	// Verify loop span has 2 children (the iterations)
+	if len(loop.span.children) != 2 {
+		t.Fatalf("loop should have 2 children, got %d", len(loop.span.children))
+	}
+	if loop.span.children[0] != iter0 {
+		t.Error("loop.children[0] should be iter0")
+	}
+	if loop.span.children[1] != iter1 {
+		t.Error("loop.children[1] should be iter1")
+	}
+}
+
+func TestStartLoop_IterationsAutoEnded(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	ctx, root := Start(ctx, "hook")
+	loopCtx, loop := StartLoop(ctx, "loop")
+	_, iter0 := loop.Iteration(loopCtx)
+	iter0.duration = 50 * time.Millisecond
+	// iter0.ended intentionally NOT set — should be auto-ended by loop.End()
+	loop.End()
+
+	root.End()
+
+	if !iter0.ended {
+		t.Error("iteration should be auto-ended when loop ends")
+	}
+}
+
+func TestStartLoop_IterationWithErrors(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	ctx, root := Start(ctx, "hook")
+	loopCtx, loop := StartLoop(ctx, "process_sessions")
+	_, iter0 := loop.Iteration(loopCtx)
+	iter0.duration = 100 * time.Millisecond
+	iter0.ended = true
+	_, iter1 := loop.Iteration(loopCtx)
+	iter1.duration = 200 * time.Millisecond
+	iter1.RecordError(errors.New("session failed"))
+	iter1.ended = true
+	loop.span.duration = 300 * time.Millisecond
+	loop.span.ended = true
+
+	root.End()
+
+	if iter0.err != nil {
+		t.Error("iter0 should have no error")
+	}
+	if iter1.err == nil {
+		t.Error("iter1 should have error recorded")
+	}
+}
+
 func TestEnd_NoErrorFlagByDefault(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

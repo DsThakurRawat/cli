@@ -7,15 +7,18 @@ import (
 	"io"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
 
 // perfStep represents a single timed step within a perf span.
+// Group steps (from nested spans) have SubSteps with 0-based iteration numbering.
 type perfStep struct {
 	Name       string
 	DurationMs int64
 	Error      bool
+	SubSteps   []perfStep
 }
 
 // perfEntry represents a parsed performance trace log entry.
@@ -100,14 +103,58 @@ func parsePerfEntry(line string) *perfEntry {
 		}
 	}
 
-	// Build steps slice sorted alphabetically by name
-	steps := make([]perfStep, 0, len(stepDurations))
+	// Separate parent steps from sub-steps.
+	// A key like "foo.0" is a sub-step of "foo" if "foo" also exists as a parent
+	// and the last segment is a non-negative integer.
+	subStepDurations := make(map[string]map[int]int64) // parent -> index -> ms
+	subStepErrors := make(map[string]map[int]bool)     // parent -> index -> err
+	parentStepDurations := make(map[string]int64)
+	parentStepErrors := make(map[string]bool)
+
 	for name, ms := range stepDurations {
-		steps = append(steps, perfStep{
+		if parent, idx, ok := parseSubStepKey(name, stepDurations); ok {
+			if subStepDurations[parent] == nil {
+				subStepDurations[parent] = make(map[int]int64)
+			}
+			subStepDurations[parent][idx] = ms
+			if stepErrors[name] {
+				if subStepErrors[parent] == nil {
+					subStepErrors[parent] = make(map[int]bool)
+				}
+				subStepErrors[parent][idx] = true
+			}
+		} else {
+			parentStepDurations[name] = ms
+			parentStepErrors[name] = stepErrors[name]
+		}
+	}
+
+	// Build steps slice sorted alphabetically by name
+	steps := make([]perfStep, 0, len(parentStepDurations))
+	for name, ms := range parentStepDurations {
+		step := perfStep{
 			Name:       name,
 			DurationMs: ms,
-			Error:      stepErrors[name],
-		})
+			Error:      parentStepErrors[name],
+		}
+
+		// Attach sub-steps if any, sorted by index
+		if subs, ok := subStepDurations[name]; ok {
+			subList := make([]perfStep, 0, len(subs))
+			for idx, subMs := range subs {
+				subList = append(subList, perfStep{
+					Name:       fmt.Sprintf("%s.%d", name, idx),
+					DurationMs: subMs,
+					Error:      subStepErrors[name][idx],
+				})
+			}
+			sort.Slice(subList, func(i, j int) bool {
+				return subList[i].Name < subList[j].Name
+			})
+			step.SubSteps = subList
+		}
+
+		steps = append(steps, step)
 	}
 	sort.Slice(steps, func(i, j int) bool {
 		return steps[i].Name < steps[j].Name
@@ -116,6 +163,27 @@ func parsePerfEntry(line string) *perfEntry {
 	entry.Steps = steps
 
 	return entry
+}
+
+// parseSubStepKey checks if a step name like "foo.0" is a sub-step of "foo".
+// Returns the parent name, index, and true if it is a sub-step.
+// A name is a sub-step if: the last segment after the final "." is a non-negative
+// integer AND the parent name exists in allSteps.
+func parseSubStepKey(name string, allSteps map[string]int64) (string, int, bool) {
+	lastDot := strings.LastIndex(name, ".")
+	if lastDot < 0 {
+		return "", 0, false
+	}
+	parent := name[:lastDot]
+	suffix := name[lastDot+1:]
+	idx, err := strconv.Atoi(suffix)
+	if err != nil || idx < 0 {
+		return "", 0, false
+	}
+	if _, exists := allSteps[parent]; !exists {
+		return "", 0, false
+	}
+	return parent, idx, true
 }
 
 // collectPerfEntries reads a JSONL log file and returns the last N perf entries,
@@ -186,11 +254,19 @@ func renderPerfEntries(w io.Writer, entries []perfEntry) {
 			continue
 		}
 
-		// Compute max step name width (at least len("STEP"))
+		// Compute max step name width (at least len("STEP")),
+		// including sub-step names with tree prefix.
+		const treePrefix = "    " // "  ├─ " or "  └─ " — 4 chars of visual indent
 		nameWidth := len("STEP")
 		for _, s := range entry.Steps {
 			if len(s.Name) > nameWidth {
 				nameWidth = len(s.Name)
+			}
+			for _, sub := range s.SubSteps {
+				subWidth := len(treePrefix) + len(sub.Name)
+				if subWidth > nameWidth {
+					nameWidth = subWidth
+				}
 			}
 		}
 
@@ -205,6 +281,21 @@ func renderPerfEntries(w io.Writer, entries []perfEntry) {
 				line += "  x"
 			}
 			fmt.Fprintln(w, line)
+
+			// Sub-step rows with ASCII tree connectors
+			for i, sub := range s.SubSteps {
+				connector := "├─"
+				if i == len(s.SubSteps)-1 {
+					connector = "└─"
+				}
+				subName := fmt.Sprintf("%s %s", connector, sub.Name)
+				subDur := fmt.Sprintf("%dms", sub.DurationMs)
+				subLine := fmt.Sprintf("    %-*s  %8s", nameWidth, subName, subDur)
+				if sub.Error {
+					subLine += "  x"
+				}
+				fmt.Fprintln(w, subLine)
+			}
 		}
 	}
 }

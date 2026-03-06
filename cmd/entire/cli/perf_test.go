@@ -239,6 +239,114 @@ func TestRenderPerfEntries(t *testing.T) {
 	}
 }
 
+func TestParsePerfEntry_WithSubSteps(t *testing.T) {
+	t.Parallel()
+
+	line := `{"time":"2026-01-15T10:30:00Z","level":"DEBUG","msg":"perf","op":"post-commit","duration_ms":350,"steps.process_sessions_ms":300,"steps.process_sessions.0_ms":100,"steps.process_sessions.1_ms":200,"steps.process_sessions.1_err":true,"steps.cleanup_ms":50}`
+
+	entry := parsePerfEntry(line)
+	if entry == nil {
+		t.Fatal("parsePerfEntry returned nil")
+	}
+
+	if len(entry.Steps) != 2 {
+		t.Fatalf("len(Steps) = %d, want 2", len(entry.Steps))
+	}
+
+	// Steps sorted alphabetically: cleanup, process_sessions
+	if entry.Steps[0].Name != "cleanup" {
+		t.Errorf("Steps[0].Name = %q, want %q", entry.Steps[0].Name, "cleanup")
+	}
+	if len(entry.Steps[0].SubSteps) != 0 {
+		t.Errorf("Steps[0] should have no sub-steps, got %d", len(entry.Steps[0].SubSteps))
+	}
+
+	ps := entry.Steps[1]
+	if ps.Name != "process_sessions" {
+		t.Errorf("Steps[1].Name = %q, want %q", ps.Name, "process_sessions")
+	}
+	if ps.DurationMs != 300 {
+		t.Errorf("Steps[1].DurationMs = %d, want %d", ps.DurationMs, 300)
+	}
+	if len(ps.SubSteps) != 2 {
+		t.Fatalf("Steps[1] should have 2 sub-steps, got %d", len(ps.SubSteps))
+	}
+	if ps.SubSteps[0].Name != "process_sessions.0" {
+		t.Errorf("SubSteps[0].Name = %q, want %q", ps.SubSteps[0].Name, "process_sessions.0")
+	}
+	if ps.SubSteps[0].DurationMs != 100 {
+		t.Errorf("SubSteps[0].DurationMs = %d, want %d", ps.SubSteps[0].DurationMs, 100)
+	}
+	if ps.SubSteps[0].Error {
+		t.Error("SubSteps[0].Error = true, want false")
+	}
+	if ps.SubSteps[1].Name != "process_sessions.1" {
+		t.Errorf("SubSteps[1].Name = %q, want %q", ps.SubSteps[1].Name, "process_sessions.1")
+	}
+	if ps.SubSteps[1].DurationMs != 200 {
+		t.Errorf("SubSteps[1].DurationMs = %d, want %d", ps.SubSteps[1].DurationMs, 200)
+	}
+	if !ps.SubSteps[1].Error {
+		t.Error("SubSteps[1].Error = false, want true")
+	}
+}
+
+func TestRenderPerfEntries_WithSubSteps(t *testing.T) {
+	t.Parallel()
+
+	entries := []perfEntry{
+		{
+			Op:         "post-commit",
+			DurationMs: 350,
+			Steps: []perfStep{
+				{Name: "process_sessions", DurationMs: 300, SubSteps: []perfStep{
+					{Name: "process_sessions.0", DurationMs: 100},
+					{Name: "process_sessions.1", DurationMs: 200, Error: true},
+				}},
+				{Name: "cleanup", DurationMs: 50},
+			},
+		},
+	}
+
+	var buf bytes.Buffer
+	renderPerfEntries(&buf, entries)
+	out := buf.String()
+
+	// Parent step appears
+	if !strings.Contains(out, "process_sessions") {
+		t.Errorf("output missing group step 'process_sessions':\n%s", out)
+	}
+	if !strings.Contains(out, "300ms") {
+		t.Errorf("output missing group duration '300ms':\n%s", out)
+	}
+
+	// Sub-steps with tree connectors
+	if !strings.Contains(out, "├─ process_sessions.0") {
+		t.Errorf("output missing sub-step with tree connector '├─ process_sessions.0':\n%s", out)
+	}
+	if !strings.Contains(out, "└─ process_sessions.1") {
+		t.Errorf("output missing sub-step with tree connector '└─ process_sessions.1':\n%s", out)
+	}
+
+	// Error marker on sub-step
+	lines := strings.Split(out, "\n")
+	foundSubError := false
+	for _, line := range lines {
+		if strings.Contains(line, "process_sessions.1") && strings.Contains(line, "x") {
+			foundSubError = true
+			break
+		}
+	}
+	if !foundSubError {
+		t.Errorf("output missing error marker on process_sessions.1:\n%s", out)
+	}
+
+	// Regular step still appears
+	if !strings.Contains(out, "cleanup") {
+		t.Errorf("output missing regular step 'cleanup':\n%s", out)
+	}
+}
+
 func TestRenderPerfEntries_Empty(t *testing.T) {
 	t.Parallel()
 
