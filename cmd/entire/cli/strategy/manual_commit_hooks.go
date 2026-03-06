@@ -55,6 +55,13 @@ func hasTTY() bool {
 		return false
 	}
 
+	// Copilot CLI sets COPILOT_CLI=1 when running hook subprocesses (v0.0.421+).
+	// Like Gemini, the subprocess may inherit the user's TTY but can't respond
+	// to interactive prompts.
+	if os.Getenv("COPILOT_CLI") != "" {
+		return false
+	}
+
 	// GIT_TERMINAL_PROMPT=0 disables git's own terminal prompts.
 	// Factory AI Droid (and other non-interactive environments like CI) set this.
 	// Since we run as a git hook, respect it — if the environment doesn't want

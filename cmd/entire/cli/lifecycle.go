@@ -627,7 +627,11 @@ func handleLifecycleSubagentEnd(ctx context.Context, ag agent.Agent, event *agen
 		}
 	}
 
-	// Load pre-task state and detect file changes
+	// Load pre-task state and detect file changes.
+	// If no pre-task state exists (agent doesn't support pre-task hook), fall back
+	// to the session's pre-prompt state. Without either, DetectFileChanges receives
+	// nil and treats ALL untracked files as new — which would create spurious task
+	// checkpoints for pre-existing untracked files (e.g., .github/hooks/entire.json).
 	preState, err := LoadPreTaskState(ctx, event.ToolUseID)
 	if err != nil {
 		logging.Warn(logCtx, "failed to load pre-task state",
