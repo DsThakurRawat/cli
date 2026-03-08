@@ -171,12 +171,13 @@ func fetchAndMergeSessionsCommon(ctx context.Context, remote, branchName string)
 		return fmt.Errorf("failed to get local tree: %w", err)
 	}
 
-	// Get remote (FETCH_HEAD)
-	fetchHeadRef, err := repo.Reference(plumbing.ReferenceName("FETCH_HEAD"), true)
+	// Get remote tracking ref (updated by the fetch above)
+	remoteRefName := plumbing.NewRemoteReferenceName(remote, branchName)
+	remoteRef, err := repo.Reference(remoteRefName, true)
 	if err != nil {
-		return fmt.Errorf("failed to get FETCH_HEAD: %w", err)
+		return fmt.Errorf("failed to get remote ref: %w", err)
 	}
-	remoteCommit, err := repo.CommitObject(fetchHeadRef.Hash())
+	remoteCommit, err := repo.CommitObject(remoteRef.Hash())
 	if err != nil {
 		return fmt.Errorf("failed to get remote commit: %w", err)
 	}
@@ -203,7 +204,7 @@ func fetchAndMergeSessionsCommon(ctx context.Context, remote, branchName string)
 
 	// Create merge commit with both parents
 	mergeCommitHash, err := createMergeCommitCommon(repo, mergedTreeHash,
-		[]plumbing.Hash{localRef.Hash(), fetchHeadRef.Hash()},
+		[]plumbing.Hash{localRef.Hash(), remoteRef.Hash()},
 		"Merge remote session logs")
 	if err != nil {
 		return fmt.Errorf("failed to create merge commit: %w", err)
