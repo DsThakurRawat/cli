@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -235,9 +235,9 @@ func TestParseGitHubRelease(t *testing.T) {
 
 func TestUpdateCommand(t *testing.T) {
 	tests := []struct {
-		name       string
-		execPath   func() (string, error)
-		want       string
+		name     string
+		execPath func() (string, error)
+		want     string
 	}{
 		{
 			name:     "homebrew cellar path",
@@ -276,7 +276,7 @@ func TestUpdateCommand(t *testing.T) {
 		},
 		{
 			name:     "executable error falls back to curl",
-			execPath: func() (string, error) { return "", fmt.Errorf("not found") },
+			execPath: func() (string, error) { return "", errors.New("not found") },
 			want:     "curl -fsSL https://entire.io/install.sh | bash",
 		},
 	}
