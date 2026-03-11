@@ -8,120 +8,207 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/entireio/cli/cmd/entire/cli/settings"
 	"github.com/entireio/cli/cmd/entire/cli/testutil"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-func TestValidateRemoteURL(t *testing.T) {
+func TestParseGitRemoteURL(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name    string
-		url     string
-		wantErr bool
+		name     string
+		url      string
+		wantInfo *gitRemoteInfo
+		wantErr  bool
 	}{
-		{"ssh url", "git@github.com:org/repo.git", false},
-		{"https url", "https://github.com/org/repo.git", false},
-		{"local path", "/tmp/repo.git", false},
-		{"ssh with port", "ssh://git@host:22/repo.git", false},
-		{"space in url", "git@github.com:org/repo name.git", true},
-		{"tab in url", "git@github.com:org/repo\t.git", true},
-		{"newline in url", "git@github.com:org/repo\n.git", true},
-		{"semicolon", "git@host; rm -rf /", true},
-		{"pipe", "git@host | cat", true},
-		{"ampersand", "git@host & echo", true},
-		{"dollar", "git@host/$HOME", true},
-		{"backtick", "git@host/`whoami`", true},
-		{"backslash", "git@host\\path", true},
+		{
+			name:     "SSH SCP format",
+			url:      "git@github.com:org/repo.git",
+			wantInfo: &gitRemoteInfo{protocol: protocolSSH, host: "github.com", owner: "org", repo: "repo"},
+		},
+		{
+			name:     "SSH SCP without .git",
+			url:      "git@github.com:org/repo",
+			wantInfo: &gitRemoteInfo{protocol: protocolSSH, host: "github.com", owner: "org", repo: "repo"},
+		},
+		{
+			name:     "HTTPS format",
+			url:      "https://github.com/org/repo.git",
+			wantInfo: &gitRemoteInfo{protocol: protocolHTTPS, host: "github.com", owner: "org", repo: "repo"},
+		},
+		{
+			name:     "HTTPS without .git",
+			url:      "https://github.com/org/repo",
+			wantInfo: &gitRemoteInfo{protocol: protocolHTTPS, host: "github.com", owner: "org", repo: "repo"},
+		},
+		{
+			name:     "SSH protocol format",
+			url:      "ssh://git@github.com/org/repo.git",
+			wantInfo: &gitRemoteInfo{protocol: protocolSSH, host: "github.com", owner: "org", repo: "repo"},
+		},
+		{
+			name:    "empty string",
+			url:     "",
+			wantErr: true,
+		},
+		{
+			name:    "no path",
+			url:     "https://github.com",
+			wantErr: true,
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			err := validateRemoteURL(tt.url)
+			info, err := parseGitRemoteURL(tt.url)
 			if tt.wantErr {
 				assert.Error(t, err)
-			} else {
-				assert.NoError(t, err)
+				return
 			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantInfo.protocol, info.protocol)
+			assert.Equal(t, tt.wantInfo.host, info.host)
+			assert.Equal(t, tt.wantInfo.owner, info.owner)
+			assert.Equal(t, tt.wantInfo.repo, info.repo)
 		})
 	}
 }
 
-// Not parallel: uses t.Chdir()
-func TestEnsureGitRemote_CreatesNew(t *testing.T) {
-	tmpDir := t.TempDir()
-	testutil.InitRepo(t, tmpDir)
-	testutil.WriteFile(t, tmpDir, "f.txt", "init")
-	testutil.GitAdd(t, tmpDir, "f.txt")
-	testutil.GitCommit(t, tmpDir, "init")
-	t.Chdir(tmpDir)
+func TestDeriveCheckpointURL(t *testing.T) {
+	t.Parallel()
 
-	ctx := t.Context()
-	err := ensureGitRemote(ctx, "test-remote", "https://example.com/repo.git")
-	require.NoError(t, err)
+	tests := []struct {
+		name           string
+		pushRemoteURL  string
+		checkpointRepo string
+		want           string
+		wantErr        bool
+	}{
+		{
+			name:           "SSH push remote",
+			pushRemoteURL:  "git@github.com:org/main-repo.git",
+			checkpointRepo: "org/checkpoints",
+			want:           "git@github.com:org/checkpoints.git",
+		},
+		{
+			name:           "HTTPS push remote",
+			pushRemoteURL:  "https://github.com/org/main-repo.git",
+			checkpointRepo: "org/checkpoints",
+			want:           "https://github.com/org/checkpoints.git",
+		},
+		{
+			name:           "SSH protocol push remote",
+			pushRemoteURL:  "ssh://git@github.com/org/main-repo.git",
+			checkpointRepo: "org/checkpoints",
+			want:           "git@github.com:org/checkpoints.git",
+		},
+		{
+			name:           "different host",
+			pushRemoteURL:  "git@github.example.com:org/main-repo.git",
+			checkpointRepo: "org/checkpoints",
+			want:           "git@github.example.com:org/checkpoints.git",
+		},
+		{
+			name:           "invalid push remote",
+			pushRemoteURL:  "not-a-url",
+			checkpointRepo: "org/checkpoints",
+			wantErr:        true,
+		},
+	}
 
-	// Verify the remote was created
-	cmd := exec.CommandContext(ctx, "git", "remote", "get-url", "test-remote")
-	cmd.Dir = tmpDir
-	output, err := cmd.Output()
-	require.NoError(t, err)
-	assert.Contains(t, string(output), "https://example.com/repo.git")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			config := &settings.CheckpointRemoteConfig{Provider: "github", Repo: tt.checkpointRepo}
+			got, err := deriveCheckpointURL(tt.pushRemoteURL, config)
+			if tt.wantErr {
+				assert.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, got)
+		})
+	}
 }
 
-// Not parallel: uses t.Chdir()
-func TestEnsureGitRemote_UpdatesExisting(t *testing.T) {
-	tmpDir := t.TempDir()
-	testutil.InitRepo(t, tmpDir)
-	testutil.WriteFile(t, tmpDir, "f.txt", "init")
-	testutil.GitAdd(t, tmpDir, "f.txt")
-	testutil.GitCommit(t, tmpDir, "init")
-	t.Chdir(tmpDir)
+func TestExtractOwnerFromRemoteURL(t *testing.T) {
+	t.Parallel()
 
-	ctx := t.Context()
+	tests := []struct {
+		name string
+		url  string
+		want string
+	}{
+		{"SSH", "git@github.com:org/repo.git", "org"},
+		{"HTTPS", "https://github.com/org/repo.git", "org"},
+		{"invalid", "not-a-url", ""},
+	}
 
-	// Create remote with initial URL
-	err := ensureGitRemote(ctx, "test-remote", "https://old.example.com/repo.git")
-	require.NoError(t, err)
-
-	// Update to new URL
-	err = ensureGitRemote(ctx, "test-remote", "https://new.example.com/repo.git")
-	require.NoError(t, err)
-
-	// Verify the URL was updated
-	cmd := exec.CommandContext(ctx, "git", "remote", "get-url", "test-remote")
-	cmd.Dir = tmpDir
-	output, err := cmd.Output()
-	require.NoError(t, err)
-	assert.Contains(t, string(output), "https://new.example.com/repo.git")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tt.want, extractOwnerFromRemoteURL(tt.url))
+		})
+	}
 }
 
-// Not parallel: uses t.Chdir()
-func TestEnsureGitRemote_NoOpWhenSameURL(t *testing.T) {
-	tmpDir := t.TempDir()
-	testutil.InitRepo(t, tmpDir)
-	testutil.WriteFile(t, tmpDir, "f.txt", "init")
-	testutil.GitAdd(t, tmpDir, "f.txt")
-	testutil.GitCommit(t, tmpDir, "init")
-	t.Chdir(tmpDir)
+func TestRedactURL(t *testing.T) {
+	t.Parallel()
 
-	ctx := t.Context()
-	url := "https://example.com/repo.git"
+	tests := []struct {
+		name string
+		url  string
+		want string
+	}{
+		{
+			name: "HTTPS no creds",
+			url:  "https://github.com/org/repo.git",
+			want: "https://github.com/org/repo.git",
+		},
+		{
+			name: "HTTPS with token",
+			url:  "https://x-token:ghp_abc123@github.com/org/repo.git",
+			want: "https://github.com/org/repo.git",
+		},
+		{
+			name: "HTTPS with query token",
+			url:  "https://github.com/org/repo.git?token=secret",
+			want: "https://github.com/org/repo.git",
+		},
+	}
 
-	err := ensureGitRemote(ctx, "test-remote", url)
-	require.NoError(t, err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tt.want, redactURL(tt.url))
+		})
+	}
+}
 
-	// Call again with same URL - should be a no-op
-	err = ensureGitRemote(ctx, "test-remote", url)
-	require.NoError(t, err)
+func TestIsURL(t *testing.T) {
+	t.Parallel()
 
-	cmd := exec.CommandContext(ctx, "git", "remote", "get-url", "test-remote")
-	cmd.Dir = tmpDir
-	output, err := cmd.Output()
-	require.NoError(t, err)
-	assert.Contains(t, string(output), url)
+	tests := []struct {
+		name string
+		val  string
+		want bool
+	}{
+		{"remote name", "origin", false},
+		{"SSH SCP", "git@github.com:org/repo.git", true},
+		{"HTTPS", "https://github.com/org/repo.git", true},
+		{"SSH protocol", "ssh://git@github.com/org/repo.git", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tt.want, isURL(tt.val))
+		})
+	}
 }
 
 // Not parallel: uses t.Chdir()
@@ -168,25 +255,20 @@ func TestFetchBranchIfMissing_CreatesLocalFromRemote(t *testing.T) {
 	cmd.Env = testutil.GitIsolatedEnv()
 	require.NoError(t, cmd.Run())
 
-	// Set up local repo with remote pointing to the "remote" repo
+	// Set up local repo
 	localDir := t.TempDir()
 	testutil.InitRepo(t, localDir)
 	testutil.WriteFile(t, localDir, "f.txt", "init")
 	testutil.GitAdd(t, localDir, "f.txt")
 	testutil.GitCommit(t, localDir, "init")
 
-	cmd = exec.CommandContext(ctx, "git", "remote", "add", "test-remote", remoteDir)
-	cmd.Dir = localDir
-	cmd.Env = testutil.GitIsolatedEnv()
-	require.NoError(t, cmd.Run())
-
 	t.Chdir(localDir)
 
 	// Verify branch doesn't exist locally
 	assert.False(t, testutil.BranchExists(t, localDir, "entire/checkpoints/v1"))
 
-	// Fetch and set up the branch
-	require.NoError(t, fetchBranchIfMissing(ctx, "test-remote", "entire/checkpoints/v1"))
+	// Fetch using the remote dir as a URL (local path)
+	require.NoError(t, fetchBranchIfMissing(ctx, remoteDir, "entire/checkpoints/v1"))
 
 	// Verify the branch now exists locally
 	assert.True(t, testutil.BranchExists(t, localDir, "entire/checkpoints/v1"))
@@ -236,16 +318,11 @@ func TestFetchBranchIfMissing_NoOpWhenBranchExistsLocally(t *testing.T) {
 	cmd.Env = testutil.GitIsolatedEnv()
 	require.NoError(t, cmd.Run())
 
-	// Add a remote that points to a nonexistent path - if fetch runs, it would fail
-	cmd = exec.CommandContext(ctx, "git", "remote", "add", "bad-remote", "/nonexistent/repo.git")
-	cmd.Dir = localDir
-	cmd.Env = testutil.GitIsolatedEnv()
-	require.NoError(t, cmd.Run())
-
 	t.Chdir(localDir)
 
-	// Should be a no-op since branch exists locally (no network call)
-	require.NoError(t, fetchBranchIfMissing(ctx, "bad-remote", "entire/checkpoints/v1"))
+	// Should be a no-op since branch exists locally (no network call).
+	// Use a nonexistent path — if it tried to fetch, it would fail.
+	require.NoError(t, fetchBranchIfMissing(ctx, "/nonexistent/repo.git", "entire/checkpoints/v1"))
 }
 
 // Not parallel: uses t.Chdir()
@@ -266,14 +343,9 @@ func TestFetchBranchIfMissing_NoOpWhenBranchNotOnRemote(t *testing.T) {
 	testutil.GitAdd(t, localDir, "f.txt")
 	testutil.GitCommit(t, localDir, "init")
 
-	cmd := exec.CommandContext(ctx, "git", "remote", "add", "test-remote", remoteDir)
-	cmd.Dir = localDir
-	cmd.Env = testutil.GitIsolatedEnv()
-	require.NoError(t, cmd.Run())
-
 	t.Chdir(localDir)
 
-	err := fetchBranchIfMissing(ctx, "test-remote", "entire/checkpoints/v1")
+	err := fetchBranchIfMissing(ctx, remoteDir, "entire/checkpoints/v1")
 	require.NoError(t, err)
 
 	// Branch should still not exist locally
@@ -300,7 +372,8 @@ func TestResolvePushSettings_NoConfig(t *testing.T) {
 	t.Chdir(tmpDir)
 
 	ps := resolvePushSettings(t.Context(), "origin")
-	assert.Equal(t, "origin", ps.remote)
+	assert.Equal(t, "origin", ps.pushTarget())
+	assert.False(t, ps.hasCheckpointURL())
 	assert.False(t, ps.pushDisabled)
 }
 
@@ -323,70 +396,126 @@ func TestResolvePushSettings_PushDisabled(t *testing.T) {
 	t.Chdir(tmpDir)
 
 	ps := resolvePushSettings(t.Context(), "origin")
-	assert.Equal(t, "origin", ps.remote)
+	assert.Equal(t, "origin", ps.pushTarget())
 	assert.True(t, ps.pushDisabled)
 }
 
 // Not parallel: uses t.Chdir()
-func TestResolvePushSettings_UnreachableRemote_StillReturnsCheckpointRemote(t *testing.T) {
-	tmpDir := t.TempDir()
-	testutil.InitRepo(t, tmpDir)
-	testutil.WriteFile(t, tmpDir, "f.txt", "init")
-	testutil.GitAdd(t, tmpDir, "f.txt")
-	testutil.GitCommit(t, tmpDir, "init")
-
-	// Create settings with an unreachable checkpoint_remote
-	entireDir := filepath.Join(tmpDir, ".entire")
-	require.NoError(t, os.MkdirAll(entireDir, 0o755))
-	require.NoError(t, os.WriteFile(
-		filepath.Join(entireDir, "settings.json"),
-		[]byte(`{"enabled": true, "strategy_options": {"checkpoint_remote": "/nonexistent/path/to/repo.git"}}`),
-		0o644,
-	))
-
-	t.Chdir(tmpDir)
-
-	ps := resolvePushSettings(t.Context(), "origin")
-	// Should still return the checkpoint remote name — the push itself handles failures
-	assert.Equal(t, checkpointRemoteName, ps.remote)
-	assert.False(t, ps.pushDisabled)
-}
-
-// Not parallel: uses t.Chdir()
-func TestResolvePushSettings_ReachableRemote(t *testing.T) {
+func TestResolvePushSettings_WithCheckpointRemote_HTTPS(t *testing.T) {
 	ctx := context.Background()
 
-	// Create a bare remote repo
-	remoteDir := t.TempDir()
-	cmd := exec.CommandContext(ctx, "git", "init", "--bare", remoteDir)
-	cmd.Env = testutil.GitIsolatedEnv()
-	require.NoError(t, cmd.Run())
-
-	// Create local repo with settings pointing to the bare remote
 	localDir := t.TempDir()
 	testutil.InitRepo(t, localDir)
 	testutil.WriteFile(t, localDir, "f.txt", "init")
 	testutil.GitAdd(t, localDir, "f.txt")
 	testutil.GitCommit(t, localDir, "init")
 
+	// Add origin with an HTTPS-style URL
+	cmd := exec.CommandContext(ctx, "git", "remote", "add", "origin", "https://github.com/org/main-repo.git")
+	cmd.Dir = localDir
+	cmd.Env = testutil.GitIsolatedEnv()
+	require.NoError(t, cmd.Run())
+
 	entireDir := filepath.Join(localDir, ".entire")
 	require.NoError(t, os.MkdirAll(entireDir, 0o755))
 	require.NoError(t, os.WriteFile(
 		filepath.Join(entireDir, "settings.json"),
-		[]byte(`{"enabled": true, "strategy_options": {"checkpoint_remote": "`+remoteDir+`"}}`),
+		[]byte(`{"enabled": true, "strategy_options": {"checkpoint_remote": {"provider": "github", "repo": "org/checkpoints"}}}`),
 		0o644,
 	))
 
 	t.Chdir(localDir)
 
 	ps := resolvePushSettings(ctx, "origin")
-	assert.Equal(t, checkpointRemoteName, ps.remote)
+	assert.True(t, ps.hasCheckpointURL())
+	assert.Equal(t, "https://github.com/org/checkpoints.git", ps.pushTarget())
 	assert.False(t, ps.pushDisabled)
+}
 
-	// Verify the git remote was created
-	getURL := exec.CommandContext(ctx, "git", "remote", "get-url", checkpointRemoteName)
-	getURL.Dir = localDir
-	output, err := getURL.Output()
-	require.NoError(t, err)
-	assert.Contains(t, string(output), remoteDir)
+// Not parallel: uses t.Chdir()
+func TestResolvePushSettings_WithCheckpointRemote_SSH(t *testing.T) {
+	ctx := context.Background()
+
+	localDir := t.TempDir()
+	testutil.InitRepo(t, localDir)
+	testutil.WriteFile(t, localDir, "f.txt", "init")
+	testutil.GitAdd(t, localDir, "f.txt")
+	testutil.GitCommit(t, localDir, "init")
+
+	// Add origin with SSH URL
+	cmd := exec.CommandContext(ctx, "git", "remote", "add", "origin", "git@github.com:org/main-repo.git")
+	cmd.Dir = localDir
+	cmd.Env = testutil.GitIsolatedEnv()
+	require.NoError(t, cmd.Run())
+
+	entireDir := filepath.Join(localDir, ".entire")
+	require.NoError(t, os.MkdirAll(entireDir, 0o755))
+	require.NoError(t, os.WriteFile(
+		filepath.Join(entireDir, "settings.json"),
+		[]byte(`{"enabled": true, "strategy_options": {"checkpoint_remote": {"provider": "github", "repo": "org/checkpoints"}}}`),
+		0o644,
+	))
+
+	t.Chdir(localDir)
+
+	ps := resolvePushSettings(ctx, "origin")
+	assert.True(t, ps.hasCheckpointURL())
+	assert.Equal(t, "git@github.com:org/checkpoints.git", ps.pushTarget())
+}
+
+// Not parallel: uses t.Chdir()
+func TestResolvePushSettings_ForkDetection(t *testing.T) {
+	ctx := context.Background()
+
+	localDir := t.TempDir()
+	testutil.InitRepo(t, localDir)
+	testutil.WriteFile(t, localDir, "f.txt", "init")
+	testutil.GitAdd(t, localDir, "f.txt")
+	testutil.GitCommit(t, localDir, "init")
+
+	// Origin is a fork (different owner)
+	cmd := exec.CommandContext(ctx, "git", "remote", "add", "origin", "git@github.com:alice/main-repo.git")
+	cmd.Dir = localDir
+	cmd.Env = testutil.GitIsolatedEnv()
+	require.NoError(t, cmd.Run())
+
+	entireDir := filepath.Join(localDir, ".entire")
+	require.NoError(t, os.MkdirAll(entireDir, 0o755))
+	require.NoError(t, os.WriteFile(
+		filepath.Join(entireDir, "settings.json"),
+		[]byte(`{"enabled": true, "strategy_options": {"checkpoint_remote": {"provider": "github", "repo": "org/checkpoints"}}}`),
+		0o644,
+	))
+
+	t.Chdir(localDir)
+
+	ps := resolvePushSettings(ctx, "origin")
+	// Should fall back to origin since fork detected (alice != org)
+	assert.False(t, ps.hasCheckpointURL())
+	assert.Equal(t, "origin", ps.pushTarget())
+	assert.False(t, ps.pushDisabled)
+}
+
+// Not parallel: uses t.Chdir()
+func TestResolvePushSettings_LegacyStringConfigIgnored(t *testing.T) {
+	tmpDir := t.TempDir()
+	testutil.InitRepo(t, tmpDir)
+	testutil.WriteFile(t, tmpDir, "f.txt", "init")
+	testutil.GitAdd(t, tmpDir, "f.txt")
+	testutil.GitCommit(t, tmpDir, "init")
+
+	// Legacy string format should be ignored
+	entireDir := filepath.Join(tmpDir, ".entire")
+	require.NoError(t, os.MkdirAll(entireDir, 0o755))
+	require.NoError(t, os.WriteFile(
+		filepath.Join(entireDir, "settings.json"),
+		[]byte(`{"enabled": true, "strategy_options": {"checkpoint_remote": "git@github.com:org/repo.git"}}`),
+		0o644,
+	))
+
+	t.Chdir(tmpDir)
+
+	ps := resolvePushSettings(t.Context(), "origin")
+	assert.False(t, ps.hasCheckpointURL())
+	assert.Equal(t, "origin", ps.pushTarget())
 }

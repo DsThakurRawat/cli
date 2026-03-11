@@ -14,7 +14,7 @@ func TestGetCheckpointRemote_NotConfigured(t *testing.T) {
 	t.Parallel()
 
 	s := &EntireSettings{}
-	assert.Empty(t, s.GetCheckpointRemote())
+	assert.Nil(t, s.GetCheckpointRemote())
 }
 
 func TestGetCheckpointRemote_EmptyStrategyOptions(t *testing.T) {
@@ -23,10 +23,67 @@ func TestGetCheckpointRemote_EmptyStrategyOptions(t *testing.T) {
 	s := &EntireSettings{
 		StrategyOptions: map[string]any{},
 	}
-	assert.Empty(t, s.GetCheckpointRemote())
+	assert.Nil(t, s.GetCheckpointRemote())
 }
 
-func TestGetCheckpointRemote_SSHUrl(t *testing.T) {
+func TestGetCheckpointRemote_StructuredGithub(t *testing.T) {
+	t.Parallel()
+
+	s := &EntireSettings{
+		StrategyOptions: map[string]any{
+			"checkpoint_remote": map[string]any{
+				"provider": "github",
+				"repo":     "org/checkpoints",
+			},
+		},
+	}
+	config := s.GetCheckpointRemote()
+	require.NotNil(t, config)
+	assert.Equal(t, "github", config.Provider)
+	assert.Equal(t, "org/checkpoints", config.Repo)
+}
+
+func TestGetCheckpointRemote_MissingProvider(t *testing.T) {
+	t.Parallel()
+
+	s := &EntireSettings{
+		StrategyOptions: map[string]any{
+			"checkpoint_remote": map[string]any{
+				"repo": "org/checkpoints",
+			},
+		},
+	}
+	assert.Nil(t, s.GetCheckpointRemote())
+}
+
+func TestGetCheckpointRemote_MissingRepo(t *testing.T) {
+	t.Parallel()
+
+	s := &EntireSettings{
+		StrategyOptions: map[string]any{
+			"checkpoint_remote": map[string]any{
+				"provider": "github",
+			},
+		},
+	}
+	assert.Nil(t, s.GetCheckpointRemote())
+}
+
+func TestGetCheckpointRemote_RepoWithoutSlash(t *testing.T) {
+	t.Parallel()
+
+	s := &EntireSettings{
+		StrategyOptions: map[string]any{
+			"checkpoint_remote": map[string]any{
+				"provider": "github",
+				"repo":     "just-a-name",
+			},
+		},
+	}
+	assert.Nil(t, s.GetCheckpointRemote())
+}
+
+func TestGetCheckpointRemote_LegacyStringIgnored(t *testing.T) {
 	t.Parallel()
 
 	s := &EntireSettings{
@@ -34,29 +91,7 @@ func TestGetCheckpointRemote_SSHUrl(t *testing.T) {
 			"checkpoint_remote": "git@github.com:org/checkpoints.git",
 		},
 	}
-	assert.Equal(t, "git@github.com:org/checkpoints.git", s.GetCheckpointRemote())
-}
-
-func TestGetCheckpointRemote_HTTPSUrl(t *testing.T) {
-	t.Parallel()
-
-	s := &EntireSettings{
-		StrategyOptions: map[string]any{
-			"checkpoint_remote": "https://github.com/org/checkpoints.git",
-		},
-	}
-	assert.Equal(t, "https://github.com/org/checkpoints.git", s.GetCheckpointRemote())
-}
-
-func TestGetCheckpointRemote_EmptyString(t *testing.T) {
-	t.Parallel()
-
-	s := &EntireSettings{
-		StrategyOptions: map[string]any{
-			"checkpoint_remote": "",
-		},
-	}
-	assert.Empty(t, s.GetCheckpointRemote())
+	assert.Nil(t, s.GetCheckpointRemote())
 }
 
 func TestGetCheckpointRemote_WrongType(t *testing.T) {
@@ -67,7 +102,7 @@ func TestGetCheckpointRemote_WrongType(t *testing.T) {
 			"checkpoint_remote": 42,
 		},
 	}
-	assert.Empty(t, s.GetCheckpointRemote())
+	assert.Nil(t, s.GetCheckpointRemote())
 }
 
 func TestGetCheckpointRemote_JSONRoundTrip(t *testing.T) {
@@ -79,7 +114,10 @@ func TestGetCheckpointRemote_JSONRoundTrip(t *testing.T) {
 	settingsJSON := `{
 		"enabled": true,
 		"strategy_options": {
-			"checkpoint_remote": "git@github.com:org/checkpoints.git"
+			"checkpoint_remote": {
+				"provider": "github",
+				"repo": "org/checkpoints"
+			}
 		}
 	}`
 	require.NoError(t, os.WriteFile(filepath.Join(entireDir, "settings.json"), []byte(settingsJSON), 0o644))
@@ -88,7 +126,10 @@ func TestGetCheckpointRemote_JSONRoundTrip(t *testing.T) {
 
 	s, err := Load(context.Background())
 	require.NoError(t, err)
-	assert.Equal(t, "git@github.com:org/checkpoints.git", s.GetCheckpointRemote())
+	config := s.GetCheckpointRemote()
+	require.NotNil(t, config)
+	assert.Equal(t, "github", config.Provider)
+	assert.Equal(t, "org/checkpoints", config.Repo)
 }
 
 func TestGetCheckpointRemote_CoexistsWithPushSessions(t *testing.T) {
@@ -96,10 +137,37 @@ func TestGetCheckpointRemote_CoexistsWithPushSessions(t *testing.T) {
 
 	s := &EntireSettings{
 		StrategyOptions: map[string]any{
-			"push_sessions":     false,
-			"checkpoint_remote": "git@github.com:org/checkpoints.git",
+			"push_sessions": false,
+			"checkpoint_remote": map[string]any{
+				"provider": "github",
+				"repo":     "org/checkpoints",
+			},
 		},
 	}
-	assert.Equal(t, "git@github.com:org/checkpoints.git", s.GetCheckpointRemote())
+	config := s.GetCheckpointRemote()
+	require.NotNil(t, config)
+	assert.Equal(t, "org/checkpoints", config.Repo)
 	assert.True(t, s.IsPushSessionsDisabled())
+}
+
+func TestCheckpointRemoteConfig_Owner(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		repo string
+		want string
+	}{
+		{"standard", "org/checkpoints", "org"},
+		{"nested", "org/sub/repo", "org"},
+		{"no slash", "just-name", ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			c := &CheckpointRemoteConfig{Provider: "github", Repo: tt.repo}
+			assert.Equal(t, tt.want, c.Owner())
+		})
+	}
 }

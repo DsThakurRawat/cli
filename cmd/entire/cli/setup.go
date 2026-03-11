@@ -49,11 +49,45 @@ func (opts *EnableOptions) applyStrategyOptions(settings *EntireSettings) {
 		settings.StrategyOptions["push_sessions"] = false
 	}
 	if opts.CheckpointRemote != "" {
-		if settings.StrategyOptions == nil {
-			settings.StrategyOptions = make(map[string]interface{})
+		provider, repo, err := parseCheckpointRemoteFlag(opts.CheckpointRemote)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: invalid --checkpoint-remote format: %v\n", err)
+		} else {
+			if settings.StrategyOptions == nil {
+				settings.StrategyOptions = make(map[string]interface{})
+			}
+			settings.StrategyOptions["checkpoint_remote"] = map[string]any{
+				"provider": provider,
+				"repo":     repo,
+			}
 		}
-		settings.StrategyOptions["checkpoint_remote"] = opts.CheckpointRemote
 	}
+}
+
+// parseCheckpointRemoteFlag parses a "provider:owner/repo" string into its components.
+// Supported providers: "github".
+func parseCheckpointRemoteFlag(value string) (provider, repo string, err error) {
+	parts := strings.SplitN(value, ":", 2)
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		return "", "", fmt.Errorf("expected format provider:owner/repo (e.g., github:org/checkpoints-repo), got %q", value)
+	}
+
+	provider = parts[0]
+	repo = parts[1]
+
+	switch provider {
+	case "github":
+		// valid
+	default:
+		return "", "", fmt.Errorf("unsupported provider %q (supported: github)", provider)
+	}
+
+	repoParts := strings.SplitN(repo, "/", 2)
+	if len(repoParts) != 2 || repoParts[0] == "" || repoParts[1] == "" {
+		return "", "", fmt.Errorf("repo must be in owner/name format, got %q", repo)
+	}
+
+	return provider, repo, nil
 }
 
 func newEnableCmd() *cobra.Command {
@@ -128,7 +162,7 @@ modifying your active branch.`,
 	cmd.Flags().StringVar(&agentName, "agent", "", "Agent to set up hooks for (e.g., "+strings.Join(agent.StringList(), ", ")+"). Enables non-interactive mode.")
 	cmd.Flags().BoolVarP(&opts.ForceHooks, "force", "f", false, "Force reinstall hooks (removes existing Entire hooks first)")
 	cmd.Flags().BoolVar(&opts.SkipPushSessions, "skip-push-sessions", false, "Disable automatic pushing of session logs on git push")
-	cmd.Flags().StringVar(&opts.CheckpointRemote, "checkpoint-remote", "", "Git remote URL (SSH or HTTPS) to push checkpoint branches to a separate remote")
+	cmd.Flags().StringVar(&opts.CheckpointRemote, "checkpoint-remote", "", "Checkpoint remote in provider:owner/repo format (e.g., github:org/checkpoints-repo)")
 	cmd.Flags().BoolVar(&opts.Telemetry, "telemetry", true, "Enable anonymous usage analytics")
 	cmd.Flags().BoolVar(&opts.AbsoluteGitHookPath, "absolute-git-hook-path", false, "Embed full binary path in git hooks (for GUI git clients that don't source shell profiles)")
 
