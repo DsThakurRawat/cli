@@ -86,19 +86,28 @@ func resolvePushSettings(ctx context.Context, pushRemoteName string) pushSetting
 		return ps
 	}
 
+	// Parse the push remote URL once for both fork detection and URL derivation
+	pushInfo, err := parseGitRemoteURL(pushRemoteURL)
+	if err != nil {
+		logging.Warn(ctx, "checkpoint-remote: could not parse push remote URL",
+			slog.String("remote", pushRemoteName),
+			slog.String("error", err.Error()),
+		)
+		return ps
+	}
+
 	// Fork detection: compare owners
-	pushOwner := extractOwnerFromRemoteURL(pushRemoteURL)
 	checkpointOwner := config.Owner()
-	if pushOwner != "" && checkpointOwner != "" && !strings.EqualFold(pushOwner, checkpointOwner) {
+	if pushInfo.owner != "" && checkpointOwner != "" && !strings.EqualFold(pushInfo.owner, checkpointOwner) {
 		logging.Debug(ctx, "checkpoint-remote: push remote owner differs from checkpoint remote owner, skipping (fork detected)",
-			slog.String("push_owner", pushOwner),
+			slog.String("push_owner", pushInfo.owner),
 			slog.String("checkpoint_owner", checkpointOwner),
 		)
 		return ps
 	}
 
 	// Derive checkpoint URL using same protocol as push remote
-	checkpointURL, err := deriveCheckpointURL(pushRemoteURL, config)
+	checkpointURL, err := deriveCheckpointURLFromInfo(pushInfo, config)
 	if err != nil {
 		logging.Warn(ctx, "checkpoint-remote: could not derive URL from push remote",
 			slog.String("remote", pushRemoteName),
@@ -204,7 +213,11 @@ func deriveCheckpointURL(pushRemoteURL string, config *settings.CheckpointRemote
 	if err != nil {
 		return "", fmt.Errorf("cannot parse push remote URL: %w", err)
 	}
+	return deriveCheckpointURLFromInfo(info, config)
+}
 
+// deriveCheckpointURLFromInfo constructs a checkpoint URL from already-parsed remote info.
+func deriveCheckpointURLFromInfo(info *gitRemoteInfo, config *settings.CheckpointRemoteConfig) (string, error) {
 	switch info.protocol {
 	case protocolSSH:
 		// SCP format: git@host:owner/repo.git
