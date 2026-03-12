@@ -17,6 +17,7 @@ With Entire, you can:
 - [Key Concepts](#key-concepts)
   - [How It Works](#how-it-works)
   - [Strategy](#strategy)
+- [Local Device Auth Testing](#local-device-auth-testing)
 - [Commands Reference](#commands-reference)
 - [Configuration](#configuration)
 - [Security & Privacy](#security--privacy)
@@ -152,6 +153,33 @@ Entire works seamlessly with [git worktrees](https://git-scm.com/docs/git-worktr
 
 Multiple AI sessions can run on the same commit. If you start a second session while another has uncommitted work, Entire warns you and tracks them separately. Both sessions' checkpoints are preserved and can be rewound independently.
 
+## Local Device Auth Testing
+
+If you're working on the CLI device auth flow against a local `entire.io` checkout:
+
+```bash
+# In your app repo
+cd ../entire.io-1
+mise run dev
+
+# In this repo, point the CLI at the local API
+cd ../cli
+export ENTIRE_API_BASE_URL=http://localhost:8787
+
+# Run the smoke test
+./scripts/local-device-auth-smoke.sh
+```
+
+Useful commands while developing:
+
+```bash
+# Print the approval URL without auto-opening the browser
+go run ./cmd/entire login --print-browser-url
+
+# Run the focused integration coverage for login
+go test -tags=integration ./cmd/entire/cli/integration_test -run TestLogin
+```
+
 ## Commands Reference
 
 | Command          | Description                                                                                       |
@@ -161,6 +189,7 @@ Multiple AI sessions can run on the same commit. If you start a second session w
 | `entire doctor`  | Fix or clean up stuck sessions                                                                    |
 | `entire enable`  | Enable Entire in your repository                                                                  |
 | `entire explain` | Explain a session or commit                                                                       |
+| `entire login`   | Authenticate the CLI with Entire device auth                                                      |
 | `entire reset`   | Delete the shadow branch and session state for the current HEAD commit                            |
 | `entire resume`  | Switch to a branch, restore latest checkpointed session metadata, and show command(s) to continue |
 | `entire rewind`  | Rewind to a previous checkpoint                                                                   |

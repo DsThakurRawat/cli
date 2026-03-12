@@ -1,0 +1,291 @@
+//go:build integration
+
+package integration
+
+import (
+	"bufio"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/entireio/cli/cmd/entire/cli/testutil"
+)
+
+func TestLogin_SavesTokenAfterApproval(t *testing.T) {
+	t.Parallel()
+
+	type state struct {
+		sync.Mutex
+		approved bool
+		polls    int
+	}
+
+	serverState := &state{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/cli/auth/start":
+			writeJSON(t, w, http.StatusOK, map[string]any{
+				"deviceCode": "device-123",
+				"userCode":   "ABCD-EFGH",
+				"browserUrl": serverURLWithPath(r, "/approve?code=ABCD-EFGH"),
+				"expiresIn":  10,
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/cli/auth/poll":
+			serverState.Lock()
+			serverState.polls++
+			approved := serverState.approved
+			serverState.Unlock()
+
+			if !approved {
+				writeJSON(t, w, http.StatusOK, map[string]any{"status": "pending"})
+				return
+			}
+
+			writeJSON(t, w, http.StatusOK, map[string]any{"status": "complete", "token": "local-token"})
+		case r.Method == http.MethodPost && r.URL.Path == "/approve":
+			serverState.Lock()
+			serverState.approved = true
+			serverState.Unlock()
+			writeJSON(t, w, http.StatusOK, map[string]any{"success": true})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	proc := runLoginProcess(t, server.URL)
+
+	approvalURL, deviceCode := waitForLoginPrompt(t, proc.stdout)
+	if deviceCode != "ABCD-EFGH" {
+		t.Fatalf("device code = %q, want %q", deviceCode, "ABCD-EFGH")
+	}
+
+	approveReq, reqErr := http.NewRequest(http.MethodPost, approvalURL, http.NoBody)
+	if reqErr != nil {
+		t.Fatalf("create approve request: %v", reqErr)
+	}
+
+	approveResp, doErr := http.DefaultClient.Do(approveReq)
+	if doErr != nil {
+		t.Fatalf("approve request failed: %v", doErr)
+	}
+	_ = approveResp.Body.Close()
+
+	output, waitErr := proc.wait()
+	if waitErr != nil {
+		t.Fatalf("login command failed: %v\nOutput:\n%s", waitErr, output)
+	}
+
+	if !strings.Contains(output, "Waiting for approval...") {
+		t.Fatalf("output missing wait message:\n%s", output)
+	}
+
+	stateFile := authFilePath(proc.homeDir)
+	data, readErr := os.ReadFile(stateFile)
+	if readErr != nil {
+		t.Fatalf("read auth file: %v", readErr)
+	}
+
+	var authFile struct {
+		Tokens map[string]struct {
+			Value string `json:"value"`
+		} `json:"tokens"`
+	}
+	if unmarshalErr := json.Unmarshal(data, &authFile); unmarshalErr != nil {
+		t.Fatalf("parse auth file: %v", unmarshalErr)
+	}
+
+	if got := authFile.Tokens[server.URL].Value; got != "local-token" {
+		t.Fatalf("saved token = %q, want %q", got, "local-token")
+	}
+
+	serverState.Lock()
+	polls := serverState.polls
+	serverState.Unlock()
+	if polls == 0 {
+		t.Fatal("expected at least one poll request")
+	}
+}
+
+func TestLogin_ExpiredFlow(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/cli/auth/start":
+			writeJSON(t, w, http.StatusOK, map[string]any{
+				"deviceCode": "device-expired",
+				"userCode":   "WXYZ-0000",
+				"browserUrl": serverURLWithPath(r, "/approve?code=WXYZ-0000"),
+				"expiresIn":  10,
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/cli/auth/poll":
+			writeJSON(t, w, http.StatusGone, map[string]any{"status": "expired"})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	proc := runLoginProcess(t, server.URL)
+	_, _ = waitForLoginPrompt(t, proc.stdout)
+
+	output, err := proc.wait()
+	if err == nil {
+		t.Fatalf("expected login to fail for expired flow\nOutput:\n%s", output)
+	}
+
+	if !strings.Contains(output, "device authorization expired") {
+		t.Fatalf("expected expired message, got:\n%s", output)
+	}
+
+	if _, statErr := os.Stat(authFilePath(proc.homeDir)); !os.IsNotExist(statErr) {
+		t.Fatalf("auth file should not exist, stat err = %v", statErr)
+	}
+}
+
+func TestLogin_DeniedFlow(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/cli/auth/start":
+			writeJSON(t, w, http.StatusOK, map[string]any{
+				"deviceCode": "device-denied",
+				"userCode":   "QRST-9999",
+				"browserUrl": serverURLWithPath(r, "/approve?code=QRST-9999"),
+				"expiresIn":  10,
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/cli/auth/poll":
+			writeJSON(t, w, http.StatusOK, map[string]any{"status": "denied", "error": "approval rejected"})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	proc := runLoginProcess(t, server.URL)
+	_, _ = waitForLoginPrompt(t, proc.stdout)
+
+	output, err := proc.wait()
+	if err == nil {
+		t.Fatalf("expected login to fail for denied flow\nOutput:\n%s", output)
+	}
+
+	if !strings.Contains(output, "device authorization denied: approval rejected") {
+		t.Fatalf("expected denied message, got:\n%s", output)
+	}
+
+	if _, statErr := os.Stat(authFilePath(proc.homeDir)); !os.IsNotExist(statErr) {
+		t.Fatalf("auth file should not exist, stat err = %v", statErr)
+	}
+}
+
+type loginProcess struct {
+	stdout  *bufio.Reader
+	homeDir string
+	waitFn  func() (string, error)
+}
+
+func runLoginProcess(t *testing.T, apiBaseURL string) *loginProcess {
+	t.Helper()
+
+	env := NewTestEnv(t)
+	homeDir := t.TempDir()
+
+	cmd := exec.Command(getTestBinary(), "login", "--print-browser-url")
+	cmd.Dir = env.RepoDir
+	cmd.Env = append(testutil.GitIsolatedEnv(),
+		"ENTIRE_TEST_CLAUDE_PROJECT_DIR="+env.ClaudeProjectDir,
+		"ENTIRE_TEST_GEMINI_PROJECT_DIR="+env.GeminiProjectDir,
+		"ENTIRE_TEST_OPENCODE_PROJECT_DIR="+env.OpenCodeProjectDir,
+		"ENTIRE_TEST_TTY=0",
+		"ENTIRE_API_BASE_URL="+apiBaseURL,
+		"HOME="+homeDir,
+	)
+
+	stdoutPipe, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatalf("StdoutPipe() error = %v", err)
+	}
+
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
+
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("cmd.Start() error = %v", err)
+	}
+
+	reader := bufio.NewReader(stdoutPipe)
+
+	return &loginProcess{
+		stdout:  reader,
+		homeDir: homeDir,
+		waitFn: func() (string, error) {
+			stdoutBytes, readErr := io.ReadAll(reader)
+			waitErr := cmd.Wait()
+			return string(stdoutBytes) + stderr.String(), errors.Join(readErr, waitErr)
+		},
+	}
+}
+
+func (p *loginProcess) wait() (string, error) {
+	return p.waitFn()
+}
+
+func waitForLoginPrompt(t *testing.T, stdout *bufio.Reader) (string, string) {
+	t.Helper()
+
+	deadline := time.Now().Add(10 * time.Second)
+	var approvalURL string
+	var deviceCode string
+
+	for time.Now().Before(deadline) {
+		line, err := stdout.ReadString('\n')
+		if err != nil {
+			t.Fatalf("read login output: %v", err)
+		}
+
+		line = strings.TrimSpace(line)
+		switch {
+		case strings.HasPrefix(line, "Device code: "):
+			deviceCode = strings.TrimPrefix(line, "Device code: ")
+		case strings.HasPrefix(line, "Approval URL: "):
+			approvalURL = strings.TrimPrefix(line, "Approval URL: ")
+		}
+
+		if approvalURL != "" && deviceCode != "" {
+			return approvalURL, deviceCode
+		}
+	}
+
+	t.Fatal("timed out waiting for login prompt output")
+	return "", ""
+}
+
+func writeJSON(t *testing.T, w http.ResponseWriter, status int, body map[string]any) {
+	t.Helper()
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	if err := json.NewEncoder(w).Encode(body); err != nil {
+		t.Fatalf("Encode() error = %v", err)
+	}
+}
+
+func serverURLWithPath(r *http.Request, path string) string {
+	return fmt.Sprintf("http://%s%s", r.Host, path)
+}
+
+func authFilePath(homeDir string) string {
+	return filepath.Join(homeDir, ".config", "entire", "auth.json")
+}
