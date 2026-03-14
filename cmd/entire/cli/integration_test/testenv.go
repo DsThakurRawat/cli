@@ -747,20 +747,8 @@ func (env *TestEnv) BranchExists(branchName string) bool {
 		env.T.Fatalf("failed to open git repo: %v", err)
 	}
 
-	refs, err := repo.References()
-	if err != nil {
-		env.T.Fatalf("failed to get references: %v", err)
-	}
-
-	found := false
-	_ = refs.ForEach(func(ref *plumbing.Reference) error {
-		if ref.Name().Short() == branchName {
-			found = true
-		}
-		return nil
-	})
-
-	return found
+	_, err = repo.Reference(plumbing.NewBranchReferenceName(branchName), true)
+	return err == nil
 }
 
 // GetCommitMessage returns the commit message for the given commit hash.

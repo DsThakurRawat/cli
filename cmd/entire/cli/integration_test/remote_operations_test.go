@@ -275,11 +275,11 @@ func TestPrePush_CheckpointRemoteRoutesToSeparateRemote(t *testing.T) {
 	// Simulate checkpoint_remote routing: push checkpoints to the checkpoint bare repo
 	// and trails to origin. This mirrors what PrePush does when resolvePushSettings
 	// returns a checkpointURL: checkpoints go to ps.pushTarget(), trails go to ps.remote.
-	pushBranchToTarget(t, env.RepoDir, bareCheckpoint, paths.MetadataBranchName)
+	env.GitPush(bareCheckpoint, paths.MetadataBranchName)
 
 	// Ensure trails branch exists for a definitive assertion.
 	ensureTrailsBranchExists(t, env)
-	pushBranchToTarget(t, env.RepoDir, "origin", paths.TrailsBranchName)
+	env.GitPush("origin", paths.TrailsBranchName)
 
 	// Checkpoints should be on checkpoint remote, NOT on origin
 	if !env.BranchExistsOnRemote(bareCheckpoint, paths.MetadataBranchName) {
@@ -812,33 +812,6 @@ func createOrphanBranch(t *testing.T, repoDir, branchName, fileName, content str
 	}
 }
 
-// pushBranchToTarget pushes a branch to a target (remote name or bare repo path).
-// This simulates what pushBranchIfNeeded does. Fails the test on error.
-func pushBranchToTarget(t *testing.T, repoDir, target, branchName string) {
-	t.Helper()
-
-	if err := pushBranchToTargetWithError(t, repoDir, target, branchName); err != nil {
-		t.Fatalf("push %s to %s failed: %v", branchName, target, err)
-	}
-}
-
-// pushBranchToTargetWithError pushes a branch and returns any error.
-func pushBranchToTargetWithError(t *testing.T, repoDir, target, branchName string) error {
-	t.Helper()
-
-	cmd := exec.CommandContext(context.Background(), "git", "push", "--no-verify", target, branchName)
-	cmd.Dir = repoDir
-	cmd.Env = testutil.GitIsolatedEnv()
-	cmd.Stdin = nil
-
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Logf("push output: %s", output)
-		return err
-	}
-	return nil
-}
-
 // fileExistsOnRemoteBranch checks if a file exists in the metadata branch tree on a bare remote.
 func fileExistsOnRemoteBranch(t *testing.T, bareDir, filePath string) bool {
 	t.Helper()
@@ -889,7 +862,7 @@ func listCheckpointsInDir(t *testing.T, repoDir string) []string {
 		}
 		parts := strings.Split(line, "/")
 		// Match <prefix>/<suffix>/metadata.json (top-level, not session-level)
-		if len(parts) == 3 && parts[2] == "metadata.json" {
+		if len(parts) == 3 && parts[2] == paths.MetadataFileName {
 			cpID := parts[0] + parts[1]
 			if !seen[cpID] {
 				seen[cpID] = true
