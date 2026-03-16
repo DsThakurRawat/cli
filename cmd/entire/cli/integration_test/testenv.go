@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -745,20 +746,8 @@ func (env *TestEnv) BranchExists(branchName string) bool {
 		env.T.Fatalf("failed to open git repo: %v", err)
 	}
 
-	refs, err := repo.References()
-	if err != nil {
-		env.T.Fatalf("failed to get references: %v", err)
-	}
-
-	found := false
-	_ = refs.ForEach(func(ref *plumbing.Reference) error {
-		if ref.Name().Short() == branchName {
-			found = true
-		}
-		return nil
-	})
-
-	return found
+	_, err = repo.Reference(plumbing.NewBranchReferenceName(branchName), true)
+	return err == nil
 }
 
 // GetCommitMessage returns the commit message for the given commit hash.
@@ -1621,6 +1610,242 @@ func (env *TestEnv) validatePromptContent(checkpointID string, expectedPrompts [
 			env.T.Errorf("Prompt file should contain %q\nContent: %s", expected, content)
 		}
 	}
+}
+
+// SetupBareRemote creates a bare git repository, adds it as "origin" remote to the
+// test repo, and pushes the current HEAD. Returns the bare repo path.
+// This mirrors the E2E helper in e2e/testutil/repo.go but adapted for TestEnv.
+func (env *TestEnv) SetupBareRemote() string {
+	env.T.Helper()
+	return env.SetupNamedBareRemote("origin")
+}
+
+// SetupNamedBareRemote creates a bare git repository with a custom remote name.
+// Returns the bare repo path. Use this for checkpoint_remote scenarios that need
+// multiple remotes.
+func (env *TestEnv) SetupNamedBareRemote(remoteName string) string {
+	env.T.Helper()
+
+	ctx := env.T.Context()
+
+	bareDir := env.T.TempDir()
+	if resolved, err := filepath.EvalSymlinks(bareDir); err == nil {
+		bareDir = resolved
+	}
+
+	// Initialize bare repo
+	cmd := exec.CommandContext(ctx, "git", "init", "--bare")
+	cmd.Dir = bareDir
+	cmd.Env = testutil.GitIsolatedEnv()
+	if output, err := cmd.CombinedOutput(); err != nil {
+		env.T.Fatalf("failed to init bare repo: %v\n%s", err, output)
+	}
+
+	// Add as remote
+	cmd = exec.CommandContext(ctx, "git", "remote", "add", remoteName, bareDir)
+	cmd.Dir = env.RepoDir
+	cmd.Env = testutil.GitIsolatedEnv()
+	if output, err := cmd.CombinedOutput(); err != nil {
+		env.T.Fatalf("failed to add remote %s: %v\n%s", remoteName, err, output)
+	}
+
+	// Push HEAD to the remote
+	cmd = exec.CommandContext(ctx, "git", "push", "--no-verify", "-u", remoteName, "HEAD")
+	cmd.Dir = env.RepoDir
+	cmd.Env = testutil.GitIsolatedEnv()
+	if output, err := cmd.CombinedOutput(); err != nil {
+		env.T.Fatalf("failed to push to %s: %v\n%s", remoteName, err, output)
+	}
+
+	return bareDir
+}
+
+// CloneFrom clones from a bare repo into a new temp directory and returns a new TestEnv
+// pointing at the clone. The clone has its own .entire directory initialized.
+// The clone checks out the same branch as the current env's HEAD.
+func (env *TestEnv) CloneFrom(bareDir string) *TestEnv {
+	env.T.Helper()
+
+	ctx := env.T.Context()
+
+	cloneDir := env.T.TempDir()
+	if resolved, err := filepath.EvalSymlinks(cloneDir); err == nil {
+		cloneDir = resolved
+	}
+
+	// Get the current branch name to clone the right branch
+	currentBranch := env.GetCurrentBranch()
+
+	// Clone the bare repo, explicitly checking out the right branch.
+	// Bare repos may have HEAD pointing to a non-existent default branch
+	// when the original was on a feature branch.
+	cloneArgs := []string{"clone"}
+	if currentBranch != "" {
+		cloneArgs = append(cloneArgs, "--branch", currentBranch)
+	}
+	cloneArgs = append(cloneArgs, bareDir, cloneDir)
+	cmd := exec.CommandContext(ctx, "git", cloneArgs...)
+	cmd.Env = testutil.GitIsolatedEnv()
+	if output, err := cmd.CombinedOutput(); err != nil {
+		env.T.Fatalf("failed to clone from %s: %v\n%s", bareDir, err, output)
+	}
+
+	// Configure git user (clone doesn't inherit local config from the bare repo)
+	for _, kv := range [][2]string{
+		{"user.name", "Test User"},
+		{"user.email", "test@example.com"},
+		{"commit.gpgsign", "false"},
+	} {
+		cmd = exec.CommandContext(ctx, "git", "config", kv[0], kv[1])
+		cmd.Dir = cloneDir
+		cmd.Env = testutil.GitIsolatedEnv()
+		if output, err := cmd.CombinedOutput(); err != nil {
+			env.T.Fatalf("failed to set git config %s: %v\n%s", kv[0], err, output)
+		}
+	}
+
+	claudeProjectDir := env.T.TempDir()
+	if resolved, err := filepath.EvalSymlinks(claudeProjectDir); err == nil {
+		claudeProjectDir = resolved
+	}
+	geminiProjectDir := env.T.TempDir()
+	if resolved, err := filepath.EvalSymlinks(geminiProjectDir); err == nil {
+		geminiProjectDir = resolved
+	}
+	openCodeProjectDir := env.T.TempDir()
+	if resolved, err := filepath.EvalSymlinks(openCodeProjectDir); err == nil {
+		openCodeProjectDir = resolved
+	}
+
+	cloneEnv := &TestEnv{
+		T:                  env.T,
+		RepoDir:            cloneDir,
+		ClaudeProjectDir:   claudeProjectDir,
+		GeminiProjectDir:   geminiProjectDir,
+		OpenCodeProjectDir: openCodeProjectDir,
+	}
+
+	// Initialize Entire in the clone
+	cloneEnv.InitEntire()
+
+	return cloneEnv
+}
+
+// BranchExistsOnRemote checks if a branch exists on a bare remote by inspecting its refs.
+func (env *TestEnv) BranchExistsOnRemote(bareDir, branchName string) bool {
+	env.T.Helper()
+
+	cmd := exec.CommandContext(env.T.Context(), "git", "show-ref", "--verify", "--quiet", "refs/heads/"+branchName)
+	cmd.Dir = bareDir
+	cmd.Env = testutil.GitIsolatedEnv()
+	return cmd.Run() == nil
+}
+
+// PatchSettings merges extra keys into .entire/settings.json.
+func (env *TestEnv) PatchSettings(extra map[string]any) {
+	env.T.Helper()
+
+	settingsPath := filepath.Join(env.RepoDir, ".entire", paths.SettingsFileName)
+	data, err := os.ReadFile(settingsPath) //nolint:gosec // G304: path is constructed from test env, not user input
+	if err != nil {
+		env.T.Fatalf("failed to read settings: %v", err)
+	}
+
+	var settings map[string]any
+	if err := json.Unmarshal(data, &settings); err != nil {
+		env.T.Fatalf("failed to parse settings: %v", err)
+	}
+
+	for k, v := range extra {
+		settings[k] = v
+	}
+
+	out, err := json.MarshalIndent(settings, "", "  ")
+	if err != nil {
+		env.T.Fatalf("failed to marshal settings: %v", err)
+	}
+	out = append(out, '\n')
+
+	if err := os.WriteFile(settingsPath, out, 0o644); err != nil { //nolint:gosec // G306: consistent with other settings writes in testenv.go
+		env.T.Fatalf("failed to write settings: %v", err)
+	}
+}
+
+// GitPush pushes a branch to a remote. Fails the test on error.
+func (env *TestEnv) GitPush(remote, refSpec string) {
+	env.T.Helper()
+
+	cmd := exec.CommandContext(env.T.Context(), "git", "push", "--no-verify", remote, refSpec)
+	cmd.Dir = env.RepoDir
+	cmd.Env = testutil.GitIsolatedEnv()
+	if output, err := cmd.CombinedOutput(); err != nil {
+		env.T.Fatalf("git push %s %s failed: %v\n%s", remote, refSpec, err, output)
+	}
+}
+
+// RunPrePush runs the pre-push hook via the CLI binary, consistent with how
+// other CLI invocations (GitCommitWithShadowHooks, RunCLI) use env.cliEnv().
+func (env *TestEnv) RunPrePush(remote string) {
+	env.T.Helper()
+	if err := env.RunPrePushWithError(remote); err != nil {
+		env.T.Fatalf("PrePush failed: %v", err)
+	}
+}
+
+// RunPrePushWithError runs the pre-push hook and returns any error instead of failing.
+func (env *TestEnv) RunPrePushWithError(remote string) error {
+	env.T.Helper()
+
+	cmd := exec.CommandContext(env.T.Context(), getTestBinary(), "hooks", "git", "pre-push", remote)
+	cmd.Dir = env.RepoDir
+	cmd.Env = env.cliEnv()
+	cmd.Stdin = nil
+
+	output, err := cmd.CombinedOutput()
+	env.T.Logf("pre-push output: %s", output)
+	if err != nil {
+		return fmt.Errorf("pre-push hook failed: %w", err)
+	}
+	return nil
+}
+
+// FetchMetadataBranch fetches the entire/checkpoints/v1 branch from a remote URL.
+// Fails the test on error. Use this for clone-and-resume tests that need metadata.
+func (env *TestEnv) FetchMetadataBranch(remoteURL string) {
+	env.T.Helper()
+
+	branchName := paths.MetadataBranchName
+	refSpec := "+refs/heads/" + branchName + ":refs/heads/" + branchName
+	cmd := exec.CommandContext(env.T.Context(), "git", "fetch", "--no-tags", remoteURL, refSpec)
+	cmd.Dir = env.RepoDir
+	cmd.Env = testutil.GitIsolatedEnv()
+
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		env.T.Fatalf("fetch metadata branch failed: %v\n%s", err, output)
+	}
+}
+
+// GetBranchTipParentCount returns the number of parents for the tip commit of a branch.
+func (env *TestEnv) GetBranchTipParentCount(branchName string) int {
+	env.T.Helper()
+
+	repo, err := git.PlainOpen(env.RepoDir)
+	if err != nil {
+		env.T.Fatalf("failed to open git repo: %v", err)
+	}
+
+	ref, err := repo.Reference(plumbing.NewBranchReferenceName(branchName), true)
+	if err != nil {
+		env.T.Fatalf("failed to get branch %s: %v", branchName, err)
+	}
+
+	commit, err := repo.CommitObject(ref.Hash())
+	if err != nil {
+		env.T.Fatalf("failed to get commit for branch %s: %v", branchName, err)
+	}
+
+	return len(commit.ParentHashes)
 }
 
 func findModuleRoot() string {

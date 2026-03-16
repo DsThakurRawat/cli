@@ -11,6 +11,7 @@ import (
 	"github.com/entireio/cli/cmd/entire/cli/paths"
 	"github.com/entireio/cli/cmd/entire/cli/session"
 	"github.com/go-git/go-git/v6"
+	"github.com/stretchr/testify/require"
 )
 
 // TestLoadSessionState_PackageLevel tests the package-level LoadSessionState function.
@@ -97,9 +98,7 @@ func TestLoadSessionState_WithEndedAt(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadSessionState() error = %v", err)
 	}
-	if loaded == nil {
-		t.Fatal("LoadSessionState() returned nil")
-	}
+	require.NotNil(t, loaded, "LoadSessionState() returned nil")
 
 	// Verify EndedAt was preserved
 	if loaded.EndedAt == nil {
@@ -127,9 +126,7 @@ func TestLoadSessionState_WithEndedAt(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadSessionState() error = %v", err)
 	}
-	if loadedActive == nil {
-		t.Fatal("LoadSessionState() returned nil")
-	}
+	require.NotNil(t, loadedActive, "LoadSessionState() returned nil")
 
 	// Verify EndedAt remains nil
 	if loadedActive.EndedAt != nil {
@@ -166,9 +163,7 @@ func TestLoadSessionState_WithLastInteractionTime(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadSessionState() error = %v", err)
 	}
-	if loaded == nil {
-		t.Fatal("LoadSessionState() returned nil")
-	}
+	require.NotNil(t, loaded, "LoadSessionState() returned nil")
 
 	// Verify LastInteractionTime was preserved
 	if loaded.LastInteractionTime == nil {
@@ -196,9 +191,7 @@ func TestLoadSessionState_WithLastInteractionTime(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadSessionState() error = %v", err)
 	}
-	if loadedOld == nil {
-		t.Fatal("LoadSessionState() returned nil")
-	}
+	require.NotNil(t, loadedOld, "LoadSessionState() returned nil")
 
 	// Verify LastInteractionTime remains nil
 	if loadedOld.LastInteractionTime != nil {
@@ -253,9 +246,7 @@ func TestManualCommitStrategy_SessionState_UsesPackageFunctions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ManualCommitStrategy.loadSessionState() error = %v", err)
 	}
-	if loaded == nil {
-		t.Fatal("ManualCommitStrategy.loadSessionState() returned nil")
-	}
+	require.NotNil(t, loaded, "ManualCommitStrategy.loadSessionState() returned nil")
 
 	// Verify via helper (loaded guaranteed non-nil after Fatal above)
 
@@ -279,9 +270,7 @@ func TestManualCommitStrategy_SessionState_UsesPackageFunctions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadSessionState() error = %v", err)
 	}
-	if loaded2 == nil {
-		t.Fatal("LoadSessionState() returned nil")
-	}
+	require.NotNil(t, loaded2, "LoadSessionState() returned nil")
 
 	// Verify via direct comparison (loaded2 guaranteed non-nil after Fatal above)
 

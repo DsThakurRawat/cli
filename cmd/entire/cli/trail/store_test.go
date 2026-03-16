@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/go-git/go-git/v6"
+	"github.com/stretchr/testify/require"
 )
 
 // initTestRepo creates a test git repository with an initial commit.
@@ -161,9 +162,7 @@ func TestStore_FindByBranch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("FindByBranch() error = %v", err)
 	}
-	if found == nil {
-		t.Fatal("FindByBranch() returned nil, expected trail")
-	}
+	require.NotNil(t, found, "FindByBranch() returned nil, expected trail")
 	if found.Branch != "feature/a" {
 		t.Errorf("FindByBranch() branch = %q, want %q", found.Branch, "feature/a")
 	}

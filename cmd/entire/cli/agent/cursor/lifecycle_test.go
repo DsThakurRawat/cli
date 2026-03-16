@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/entireio/cli/cmd/entire/cli/agent"
+	"github.com/stretchr/testify/require"
 )
 
 func TestParseHookEvent_SessionStart(t *testing.T) {
@@ -23,9 +24,7 @@ func TestParseHookEvent_SessionStart(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if event == nil {
-		t.Fatal("expected event, got nil")
-	}
+	require.NotNil(t, event, "expected event, got nil")
 	if event.Type != agent.SessionStart {
 		t.Errorf("expected event type %v, got %v", agent.SessionStart, event.Type)
 	}
@@ -51,9 +50,7 @@ func TestParseHookEvent_TurnStart(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if event == nil {
-		t.Fatal("expected event, got nil")
-	}
+	require.NotNil(t, event, "expected event, got nil")
 	if event.Type != agent.TurnStart {
 		t.Errorf("expected event type %v, got %v", agent.TurnStart, event.Type)
 	}
@@ -115,9 +112,7 @@ func TestParseHookEvent_TurnStart_CLINoTranscriptPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if event == nil {
-		t.Fatal("expected event, got nil")
-	}
+	require.NotNil(t, event, "expected event, got nil")
 	if event.Type != agent.TurnStart {
 		t.Errorf("expected event type %v, got %v", agent.TurnStart, event.Type)
 	}
@@ -141,9 +136,7 @@ func TestParseHookEvent_TurnEnd(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if event == nil {
-		t.Fatal("expected event, got nil")
-	}
+	require.NotNil(t, event, "expected event, got nil")
 	if event.Type != agent.TurnEnd {
 		t.Errorf("expected event type %v, got %v", agent.TurnEnd, event.Type)
 	}
@@ -163,9 +156,7 @@ func TestParseHookEvent_SessionEnd(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if event == nil {
-		t.Fatal("expected event, got nil")
-	}
+	require.NotNil(t, event, "expected event, got nil")
 	if event.Type != agent.SessionEnd {
 		t.Errorf("expected event type %v, got %v", agent.SessionEnd, event.Type)
 	}
@@ -196,9 +187,7 @@ func TestParseHookEvent_TurnEnd_CLINoTranscriptPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if event == nil {
-		t.Fatal("expected event, got nil")
-	}
+	require.NotNil(t, event, "expected event, got nil")
 	if event.Type != agent.TurnEnd {
 		t.Errorf("expected event type %v, got %v", agent.TurnEnd, event.Type)
 	}
@@ -235,9 +224,7 @@ func TestParseHookEvent_SessionEnd_CLINoTranscriptPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if event == nil {
-		t.Fatal("expected event, got nil")
-	}
+	require.NotNil(t, event, "expected event, got nil")
 	if event.Type != agent.SessionEnd {
 		t.Errorf("expected event type %v, got %v", agent.SessionEnd, event.Type)
 	}
@@ -264,9 +251,7 @@ func TestParseHookEvent_TurnEnd_IDEWithTranscriptPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if event == nil {
-		t.Fatal("expected event, got nil")
-	}
+	require.NotNil(t, event, "expected event, got nil")
 	if event.SessionRef != "/home/user/.cursor/projects/proj/agent-transcripts/ide-session/ide-session.jsonl" {
 		t.Errorf("expected IDE-provided session_ref, got %q", event.SessionRef)
 	}
@@ -292,9 +277,7 @@ func TestParseHookEvent_SubagentStart(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if event == nil {
-		t.Fatal("expected event, got nil")
-	}
+	require.NotNil(t, event, "expected event, got nil")
 	if event.Type != agent.SubagentStart {
 		t.Errorf("expected event type %v, got %v", agent.SubagentStart, event.Type)
 	}
@@ -327,9 +310,7 @@ func TestParseHookEvent_SubagentEnd(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if event == nil {
-		t.Fatal("expected event, got nil")
-	}
+	require.NotNil(t, event, "expected event, got nil")
 	if event.Type != agent.SubagentEnd {
 		t.Errorf("expected event type %v, got %v", agent.SubagentEnd, event.Type)
 	}
@@ -355,9 +336,7 @@ func TestParseHookEvent_PreCompact(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if event == nil {
-		t.Fatal("expected event, got nil")
-	}
+	require.NotNil(t, event, "expected event, got nil")
 	if event.Type != agent.Compaction {
 		t.Errorf("expected event type %v, got %v", agent.Compaction, event.Type)
 	}
@@ -536,9 +515,7 @@ func TestParseHookEvent_AllHookTypes(t *testing.T) {
 				return
 			}
 
-			if event == nil {
-				t.Fatal("expected event, got nil")
-			}
+			require.NotNil(t, event, "expected event, got nil")
 			if event.Type != tc.expectedType {
 				t.Errorf("expected event type %v, got %v", tc.expectedType, event.Type)
 			}

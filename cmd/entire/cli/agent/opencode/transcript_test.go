@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/entireio/cli/cmd/entire/cli/agent"
+	"github.com/stretchr/testify/require"
 )
 
 // testExportJSON is an export JSON transcript with 4 messages.
@@ -77,9 +78,7 @@ func TestParseExportSession(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if session == nil {
-		t.Fatal("expected non-nil session")
-	}
+	require.NotNil(t, session, "expected non-nil session")
 	if len(session.Messages) != 4 {
 		t.Fatalf("expected 4 messages, got %d", len(session.Messages))
 	}
@@ -470,9 +469,7 @@ func TestCalculateTokenUsage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if usage == nil {
-		t.Fatal("expected non-nil usage")
-	}
+	require.NotNil(t, usage, "expected non-nil usage")
 	if usage.InputTokens != 350 {
 		t.Errorf("expected 350 input tokens, got %d", usage.InputTokens)
 	}

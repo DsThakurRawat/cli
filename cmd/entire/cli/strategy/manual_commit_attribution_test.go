@@ -8,6 +8,7 @@ import (
 	"github.com/go-git/go-git/v6/plumbing"
 	"github.com/go-git/go-git/v6/plumbing/object"
 	"github.com/go-git/go-git/v6/storage/memory"
+	"github.com/stretchr/testify/require"
 )
 
 const testThreeLines = "line1\nline2\nline3\n"
@@ -283,9 +284,7 @@ func TestCalculateAttributionWithAccumulated_BasicCase(t *testing.T) {
 		baseTree, shadowTree, headTree, filesTouched, promptAttributions, "", "", "",
 	)
 
-	if result == nil {
-		t.Fatal("expected non-nil result")
-	}
+	require.NotNil(t, result, "expected non-nil result")
 
 	// Expected:
 	// - Agent added 8 lines (base → shadow)
@@ -342,9 +341,7 @@ func TestCalculateAttributionWithAccumulated_BugScenario(t *testing.T) {
 		baseTree, shadowTree, headTree, filesTouched, promptAttributions, "", "", "",
 	)
 
-	if result == nil {
-		t.Fatal("expected non-nil result")
-	}
+	require.NotNil(t, result, "expected non-nil result")
 
 	// Expected:
 	// - Agent added 10 lines (base → shadow)
@@ -401,9 +398,7 @@ func TestCalculateAttributionWithAccumulated_DeletionOnly(t *testing.T) {
 		baseTree, shadowTree, headTree, filesTouched, promptAttributions, "", "", "",
 	)
 
-	if result == nil {
-		t.Fatal("expected non-nil result")
-	}
+	require.NotNil(t, result, "expected non-nil result")
 
 	// Expected:
 	// - Agent added 0 lines (only deletions)
@@ -452,9 +447,7 @@ func TestCalculateAttributionWithAccumulated_NoUserEdits(t *testing.T) {
 		baseTree, shadowTree, headTree, filesTouched, promptAttributions, "", "", "",
 	)
 
-	if result == nil {
-		t.Fatal("expected non-nil result")
-	}
+	require.NotNil(t, result, "expected non-nil result")
 
 	// Expected:
 	// - Agent added 5 lines
@@ -506,9 +499,7 @@ func TestCalculateAttributionWithAccumulated_NoAgentWork(t *testing.T) {
 		baseTree, shadowTree, headTree, filesTouched, promptAttributions, "", "", "",
 	)
 
-	if result == nil {
-		t.Fatal("expected non-nil result")
-	}
+	require.NotNil(t, result, "expected non-nil result")
 
 	// Expected:
 	// - Agent added 0 lines
@@ -562,9 +553,7 @@ func TestCalculateAttributionWithAccumulated_UserRemovesAllAgentLines(t *testing
 		baseTree, shadowTree, headTree, filesTouched, promptAttributions, "", "", "",
 	)
 
-	if result == nil {
-		t.Fatal("expected non-nil result")
-	}
+	require.NotNil(t, result, "expected non-nil result")
 
 	// Expected:
 	// - Agent added 5 lines (base → shadow)
@@ -633,9 +622,7 @@ func TestCalculateAttributionWithAccumulated_WithPromptAttributions(t *testing.T
 		baseTree, shadowTree, headTree, filesTouched, promptAttributions, "", "", "",
 	)
 
-	if result == nil {
-		t.Fatal("expected non-nil result")
-	}
+	require.NotNil(t, result, "expected non-nil result")
 
 	// Expected calculation:
 	// - base → shadow: +12 lines added (includes agent + user between)
@@ -732,9 +719,7 @@ func TestCalculateAttributionWithAccumulated_UserEditsNonAgentFile(t *testing.T)
 		baseTree, shadowTree, headTree, filesTouched, promptAttributions, "", "", "",
 	)
 
-	if result == nil {
-		t.Fatal("expected non-nil result")
-	}
+	require.NotNil(t, result, "expected non-nil result")
 
 	// Expected calculation:
 	// - Agent added 3 lines to file1.go (2 functions + 1 blank)
@@ -1039,9 +1024,7 @@ func TestCalculateAttributionWithAccumulated_UserSelfModification(t *testing.T) 
 		baseTree, shadowTree, headTree, filesTouched, promptAttributions, "", "", "",
 	)
 
-	if result == nil {
-		t.Fatal("expected non-nil result")
-	}
+	require.NotNil(t, result, "expected non-nil result")
 
 	// Expected calculation with per-file tracking:
 	// - base → shadow: 15 lines added (10 agent + 5 user)
@@ -1112,9 +1095,7 @@ func TestCalculateAttributionWithAccumulated_MixedModifications(t *testing.T) {
 		baseTree, shadowTree, headTree, filesTouched, promptAttributions, "", "", "",
 	)
 
-	if result == nil {
-		t.Fatal("expected non-nil result")
-	}
+	require.NotNil(t, result, "expected non-nil result")
 
 	// Expected calculation:
 	// - base → shadow: 13 lines added (10 agent + 3 user)
@@ -1195,9 +1176,7 @@ func TestCalculateAttributionWithAccumulated_UncommittedWorktreeFiles(t *testing
 		baseTree, shadowTree, headTree, filesTouched, promptAttributions, "", "", "",
 	)
 
-	if result == nil {
-		t.Fatal("expected non-nil result")
-	}
+	require.NotNil(t, result, "expected non-nil result")
 
 	agentLines := countLinesStr(agentContent)
 	t.Logf("Agent content has %d lines", agentLines)

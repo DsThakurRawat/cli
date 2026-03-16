@@ -8,6 +8,7 @@ import (
 
 	"github.com/entireio/cli/cmd/entire/cli/agent"
 	"github.com/entireio/cli/cmd/entire/cli/agent/types"
+	"github.com/stretchr/testify/require"
 
 	// Register agents so GetByAgentType works in tests.
 	_ "github.com/entireio/cli/cmd/entire/cli/agent/claudecode"
@@ -50,9 +51,7 @@ func TestCalculateTokenUsage_EmptyData(t *testing.T) {
 		t.Fatalf("GetByAgentType(ClaudeCode) error: %v", err)
 	}
 	result := agent.CalculateTokenUsage(context.Background(), ag, nil, 0, "")
-	if result == nil {
-		t.Fatal("CalculateTokenUsage(empty) = nil, want non-nil empty struct")
-	}
+	require.NotNil(t, result, "CalculateTokenUsage(empty) = nil, want non-nil empty struct")
 	if result.InputTokens != 0 || result.OutputTokens != 0 {
 		t.Errorf("expected zero tokens for empty data, got %+v", result)
 	}
@@ -73,9 +72,7 @@ func TestCalculateTokenUsage_ClaudeCodeBasic(t *testing.T) {
 		t.Fatalf("GetByAgentType(ClaudeCode) error: %v", err)
 	}
 	result := agent.CalculateTokenUsage(context.Background(), ag, data, 0, "")
-	if result == nil {
-		t.Fatal("CalculateTokenUsage(ClaudeCode) = nil, want non-nil")
-	}
+	require.NotNil(t, result, "CalculateTokenUsage(ClaudeCode) = nil, want non-nil")
 	if result.OutputTokens != 5 {
 		t.Errorf("OutputTokens = %d, want 5", result.OutputTokens)
 	}
@@ -103,9 +100,8 @@ func TestCalculateTokenUsage_ClaudeCodeWithOffset(t *testing.T) {
 	full := agent.CalculateTokenUsage(context.Background(), ag, data, 0, "")
 	sliced := agent.CalculateTokenUsage(context.Background(), ag, data, 2, "")
 
-	if full == nil || sliced == nil {
-		t.Fatal("expected non-nil results")
-	}
+	require.NotNil(t, full, "expected non-nil full result")
+	require.NotNil(t, sliced, "expected non-nil sliced result")
 	if full.OutputTokens != 20 {
 		t.Errorf("full OutputTokens = %d, want 20", full.OutputTokens)
 	}

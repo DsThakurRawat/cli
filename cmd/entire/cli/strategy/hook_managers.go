@@ -39,6 +39,14 @@ func detectHookManagers(repoRoot string) []hookManager {
 		}
 	}
 
+	// hk supports {.config/,}hk{,.local}.pkl
+	for _, dir := range []string{"", ".config/"} {
+		for _, variant := range []string{"", ".local"} {
+			name := dir + "hk" + variant + ".pkl"
+			checks = append(checks, hookManager{"hk", name, false})
+		}
+	}
+
 	seen := make(map[string]bool)
 	for _, c := range checks {
 		path := filepath.Join(repoRoot, c.ConfigPath)

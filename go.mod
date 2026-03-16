@@ -1,6 +1,6 @@
 module github.com/entireio/cli
 
-go 1.26.0
+go 1.26.1
 
 require (
 	github.com/charmbracelet/huh v0.8.0

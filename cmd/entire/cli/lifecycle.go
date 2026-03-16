@@ -223,7 +223,7 @@ func handleLifecycleTurnStart(ctx context.Context, ag agent.Agent, event *agent.
 				} else {
 					content = event.Prompt
 				}
-				if writeErr := os.WriteFile(promptPath, []byte(content), 0o600); writeErr != nil {
+				if writeErr := os.WriteFile(promptPath, []byte(content), 0o600); writeErr != nil { //nolint:gosec // path from internal metadata, not user input
 					logging.Warn(logCtx, "failed to write prompt.txt",
 						slog.String("error", writeErr.Error()))
 				}

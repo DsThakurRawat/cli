@@ -81,6 +81,44 @@ func TestJSONLContent_TopLevelArrayNoSecrets(t *testing.T) {
 	}
 }
 
+func TestJSONLContent_MultipleObjects_AllRedacted(t *testing.T) {
+	t.Parallel()
+	// Regression test: JSONL with multiple top-level JSON objects must redact
+	// secrets in ALL objects, not just the first. The single-JSON fast path must
+	// not accidentally consume only the first object and return early.
+	input := `{"content":"safe text","id":"abc"}
+{"content":"key=` + highEntropySecret + `","id":"def"}
+{"content":"also safe","id":"ghi"}`
+
+	result, err := JSONLContent(input)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// The secret in the second line should be redacted.
+	if strings.Contains(result, highEntropySecret) {
+		t.Error("secret in second JSONL object was not redacted")
+	}
+	if !strings.Contains(result, "REDACTED") {
+		t.Error("expected REDACTED in output")
+	}
+
+	// IDs should be preserved (field-aware skip).
+	for _, id := range []string{"abc", "def", "ghi"} {
+		if !strings.Contains(result, id) {
+			t.Errorf("ID %q should be preserved", id)
+		}
+	}
+
+	// Non-secret content should be preserved.
+	if !strings.Contains(result, "safe text") {
+		t.Error("safe text in first object was corrupted")
+	}
+	if !strings.Contains(result, "also safe") {
+		t.Error("safe text in third object was corrupted")
+	}
+}
+
 func TestJSONLContent_InvalidJSONLine(t *testing.T) {
 	// Lines that aren't valid JSON should be processed with normal string redaction.
 	input := `{"type":"text", "invalid ` + highEntropySecret + " json"
@@ -422,6 +460,141 @@ func TestJSONLContent_PathFieldsPreserved(t *testing.T) {
 	// No false positives
 	if strings.Contains(result, "REDACTED") {
 		t.Errorf("expected no redactions in structural fields, got: %s", result)
+	}
+}
+
+func TestJSONLContent_PrettyPrintedJSON_IDsPreserved(t *testing.T) {
+	t.Parallel()
+	// Simulates OpenCode's pretty-printed JSON export format.
+	// High-entropy IDs (like msg_cb99a444f001Ftd3kTVmr8XQHZ with entropy > 4.5)
+	// must be preserved. Before the fix, line-by-line processing couldn't parse
+	// individual lines of pretty-printed JSON and fell back to entropy-based
+	// redaction, corrupting these IDs.
+	input := `{
+  "info": {
+    "id": "ses_309461a8bffeQfY7CYDOUHX6VP",
+    "slug": "misty-river",
+    "directory": "/tmp/test-repo"
+  },
+  "messages": [
+    {
+      "info": {
+        "id": "msg_cb99a444f001Ftd3kTVmr8XQHZ",
+        "sessionID": "ses_309461a8bffeQfY7CYDOUHX6VP",
+        "role": "user"
+      },
+      "parts": [
+        {
+          "id": "prt_cb99a443b001GE99vjBG60vHbF",
+          "type": "text",
+          "text": "hello world"
+        }
+      ]
+    },
+    {
+      "info": {
+        "id": "msg_cb99a444f001Ftd3kTVmr8XQHZ",
+        "sessionID": "ses_309461a8bffeQfY7CYDOUHX6VP",
+        "role": "assistant"
+      },
+      "parts": [
+        {
+          "id": "prt_cb99a6f2e0012koCcOJBSwRBwR",
+          "type": "text",
+          "text": "hello back"
+        },
+        {
+          "id": "prt_cb99a6f2f001e98CKuwDKU3oWr",
+          "type": "tool",
+          "tool": "write",
+          "callID": "call_abc123",
+          "state": {
+            "status": "completed",
+            "input": {"filePath": "/tmp/test/hello.md"},
+            "output": "wrote file",
+            "metadata": {"files": [{"filePath": "/tmp/test/hello.md", "relativePath": "hello.md"}]}
+          }
+        }
+      ]
+    }
+  ]
+}`
+
+	result, err := JSONLContent(input)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Verify the entropy threshold: msg_cb99a444f001Ftd3kTVmr8XQHZ has entropy > 4.5
+	// and would be redacted by String() if processed line-by-line.
+	entropy := shannonEntropy("msg_cb99a444f001Ftd3kTVmr8XQHZ")
+	if entropy <= entropyThreshold {
+		t.Fatalf("test assumption broken: msg ID entropy %.2f should be > %.1f", entropy, entropyThreshold)
+	}
+
+	// All IDs must be preserved (they're in "id"/"sessionID" fields which are skipped).
+	mustContain := []string{
+		"ses_309461a8bffeQfY7CYDOUHX6VP",
+		"msg_cb99a444f001Ftd3kTVmr8XQHZ",
+		"prt_cb99a443b001GE99vjBG60vHbF",
+		"prt_cb99a6f2e0012koCcOJBSwRBwR",
+		"prt_cb99a6f2f001e98CKuwDKU3oWr",
+	}
+	for _, s := range mustContain {
+		if !strings.Contains(result, s) {
+			t.Errorf("expected ID %q to be preserved, but it was corrupted in result", s)
+		}
+	}
+
+	// No false positives on structural data.
+	if strings.Contains(result, "REDACTED") {
+		t.Errorf("expected no redactions in OpenCode export, got redacted content")
+	}
+}
+
+func TestJSONLContent_PrettyPrintedJSON_SecretsStillCaught(t *testing.T) {
+	t.Parallel()
+	// Even in pretty-printed JSON mode, actual secrets in content fields should
+	// still be redacted.
+	input := `{
+  "info": {
+    "id": "ses_test123"
+  },
+  "messages": [
+    {
+      "info": {
+        "id": "msg_test456",
+        "role": "assistant"
+      },
+      "parts": [
+        {
+          "id": "prt_test789",
+          "type": "text",
+          "text": "your api key is ` + highEntropySecret + `"
+        }
+      ]
+    }
+  ]
+}`
+
+	result, err := JSONLContent(input)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Secret in text content should be redacted.
+	if strings.Contains(result, highEntropySecret) {
+		t.Error("secret in text field was not redacted")
+	}
+	if !strings.Contains(result, "REDACTED") {
+		t.Error("expected REDACTED in output")
+	}
+
+	// IDs should still be preserved.
+	for _, id := range []string{"ses_test123", "msg_test456", "prt_test789"} {
+		if !strings.Contains(result, id) {
+			t.Errorf("ID %q should be preserved", id)
+		}
 	}
 }
 

@@ -21,6 +21,7 @@ import (
 	"github.com/go-git/go-git/v6"
 	"github.com/go-git/go-git/v6/plumbing"
 	"github.com/go-git/go-git/v6/plumbing/object"
+	"github.com/stretchr/testify/require"
 )
 
 func TestNewExplainCmd(t *testing.T) {
@@ -57,9 +58,7 @@ func TestExplainCmd_SearchAllFlag(t *testing.T) {
 
 	// Verify --search-all flag exists
 	flag := cmd.Flags().Lookup("search-all")
-	if flag == nil {
-		t.Fatal("expected --search-all flag to exist")
-	}
+	require.NotNil(t, flag, "expected --search-all flag to exist")
 
 	if flag.DefValue != "false" {
 		t.Errorf("expected default value 'false', got %q", flag.DefValue)

@@ -275,6 +275,21 @@ func IsSetUp(ctx context.Context) bool {
 	return err == nil
 }
 
+// IsSetUpAny returns true if Entire has been set up in the current repository,
+// checking both .entire/settings.json and .entire/settings.local.json.
+// Use this to detect any prior setup, even if only local settings exist.
+func IsSetUpAny(ctx context.Context) bool {
+	if IsSetUp(ctx) {
+		return true
+	}
+	localFileAbs, err := paths.AbsPath(ctx, EntireSettingsLocalFile)
+	if err != nil {
+		return false
+	}
+	_, err = os.Lstat(localFileAbs)
+	return err == nil
+}
+
 // IsSetUpAndEnabled returns true if Entire is both set up and enabled.
 // This checks if .entire/settings.json exists AND has enabled: true.
 // Use this for hooks that should be no-ops when Entire is not active.

@@ -17,6 +17,7 @@ import (
 	"github.com/entireio/cli/cmd/entire/cli/paths"
 	"github.com/entireio/cli/cmd/entire/cli/session"
 	"github.com/entireio/cli/cmd/entire/cli/testutil"
+	"github.com/stretchr/testify/require"
 
 	"github.com/spf13/cobra"
 )
@@ -185,9 +186,7 @@ func TestClaudeCodeHooksCmd_HasLoggingHooks(t *testing.T) {
 		}
 	}
 
-	if claudeCodeCmd == nil {
-		t.Fatal("expected to find claude-code subcommand under hooks")
-	}
+	require.NotNil(t, claudeCodeCmd, "expected to find claude-code subcommand under hooks")
 
 	// Verify PersistentPreRunE is set
 	if claudeCodeCmd.PersistentPreRunE == nil {
@@ -216,9 +215,7 @@ func TestGeminiCLIHooksCmd_HasLoggingHooks(t *testing.T) {
 		}
 	}
 
-	if geminiCmd == nil {
-		t.Fatal("expected to find gemini subcommand under hooks")
-	}
+	require.NotNil(t, geminiCmd, "expected to find gemini subcommand under hooks")
 
 	// Verify PersistentPreRunE is set
 	if geminiCmd.PersistentPreRunE == nil {

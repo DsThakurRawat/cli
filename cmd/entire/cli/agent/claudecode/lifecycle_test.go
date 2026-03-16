@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/entireio/cli/cmd/entire/cli/agent"
+	"github.com/stretchr/testify/require"
 )
 
 func TestParseHookEvent_SessionStart(t *testing.T) {
@@ -23,9 +24,7 @@ func TestParseHookEvent_SessionStart(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if event == nil {
-		t.Fatal("expected event, got nil")
-	}
+	require.NotNil(t, event, "expected event, got nil")
 	if event.Type != agent.SessionStart {
 		t.Errorf("expected event type %v, got %v", agent.SessionStart, event.Type)
 	}
@@ -51,9 +50,7 @@ func TestParseHookEvent_SessionStart_IncludesModel(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if event == nil {
-		t.Fatal("expected event, got nil")
-	}
+	require.NotNil(t, event, "expected event, got nil")
 	if event.Type != agent.SessionStart {
 		t.Errorf("expected SessionStart, got %v", event.Type)
 	}
@@ -73,9 +70,7 @@ func TestParseHookEvent_SessionStart_EmptyModel(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if event == nil {
-		t.Fatal("expected event, got nil")
-	}
+	require.NotNil(t, event, "expected event, got nil")
 	if event.Model != "" {
 		t.Errorf("expected empty model, got %q", event.Model)
 	}
@@ -92,9 +87,7 @@ func TestParseHookEvent_TurnStart(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if event == nil {
-		t.Fatal("expected event, got nil")
-	}
+	require.NotNil(t, event, "expected event, got nil")
 	if event.Type != agent.TurnStart {
 		t.Errorf("expected event type %v, got %v", agent.TurnStart, event.Type)
 	}
@@ -117,9 +110,7 @@ func TestParseHookEvent_TurnEnd(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if event == nil {
-		t.Fatal("expected event, got nil")
-	}
+	require.NotNil(t, event, "expected event, got nil")
 	if event.Type != agent.TurnEnd {
 		t.Errorf("expected event type %v, got %v", agent.TurnEnd, event.Type)
 	}
@@ -139,9 +130,7 @@ func TestParseHookEvent_SessionEnd(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if event == nil {
-		t.Fatal("expected event, got nil")
-	}
+	require.NotNil(t, event, "expected event, got nil")
 	if event.Type != agent.SessionEnd {
 		t.Errorf("expected event type %v, got %v", agent.SessionEnd, event.Type)
 	}
@@ -171,9 +160,7 @@ func TestParseHookEvent_SubagentStart(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if event == nil {
-		t.Fatal("expected event, got nil")
-	}
+	require.NotNil(t, event, "expected event, got nil")
 	if event.Type != agent.SubagentStart {
 		t.Errorf("expected event type %v, got %v", agent.SubagentStart, event.Type)
 	}
@@ -211,9 +198,7 @@ func TestParseHookEvent_SubagentEnd(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if event == nil {
-		t.Fatal("expected event, got nil")
-	}
+	require.NotNil(t, event, "expected event, got nil")
 	if event.Type != agent.SubagentEnd {
 		t.Errorf("expected event type %v, got %v", agent.SubagentEnd, event.Type)
 	}
@@ -246,9 +231,7 @@ func TestParseHookEvent_SubagentEnd_NoAgentID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if event == nil {
-		t.Fatal("expected event, got nil")
-	}
+	require.NotNil(t, event, "expected event, got nil")
 	if event.SubagentID != "" {
 		t.Errorf("expected empty subagent_id, got %q", event.SubagentID)
 	}
@@ -381,9 +364,7 @@ func TestParseHookEvent_AllHookTypes(t *testing.T) {
 				return
 			}
 
-			if event == nil {
-				t.Fatal("expected event, got nil")
-			}
+			require.NotNil(t, event, "expected event, got nil")
 			if event.Type != tc.expectedType {
 				t.Errorf("expected event type %v, got %v", tc.expectedType, event.Type)
 			}
@@ -401,9 +382,7 @@ func TestReadAndParse_ValidInput(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if result == nil {
-		t.Fatal("expected result, got nil")
-	}
+	require.NotNil(t, result, "expected result, got nil")
 	if result.SessionID != "test-123" {
 		t.Errorf("expected session_id 'test-123', got %q", result.SessionID)
 	}

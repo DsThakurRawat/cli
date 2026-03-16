@@ -59,7 +59,7 @@ func TestRunEnable(t *testing.T) {
 	writeSettings(t, testSettingsDisabled)
 
 	var stdout bytes.Buffer
-	if err := runEnable(context.Background(), &stdout); err != nil {
+	if err := runEnable(context.Background(), &stdout, false); err != nil {
 		t.Fatalf("runEnable() error = %v", err)
 	}
 
@@ -81,12 +81,76 @@ func TestRunEnable_AlreadyEnabled(t *testing.T) {
 	writeSettings(t, testSettingsEnabled)
 
 	var stdout bytes.Buffer
-	if err := runEnable(context.Background(), &stdout); err != nil {
+	if err := runEnable(context.Background(), &stdout, false); err != nil {
 		t.Fatalf("runEnable() error = %v", err)
 	}
 
 	if !strings.Contains(stdout.String(), "enabled") {
 		t.Errorf("Expected output to mention enabled state, got: %s", stdout.String())
+	}
+}
+
+// TestRunEnable_ProjectFlag_ClearsLocalDisable verifies that `entire enable --project`
+// after `entire disable` (which writes to local) actually re-enables by updating both files.
+func TestRunEnable_ProjectFlag_ClearsLocalDisable(t *testing.T) {
+	setupTestDir(t)
+	writeSettings(t, testSettingsEnabled)
+
+	// Simulate `entire disable` (writes enabled:false to local)
+	var buf bytes.Buffer
+	if err := runDisable(context.Background(), &buf, false); err != nil {
+		t.Fatalf("runDisable() error = %v", err)
+	}
+
+	// Verify it's disabled
+	enabled, err := IsEnabled(context.Background())
+	if err != nil {
+		t.Fatalf("IsEnabled() error = %v", err)
+	}
+	if enabled {
+		t.Fatal("Expected disabled after runDisable")
+	}
+
+	// Now re-enable with --project flag
+	buf.Reset()
+	if err := runEnable(context.Background(), &buf, true); err != nil {
+		t.Fatalf("runEnable(project=true) error = %v", err)
+	}
+
+	// Must actually be enabled — local override must not win
+	enabled, err = IsEnabled(context.Background())
+	if err != nil {
+		t.Fatalf("IsEnabled() error = %v", err)
+	}
+	if !enabled {
+		t.Error("Expected enabled after runEnable --project, but IsEnabled() returned false (local override not cleared)")
+	}
+}
+
+// TestRunEnable_DefaultFlag_ClearsLocalDisable verifies that `entire enable`
+// (default, no --project) after `entire disable` actually re-enables.
+func TestRunEnable_DefaultFlag_ClearsLocalDisable(t *testing.T) {
+	setupTestDir(t)
+	writeSettings(t, testSettingsEnabled)
+
+	// Simulate `entire disable` (writes enabled:false to local)
+	var buf bytes.Buffer
+	if err := runDisable(context.Background(), &buf, false); err != nil {
+		t.Fatalf("runDisable() error = %v", err)
+	}
+
+	// Now re-enable with default (no --project)
+	buf.Reset()
+	if err := runEnable(context.Background(), &buf, false); err != nil {
+		t.Fatalf("runEnable(project=false) error = %v", err)
+	}
+
+	enabled, err := IsEnabled(context.Background())
+	if err != nil {
+		t.Fatalf("IsEnabled() error = %v", err)
+	}
+	if !enabled {
+		t.Error("Expected enabled after runEnable, but IsEnabled() returned false")
 	}
 }
 
@@ -223,13 +287,13 @@ func TestRunDisable_WithProjectFlag(t *testing.T) {
 		t.Errorf("Project settings should have enabled:false, got: %s", projectContent)
 	}
 
-	// Local settings should still be enabled (untouched)
+	// Local settings should also be updated to stay in sync
 	localContent, err := os.ReadFile(EntireSettingsLocalFile)
 	if err != nil {
 		t.Fatalf("Failed to read local settings: %v", err)
 	}
-	if !strings.Contains(string(localContent), `"enabled": true`) && !strings.Contains(string(localContent), `"enabled":true`) {
-		t.Errorf("Local settings should still have enabled:true, got: %s", localContent)
+	if !strings.Contains(string(localContent), `"enabled":false`) && !strings.Contains(string(localContent), `"enabled": false`) {
+		t.Errorf("Local settings should also have enabled:false to stay in sync, got: %s", localContent)
 	}
 }
 
@@ -930,12 +994,6 @@ func TestDetectOrSelectAgent_NoDetection_WithTTY_ShowsPromptMessages(t *testing.
 	}
 
 	output := buf.String()
-	if !strings.Contains(output, "No agent configuration detected") {
-		t.Errorf("Expected output to contain 'No agent configuration detected', got: %s", output)
-	}
-	if !strings.Contains(output, "This is normal") {
-		t.Errorf("Expected output to contain 'This is normal', got: %s", output)
-	}
 	if !strings.Contains(output, "Selected agents:") {
 		t.Errorf("Expected output to contain 'Selected agents:', got: %s", output)
 	}

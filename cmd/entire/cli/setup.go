@@ -28,6 +28,9 @@ const (
 	configDisplayLocal   = ".entire/settings.local.json"
 )
 
+// agentFlagName is the flag name used for agent selection across setup commands.
+const agentFlagName = "agent"
+
 // EnableOptions holds the flags for `entire enable`.
 type EnableOptions struct {
 	LocalDev            bool
@@ -90,6 +93,248 @@ func parseCheckpointRemoteFlag(value string) (provider, repo string, err error) 
 	return provider, repo, nil
 }
 
+// runSetupFlow runs the first-time setup flow (agent selection + hooks + settings).
+// Shared by root command (no args), `entire configure`, and `entire enable` on fresh repos.
+func runSetupFlow(ctx context.Context, w io.Writer, opts EnableOptions) error {
+	// Discover external agent plugins so they appear in agent selection.
+	external.DiscoverAndRegister(ctx)
+
+	agents, err := detectOrSelectAgent(ctx, w, nil)
+	if err != nil {
+		return fmt.Errorf("agent selection failed: %w", err)
+	}
+
+	return runEnableInteractive(ctx, w, agents, opts)
+}
+
+// runAddAgents shows which agents are currently enabled and lets the user add more.
+// Already-installed agents cannot be deselected.
+func runAddAgents(ctx context.Context, w io.Writer, opts EnableOptions) error {
+	// Discover external agent plugins.
+	external.DiscoverAndRegister(ctx)
+
+	installedNames := GetAgentsWithHooksInstalled(ctx)
+
+	// Show currently installed agents
+	if len(installedNames) > 0 {
+		displayNames := make([]string, 0, len(installedNames))
+		for _, name := range installedNames {
+			if ag, err := agent.Get(name); err == nil {
+				displayNames = append(displayNames, string(ag.Type()))
+			}
+		}
+		fmt.Fprintf(w, "Enabled agents: %s\n\n", strings.Join(displayNames, ", "))
+	}
+
+	// Build pre-selection set from installed agents
+	installedSet := make(map[types.AgentName]struct{}, len(installedNames))
+	for _, name := range installedNames {
+		installedSet[name] = struct{}{}
+	}
+
+	// Check if we can prompt interactively
+	if !canPromptInteractively() {
+		fmt.Fprintln(w, "Cannot show agent selection in non-interactive mode.")
+		fmt.Fprintln(w, "Use: entire configure --agent <name>")
+		return nil
+	}
+
+	// Build options from registered agents
+	agentNames := agent.List()
+	options := make([]huh.Option[string], 0, len(agentNames))
+	for _, name := range agentNames {
+		ag, err := agent.Get(name)
+		if err != nil {
+			continue
+		}
+		if _, ok := agent.AsHookSupport(ag); !ok {
+			continue
+		}
+		if to, ok := ag.(agent.TestOnly); ok && to.IsTestOnly() {
+			continue
+		}
+		opt := huh.NewOption(string(ag.Type()), string(name))
+		if _, installed := installedSet[name]; installed {
+			opt = opt.Selected(true)
+		}
+		options = append(options, opt)
+	}
+
+	if len(options) == 0 {
+		return errors.New("no agents with hook support available")
+	}
+
+	// Check if all agents are already installed
+	allInstalled := true
+	for _, name := range agentNames {
+		ag, err := agent.Get(name)
+		if err != nil {
+			continue
+		}
+		if _, ok := agent.AsHookSupport(ag); !ok {
+			continue
+		}
+		if to, ok := ag.(agent.TestOnly); ok && to.IsTestOnly() {
+			continue
+		}
+		if _, installed := installedSet[name]; !installed {
+			allInstalled = false
+			break
+		}
+	}
+	if allInstalled {
+		fmt.Fprintln(w, "All available agents are already enabled.")
+		return nil
+	}
+
+	var selectedAgentNames []string
+	form := NewAccessibleForm(
+		huh.NewGroup(
+			huh.NewMultiSelect[string]().
+				Title("Enable more agents").
+				Description("Use space to select, enter to confirm.").
+				Options(options...).
+				Validate(func(selected []string) error {
+					if len(selected) == 0 {
+						return errors.New("please select at least one agent")
+					}
+					// Ensure previously installed agents are still selected
+					selectedSet := make(map[string]struct{}, len(selected))
+					for _, s := range selected {
+						selectedSet[s] = struct{}{}
+					}
+					for _, name := range installedNames {
+						if _, ok := selectedSet[string(name)]; !ok {
+							ag, err := agent.Get(name)
+							if err != nil {
+								continue
+							}
+							return fmt.Errorf("cannot remove %s — use `entire configure --remove %s` to remove it", ag.Type(), name)
+						}
+					}
+					return nil
+				}).
+				Value(&selectedAgentNames),
+		),
+	)
+	if err := form.Run(); err != nil {
+		return fmt.Errorf("agent selection cancelled: %w", err)
+	}
+
+	// Find newly selected agents (not previously installed)
+	var newAgents []agent.Agent
+	for _, name := range selectedAgentNames {
+		if _, wasInstalled := installedSet[types.AgentName(name)]; wasInstalled {
+			continue
+		}
+		ag, err := agent.Get(types.AgentName(name))
+		if err != nil {
+			return fmt.Errorf("failed to get agent %s: %w", name, err)
+		}
+		newAgents = append(newAgents, ag)
+	}
+
+	if len(newAgents) == 0 {
+		fmt.Fprintln(w, "No new agents selected.")
+		return nil
+	}
+
+	// Install hooks for newly selected agents only
+	for _, ag := range newAgents {
+		if _, err := setupAgentHooks(ctx, ag, opts.LocalDev, opts.ForceHooks); err != nil {
+			return fmt.Errorf("failed to setup %s hooks: %w", ag.Type(), err)
+		}
+	}
+
+	newTypes := make([]string, 0, len(newAgents))
+	for _, ag := range newAgents {
+		newTypes = append(newTypes, string(ag.Type()))
+	}
+	fmt.Fprintf(w, "✓ Added agents: %s\n", strings.Join(newTypes, ", "))
+
+	return nil
+}
+
+func newSetupCmd() *cobra.Command {
+	var opts EnableOptions
+	var agentName string
+	var removeAgentName string
+
+	cmd := &cobra.Command{
+		Use:   "configure",
+		Short: "Configure Entire in current repository",
+		Long: `Configure Entire with session tracking for your AI agent workflows.
+
+On first run, this configures Entire and installs agent hooks.
+On subsequent runs, it lets you enable more agents.
+
+Use --remove to remove a specific agent's hooks:
+  entire configure --remove claude-code`,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			ctx := cmd.Context()
+			if _, err := paths.WorktreeRoot(ctx); err != nil {
+				fmt.Fprintln(cmd.ErrOrStderr(), "Not a git repository. Please run 'entire configure' from within a git repository.")
+				return NewSilentError(errors.New("not a git repository"))
+			}
+
+			// Discover external agent plugins early so they're available
+			// for --agent, --remove, and interactive selection.
+			external.DiscoverAndRegister(ctx)
+
+			// Remove agent mode
+			if removeAgentName != "" {
+				return runRemoveAgent(ctx, cmd.OutOrStdout(), removeAgentName)
+			}
+
+			// Non-interactive --agent mode
+			if cmd.Flags().Changed(agentFlagName) && agentName == "" {
+				printMissingAgentError(cmd.ErrOrStderr())
+				return NewSilentError(errors.New("missing agent name"))
+			}
+			if agentName != "" {
+				ag, err := agent.Get(types.AgentName(agentName))
+				if err != nil {
+					printWrongAgentError(cmd.ErrOrStderr(), agentName)
+					return NewSilentError(errors.New("wrong agent name"))
+				}
+				return setupAgentHooksNonInteractive(ctx, cmd.OutOrStdout(), ag, opts)
+			}
+
+			// If already set up, show agents and let user add more
+			if settings.IsSetUpAny(ctx) {
+				return runAddAgents(ctx, cmd.OutOrStdout(), opts)
+			}
+
+			// Fresh repo — run full setup flow
+			return runSetupFlow(ctx, cmd.OutOrStdout(), opts)
+		},
+	}
+
+	cmd.Flags().BoolVar(&opts.LocalDev, "local-dev", false, "Use go run instead of entire binary for hooks")
+	cmd.Flags().MarkHidden("local-dev") //nolint:errcheck,gosec // flag is defined above
+	cmd.Flags().BoolVar(&opts.UseLocalSettings, "local", false, "Write settings to .entire/settings.local.json instead of .entire/settings.json")
+	cmd.Flags().BoolVar(&opts.UseProjectSettings, "project", false, "Write settings to .entire/settings.json even if it already exists")
+	cmd.Flags().StringVar(&agentName, agentFlagName, "", "Enable a specific agent (e.g., "+strings.Join(agent.StringList(), ", ")+")")
+	cmd.Flags().StringVar(&removeAgentName, "remove", "", "Remove a specific agent's hooks (e.g., "+strings.Join(agent.StringList(), ", ")+")")
+	cmd.Flags().BoolVarP(&opts.ForceHooks, "force", "f", false, "Force reinstall hooks (removes existing Entire hooks first)")
+	cmd.Flags().BoolVar(&opts.SkipPushSessions, "skip-push-sessions", false, "Disable automatic pushing of session logs on git push")
+	cmd.Flags().BoolVar(&opts.Telemetry, "telemetry", true, "Enable anonymous usage analytics")
+	cmd.Flags().BoolVar(&opts.AbsoluteGitHookPath, "absolute-git-hook-path", false, "Embed full binary path in git hooks (for GUI git clients that don't source shell profiles)")
+
+	// Provide a helpful error when --agent is used without a value
+	defaultFlagErr := cmd.FlagErrorFunc()
+	cmd.SetFlagErrorFunc(func(c *cobra.Command, err error) error {
+		var valErr *pflag.ValueRequiredError
+		if errors.As(err, &valErr) && valErr.GetSpecifiedName() == agentFlagName {
+			printMissingAgentError(c.ErrOrStderr())
+			return NewSilentError(errors.New("missing agent name"))
+		}
+		return defaultFlagErr(c, err)
+	})
+
+	return cmd
+}
+
 func newEnableCmd() *cobra.Command {
 	var opts EnableOptions
 	var ignoreUntracked bool
@@ -97,11 +342,11 @@ func newEnableCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "enable",
-		Short: "Enable Entire in current project",
+		Short: "Enable Entire in current repository",
 		Long: `Enable Entire with session tracking for your AI agent workflows.
 
-Uses the manual-commit strategy, which creates session checkpoints without
-modifying your active branch.`,
+If Entire is not yet configured, this runs the full configuration flow.
+If Entire is already configured but disabled, this re-enables it.`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			ctx := cmd.Context()
 			// Check if we're in a git repository first - this is a prerequisite error,
@@ -116,18 +361,11 @@ modifying your active branch.`,
 				return err
 			}
 
-			// Discover external agent plugins so they appear in agent selection.
+			// Discover external agent plugins early so --agent can find them.
 			external.DiscoverAndRegister(ctx)
 
-			// Warn if repo has no commits yet
-			if repo, err := strategy.OpenRepository(ctx); err == nil && strategy.IsEmptyRepository(repo) {
-				fmt.Fprintln(cmd.OutOrStdout(), "Note: This repository has no commits yet. Entire will be configured, but")
-				fmt.Fprintln(cmd.OutOrStdout(), "session checkpoints won't work until you create your first commit.")
-				fmt.Fprintln(cmd.OutOrStdout())
-			}
-
 			// Non-interactive mode if --agent flag is provided
-			if cmd.Flags().Changed("agent") && agentName == "" {
+			if cmd.Flags().Changed(agentFlagName) && agentName == "" {
 				printMissingAgentError(cmd.ErrOrStderr())
 				return NewSilentError(errors.New("missing agent name"))
 			}
@@ -143,13 +381,21 @@ modifying your active branch.`,
 				// uninstall hooks for other previously-enabled agents.
 				return setupAgentHooksNonInteractive(ctx, cmd.OutOrStdout(), ag, opts)
 			}
-			// Detect or prompt for agents
-			agents, err := detectOrSelectAgent(ctx, cmd.OutOrStdout(), nil)
-			if err != nil {
-				return fmt.Errorf("agent selection failed: %w", err)
+
+			// If already set up, just enable (don't re-run full setup)
+			if settings.IsSetUpAny(ctx) {
+				enabled, err := IsEnabled(ctx)
+				if err == nil && enabled {
+					w := cmd.OutOrStdout()
+					fmt.Fprintln(w, "Entire is already enabled.")
+					printEnabledStatus(ctx, w)
+					return nil
+				}
+				return runEnable(ctx, cmd.OutOrStdout(), opts.UseProjectSettings)
 			}
 
-			return runEnableInteractive(ctx, cmd.OutOrStdout(), agents, opts)
+			// Fresh repo — run full setup flow
+			return runSetupFlow(ctx, cmd.OutOrStdout(), opts)
 		},
 	}
 
@@ -159,7 +405,7 @@ modifying your active branch.`,
 	cmd.Flags().MarkHidden("ignore-untracked") //nolint:errcheck,gosec // flag is defined above
 	cmd.Flags().BoolVar(&opts.UseLocalSettings, "local", false, "Write settings to .entire/settings.local.json instead of .entire/settings.json")
 	cmd.Flags().BoolVar(&opts.UseProjectSettings, "project", false, "Write settings to .entire/settings.json even if it already exists")
-	cmd.Flags().StringVar(&agentName, "agent", "", "Agent to set up hooks for (e.g., "+strings.Join(agent.StringList(), ", ")+"). Enables non-interactive mode.")
+	cmd.Flags().StringVar(&agentName, agentFlagName, "", "Agent to set up hooks for (e.g., "+strings.Join(agent.StringList(), ", ")+"). Enables non-interactive mode.")
 	cmd.Flags().BoolVarP(&opts.ForceHooks, "force", "f", false, "Force reinstall hooks (removes existing Entire hooks first)")
 	cmd.Flags().BoolVar(&opts.SkipPushSessions, "skip-push-sessions", false, "Disable automatic pushing of session logs on git push")
 	cmd.Flags().StringVar(&opts.CheckpointRemote, "checkpoint-remote", "", "Checkpoint remote in provider:owner/repo format (e.g., github:org/checkpoints-repo)")
@@ -170,7 +416,7 @@ modifying your active branch.`,
 	defaultFlagErr := cmd.FlagErrorFunc()
 	cmd.SetFlagErrorFunc(func(c *cobra.Command, err error) error {
 		var valErr *pflag.ValueRequiredError
-		if errors.As(err, &valErr) && valErr.GetSpecifiedName() == "agent" {
+		if errors.As(err, &valErr) && valErr.GetSpecifiedName() == agentFlagName {
 			printMissingAgentError(c.ErrOrStderr())
 			return NewSilentError(errors.New("missing agent name"))
 		}
@@ -190,8 +436,8 @@ func newDisableCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "disable",
-		Short: "Disable Entire in current project",
-		Long: `Disable Entire integrations in the current project.
+		Short: "Disable Entire in current repository",
+		Long: `Disable Entire integrations in the current repository.
 
 By default, this command will disable Entire. Hooks will exit silently and commands will
 show a disabled message.
@@ -309,46 +555,122 @@ func runEnableInteractive(ctx context.Context, w io.Writer, agents []agent.Agent
 
 	fmt.Fprintln(w, "\nReady.")
 
+	// Note about empty repos at the end, after setup is complete
+	if repo, err := strategy.OpenRepository(ctx); err == nil && strategy.IsEmptyRepository(repo) {
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, "Note: Session checkpoints require at least one commit. To get started,")
+		fmt.Fprintln(w, "commit the configuration files (e.g. .entire/, .claude/).")
+	}
+
 	return nil
 }
 
-// runEnable is a simple enable that just sets the enabled flag (for programmatic use).
-func runEnable(ctx context.Context, w io.Writer) error {
-	settings, err := LoadEntireSettings(ctx)
+// printEnabledStatus prints agents and a hint about `entire configure`.
+func printEnabledStatus(ctx context.Context, w io.Writer) {
+	installedNames := GetAgentsWithHooksInstalled(ctx)
+	if len(installedNames) > 0 {
+		displayNames := make([]string, 0, len(installedNames))
+		for _, name := range installedNames {
+			if ag, agErr := agent.Get(name); agErr == nil {
+				displayNames = append(displayNames, string(ag.Type()))
+			}
+		}
+		fmt.Fprintf(w, "Agents: %s\n", strings.Join(displayNames, ", "))
+	}
+	fmt.Fprintln(w, "\nTo add more agents, run `entire configure`.")
+}
+
+// runEnable sets the enabled flag in settings.
+// Writes to the target file (local by default, project with --project),
+// and also updates the other file if it exists, so they can't get out of sync.
+func runEnable(ctx context.Context, w io.Writer, useProjectSettings bool) error {
+	s, err := LoadEntireSettings(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to load settings: %w", err)
 	}
 
-	settings.Enabled = true
-	if err := SaveEntireSettings(ctx, settings); err != nil {
-		return fmt.Errorf("failed to save settings: %w", err)
+	s.Enabled = true
+
+	if err := saveEnabledState(ctx, s, useProjectSettings); err != nil {
+		return err
 	}
 
 	fmt.Fprintln(w, "Entire is now enabled.")
+	printEnabledStatus(ctx, w)
 	return nil
 }
 
 func runDisable(ctx context.Context, w io.Writer, useProjectSettings bool) error {
-	settings, err := LoadEntireSettings(ctx)
+	s, err := LoadEntireSettings(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to load settings: %w", err)
 	}
 
-	settings.Enabled = false
+	s.Enabled = false
 
-	// If --project flag is specified, always write to project settings
-	if useProjectSettings {
-		if err := SaveEntireSettings(ctx, settings); err != nil {
-			return fmt.Errorf("failed to save settings: %w", err)
-		}
-	} else {
-		// Always write to local settings file (create if doesn't exist)
-		if err := SaveEntireSettingsLocal(ctx, settings); err != nil {
-			return fmt.Errorf("failed to save local settings: %w", err)
-		}
+	if err := saveEnabledState(ctx, s, useProjectSettings); err != nil {
+		return err
 	}
 
 	fmt.Fprintln(w, "Entire is now disabled.")
+	return nil
+}
+
+// saveEnabledState writes settings to the target file and also updates the
+// other settings file if it exists, preventing local/project from getting
+// out of sync on the enabled field.
+func saveEnabledState(ctx context.Context, s *EntireSettings, useProjectSettings bool) error {
+	if useProjectSettings {
+		if err := SaveEntireSettings(ctx, s); err != nil {
+			return fmt.Errorf("failed to save settings: %w", err)
+		}
+		// Also update local if it exists, so it doesn't override
+		if localExists(ctx) {
+			if err := SaveEntireSettingsLocal(ctx, s); err != nil {
+				return fmt.Errorf("failed to save local settings: %w", err)
+			}
+		}
+	} else {
+		if err := SaveEntireSettingsLocal(ctx, s); err != nil {
+			return fmt.Errorf("failed to save local settings: %w", err)
+		}
+	}
+	return nil
+}
+
+// localExists checks if settings.local.json exists.
+func localExists(ctx context.Context) bool {
+	localFile := settings.EntireSettingsLocalFile
+	if abs, err := paths.AbsPath(ctx, localFile); err == nil {
+		localFile = abs
+	}
+	_, err := os.Stat(localFile)
+	return err == nil
+}
+
+// runRemoveAgent removes hooks for a specific agent.
+func runRemoveAgent(ctx context.Context, w io.Writer, name string) error {
+	ag, err := agent.Get(types.AgentName(name))
+	if err != nil {
+		printWrongAgentError(w, name)
+		return NewSilentError(errors.New("wrong agent name"))
+	}
+
+	hookAgent, ok := agent.AsHookSupport(ag)
+	if !ok {
+		return fmt.Errorf("agent %s does not support hooks", name)
+	}
+
+	if !hookAgent.AreHooksInstalled(ctx) {
+		fmt.Fprintf(w, "%s hooks are not installed.\n", ag.Type())
+		return nil
+	}
+
+	if err := hookAgent.UninstallHooks(ctx); err != nil {
+		return fmt.Errorf("failed to remove %s hooks: %w", ag.Type(), err)
+	}
+
+	fmt.Fprintf(w, "Removed %s hooks.\n", ag.Type())
 	return nil
 }
 
@@ -409,7 +731,7 @@ func uninstallDeselectedAgentHooks(ctx context.Context, w io.Writer, selectedAge
 
 // setupAgentHooks sets up hooks for a given agent.
 // Returns the number of hooks installed (0 if already installed).
-func setupAgentHooks(ctx context.Context, ag agent.Agent, localDev, forceHooks bool) (int, error) {
+func setupAgentHooks(ctx context.Context, ag agent.Agent, localDev, forceHooks bool) (int, error) { //nolint:unparam // count useful for callers that want to report installed hook count
 	hookAgent, ok := agent.AsHookSupport(ag)
 	if !ok {
 		return 0, fmt.Errorf("agent %s does not support hooks", ag.Name())
@@ -486,12 +808,6 @@ func detectOrSelectAgent(ctx context.Context, w io.Writer, selectFn func(availab
 		return []agent.Agent{defaultAgent}, nil
 	}
 
-	if !hasInstalledHooks && len(detected) == 0 {
-		fmt.Fprintln(w, "No agent configuration detected (e.g., "+strings.Join(agent.StringList(), ", ")+").")
-		fmt.Fprintln(w, "This is normal - some agents don't require a config directory.")
-		fmt.Fprintln(w)
-	}
-
 	// Build pre-selection set.
 	// On re-run: only pre-select agents with hooks installed (respect prior deselection).
 	// On first run: pre-select all detected agents.
@@ -553,7 +869,7 @@ func detectOrSelectAgent(ctx context.Context, w io.Writer, selectFn func(availab
 		form := NewAccessibleForm(
 			huh.NewGroup(
 				huh.NewMultiSelect[string]().
-					Title("Which agents are you using?").
+					Title("Select the agents you want to use").
 					Description("Use space to select, enter to confirm.").
 					Options(options...).
 					Validate(func(selected []string) error {
@@ -708,6 +1024,12 @@ func setupAgentHooksNonInteractive(ctx context.Context, w io.Writer, ag agent.Ag
 	}
 
 	fmt.Fprintln(w, "\nReady.")
+
+	if repo, err := strategy.OpenRepository(ctx); err == nil && strategy.IsEmptyRepository(repo) {
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, "Note: Session checkpoints require at least one commit. To get started,")
+		fmt.Fprintln(w, "commit the configuration files (e.g. .entire/, .claude/).")
+	}
 
 	return nil
 }

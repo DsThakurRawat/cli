@@ -10,8 +10,16 @@ With Entire, you can:
 - **Onboard faster** — show the path from prompt → change → commit
 - **Maintain traceability** — support audit and compliance requirements when needed
 
+## Why Entire
+
+- **Understand why code changed, not just what** — Transcripts, prompts, files touched, token usage, tool calls, and more are captured alongside every commit.
+- **Rewind and resume from any checkpoint** — Go back to any previous agent session and pick up exactly where you or a coworker left off.
+- **Full context preserved and searchable** — A versioned record of every AI interaction tied to your git history, with nothing lost.
+- **Zero context switching** — Git-native, two-step setup, works with Claude Code, Gemini, and more.
+
 ## Table of Contents
 
+- [Why Entire](#why-entire)
 - [Quick Start](#quick-start)
 - [Typical Workflow](#typical-workflow)
 - [Key Concepts](#key-concepts)

@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestInstallHooks_FreshInstall(t *testing.T) {
@@ -479,9 +481,7 @@ func TestInstallHooks_PreservesEntryLevelFields(t *testing.T) {
 			break
 		}
 	}
-	if userEntry == nil {
-		t.Fatal("user hook entry with bash 'echo user stop' not found after round-trip")
-	}
+	require.NotNil(t, userEntry, "user hook entry with bash 'echo user stop' not found after round-trip")
 
 	// Verify cwd is preserved.
 	if userEntry.Cwd != "/home/user/project" {

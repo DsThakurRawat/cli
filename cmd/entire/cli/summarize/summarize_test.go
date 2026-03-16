@@ -9,6 +9,7 @@ import (
 
 	"github.com/entireio/cli/cmd/entire/cli/agent"
 	"github.com/entireio/cli/cmd/entire/cli/transcript"
+	"github.com/stretchr/testify/require"
 )
 
 const testMainGoFile = "main.go"
@@ -665,9 +666,7 @@ func TestGenerateFromTranscript(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if summary == nil {
-		t.Fatal("expected non-nil summary")
-	}
+	require.NotNil(t, summary, "expected non-nil summary")
 	if summary.Intent != "Test intent" {
 		t.Errorf("unexpected intent: %s", summary.Intent)
 	}

@@ -11,6 +11,7 @@ import (
 	_ "github.com/entireio/cli/cmd/entire/cli/agent/claudecode" // Register agent for ResolveAgentForRewind tests
 	_ "github.com/entireio/cli/cmd/entire/cli/agent/geminicli"  // Register agent for ResolveAgentForRewind tests
 	"github.com/entireio/cli/cmd/entire/cli/paths"
+	"github.com/stretchr/testify/require"
 
 	"github.com/go-git/go-git/v6"
 	"github.com/go-git/go-git/v6/plumbing/object"
@@ -130,9 +131,7 @@ func TestShadowStrategy_PreviewRewind(t *testing.T) {
 		t.Fatalf("PreviewRewind() error = %v", err)
 	}
 
-	if preview == nil {
-		t.Fatal("PreviewRewind() returned nil preview")
-	}
+	require.NotNil(t, preview, "PreviewRewind() returned nil preview")
 
 	// Should restore app.js
 	foundApp := false
@@ -191,9 +190,7 @@ func TestShadowStrategy_PreviewRewind_LogsOnly(t *testing.T) {
 		t.Fatalf("PreviewRewind() error = %v", err)
 	}
 
-	if preview == nil {
-		t.Fatal("PreviewRewind() returned nil preview")
-	}
+	require.NotNil(t, preview, "PreviewRewind() returned nil preview")
 
 	if len(preview.FilesToDelete) > 0 {
 		t.Errorf("Logs-only preview should have no files to delete, got: %v", preview.FilesToDelete)

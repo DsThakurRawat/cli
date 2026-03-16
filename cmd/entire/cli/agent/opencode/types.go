@@ -82,7 +82,8 @@ type Cache struct {
 
 // Part represents a message part (text, tool, etc.).
 type Part struct {
-	Type   string     `json:"type"` // "text", "tool", etc.
+	ID     string     `json:"id,omitempty"` // Part ID (e.g., "prt_..."), added in OpenCode 1.2.x
+	Type   string     `json:"type"`         // "text", "tool", etc.
 	Text   string     `json:"text,omitempty"`
 	Tool   string     `json:"tool,omitempty"`
 	CallID string     `json:"callID,omitempty"`

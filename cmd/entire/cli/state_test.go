@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -10,7 +11,28 @@ import (
 	"github.com/entireio/cli/cmd/entire/cli/paths"
 	"github.com/go-git/go-git/v6"
 	"github.com/go-git/go-git/v6/plumbing/object"
+	"github.com/stretchr/testify/require"
 )
+
+// prePromptStateFile returns the absolute path to the pre-prompt state file for a session.
+// Test-only helper; production code constructs the filename inline.
+func prePromptStateFile(ctx context.Context, sessionID string) string {
+	tmpDirAbs, err := paths.AbsPath(ctx, paths.EntireTmpDir)
+	if err != nil {
+		tmpDirAbs = paths.EntireTmpDir
+	}
+	return filepath.Join(tmpDirAbs, fmt.Sprintf("pre-prompt-%s.json", sessionID))
+}
+
+// preTaskStateFile returns the absolute path to the pre-task state file for a tool use.
+// Test-only helper; production code constructs the filename inline.
+func preTaskStateFile(ctx context.Context, toolUseID string) string {
+	tmpDirAbs, err := paths.AbsPath(ctx, paths.EntireTmpDir)
+	if err != nil {
+		tmpDirAbs = paths.EntireTmpDir
+	}
+	return filepath.Join(tmpDirAbs, fmt.Sprintf("pre-task-%s.json", toolUseID))
+}
 
 func TestPreTaskStateFile(t *testing.T) {
 	toolUseID := "toolu_abc123"
@@ -73,9 +95,7 @@ func TestPrePromptState_BackwardCompat_LastTranscriptLineCount(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadPrePromptState() error = %v", err)
 	}
-	if state == nil {
-		t.Fatal("LoadPrePromptState() returned nil")
-	}
+	require.NotNil(t, state, "LoadPrePromptState() returned nil")
 
 	if state.TranscriptOffset != 42 {
 		t.Errorf("TranscriptOffset = %d, want 42 (migrated from last_transcript_line_count)", state.TranscriptOffset)
@@ -413,9 +433,7 @@ func TestPrePromptState_WithSummaryOnlyTranscript(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadPrePromptState() error = %v", err)
 	}
-	if state == nil {
-		t.Fatal("LoadPrePromptState() returned nil")
-	}
+	require.NotNil(t, state, "LoadPrePromptState() returned nil")
 
 	// TranscriptOffset should be 2 (2 JSONL lines counted by ClaudeCodeAgent)
 	if state.TranscriptOffset != 2 {

@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"runtime"
 
+	"github.com/entireio/cli/cmd/entire/cli/paths"
+	"github.com/entireio/cli/cmd/entire/cli/settings"
 	"github.com/entireio/cli/cmd/entire/cli/telemetry"
 	"github.com/entireio/cli/cmd/entire/cli/versioncheck"
 	"github.com/entireio/cli/cmd/entire/cli/versioninfo"
@@ -13,8 +15,8 @@ import (
 const gettingStarted = `
 
 Getting Started:
-  To get started with Entire CLI, run 'entire enable' to configure
-  your project's environment. For more information, visit:
+  To get started with Entire CLI, run 'entire configure' to configure
+  your repository. For more information, visit:
   https://docs.entire.io/introduction
 
 `
@@ -67,6 +69,11 @@ func NewRootCmd() *cobra.Command {
 			versioncheck.CheckAndNotify(cmd.Context(), cmd.OutOrStdout(), versioninfo.Version)
 		},
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			ctx := cmd.Context()
+			// If we're in a git repo but Entire isn't set up yet, start the setup flow
+			if _, err := paths.WorktreeRoot(ctx); err == nil && !settings.IsSetUpAny(ctx) {
+				return runSetupFlow(ctx, cmd.OutOrStdout(), EnableOptions{})
+			}
 			return cmd.Help()
 		},
 	}
@@ -76,6 +83,7 @@ func NewRootCmd() *cobra.Command {
 	cmd.AddCommand(newResumeCmd())
 	cmd.AddCommand(newCleanCmd())
 	cmd.AddCommand(newResetCmd())
+	cmd.AddCommand(newSetupCmd())
 	cmd.AddCommand(newEnableCmd())
 	cmd.AddCommand(newDisableCmd())
 	cmd.AddCommand(newStatusCmd())

@@ -16,6 +16,7 @@ import (
 	"github.com/entireio/cli/cmd/entire/cli/testutil"
 	"github.com/go-git/go-git/v6"
 	"github.com/go-git/go-git/v6/plumbing/object"
+	"github.com/stretchr/testify/require"
 )
 
 // mockLifecycleAgent is a minimal Agent implementation for lifecycle tests.
@@ -372,9 +373,7 @@ func TestHandleLifecycleCompaction_PreservesTranscriptOffset(t *testing.T) {
 	if loadErr != nil {
 		t.Fatalf("Failed to load session state after compaction: %v", loadErr)
 	}
-	if loadedState == nil {
-		t.Fatal("Session state is nil after compaction")
-	}
+	require.NotNil(t, loadedState, "Session state is nil after compaction")
 	if loadedState.CheckpointTranscriptStart != 50 {
 		t.Errorf("CheckpointTranscriptStart = %d, want 50 (compaction should preserve offset)",
 			loadedState.CheckpointTranscriptStart)

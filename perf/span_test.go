@@ -5,6 +5,8 @@ import (
 	"errors"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestStart_CreatesRootSpan(t *testing.T) {
@@ -12,9 +14,7 @@ func TestStart_CreatesRootSpan(t *testing.T) {
 	ctx := context.Background()
 
 	ctx, span := Start(ctx, "test_op")
-	if span == nil {
-		t.Fatal("Start() returned nil span")
-	}
+	require.NotNil(t, span, "Start() returned nil span")
 	if span.name != "test_op" {
 		t.Errorf("span.name = %q, want %q", span.name, "test_op")
 	}

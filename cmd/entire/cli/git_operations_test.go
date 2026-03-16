@@ -10,6 +10,7 @@ import (
 	"github.com/go-git/go-git/v6"
 	"github.com/go-git/go-git/v6/plumbing"
 	"github.com/go-git/go-git/v6/plumbing/object"
+	"github.com/stretchr/testify/require"
 )
 
 // gitCheckout uses git CLI instead of go-git to work around go-git v5 bug
@@ -539,9 +540,7 @@ func TestGetGitAuthorFallsBackToGitCommand(t *testing.T) {
 	}
 
 	// Verify it's not nil first
-	if author == nil {
-		t.Fatal("GetGitAuthor(context.Background()) returned nil author")
-	}
+	require.NotNil(t, author, "GetGitAuthor(context.Background()) returned nil author")
 
 	// The author should have some value (either from global git config or defaults)
 	t.Logf("GetGitAuthor(context.Background()) returned Name=%q, Email=%q", author.Name, author.Email)
@@ -566,9 +565,7 @@ func TestGetGitAuthorReturnsDefaultsWhenNoConfig(t *testing.T) {
 	}
 
 	// Just verify we got a non-nil result first
-	if author == nil {
-		t.Fatal("GetGitAuthor(context.Background()) returned nil")
-	}
+	require.NotNil(t, author, "GetGitAuthor(context.Background()) returned nil")
 
 	// Name and Email should be non-empty (either from global config or defaults)
 	if author.Name == "" {

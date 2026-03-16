@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"math"
 	"regexp"
 	"sort"
@@ -154,43 +155,86 @@ func JSONLBytes(b []byte) ([]byte, error) {
 // JSONLContent parses each line as JSON to determine which string values
 // need redaction, then performs targeted replacements on the raw JSON bytes.
 // Lines with no secrets are returned unchanged, preserving original formatting.
+//
+// For multi-line JSON content (e.g., pretty-printed single JSON objects like
+// OpenCode export), the function first attempts to parse the entire content as
+// a single JSON value. This ensures field-aware redaction (which skips ID fields)
+// is used instead of falling back to entropy-based detection on raw text lines,
+// which would corrupt high-entropy identifiers.
 func JSONLContent(content string) (string, error) {
+	// Try parsing the entire content as a single JSON value first.
+	// Uses a streaming decoder to avoid copying the full content into []byte.
+	// After decoding, attempts a second Decode to confirm EOF — if it succeeds,
+	// the content is JSONL (multiple values) and we fall through to line-by-line.
+	trimmed := strings.TrimSpace(content)
+	if len(trimmed) > 0 {
+		dec := json.NewDecoder(strings.NewReader(trimmed))
+		var parsed any
+		if err := dec.Decode(&parsed); err == nil && isSingleJSONValue(dec) {
+			// Content is a single JSON value (object/array) — redact field-aware.
+			result, err := applyJSONReplacements(content, collectJSONLReplacements(parsed))
+			if err != nil {
+				return "", err
+			}
+			return result, nil
+		}
+	}
+
+	// Fall back to line-by-line JSONL processing.
 	lines := strings.Split(content, "\n")
 	var b strings.Builder
 	for i, line := range lines {
 		if i > 0 {
 			b.WriteByte('\n')
 		}
-		trimmed := strings.TrimSpace(line)
-		if trimmed == "" {
+		lineTrimmed := strings.TrimSpace(line)
+		if lineTrimmed == "" {
 			b.WriteString(line)
 			continue
 		}
 		var parsed any
-		if err := json.Unmarshal([]byte(trimmed), &parsed); err != nil {
+		if err := json.Unmarshal([]byte(lineTrimmed), &parsed); err != nil {
 			b.WriteString(String(line))
 			continue
 		}
-		repls := collectJSONLReplacements(parsed)
-		if len(repls) == 0 {
-			b.WriteString(line)
-			continue
-		}
-		result := line
-		for _, r := range repls {
-			origJSON, err := jsonEncodeString(r[0])
-			if err != nil {
-				return "", err
-			}
-			replJSON, err := jsonEncodeString(r[1])
-			if err != nil {
-				return "", err
-			}
-			result = strings.ReplaceAll(result, origJSON, replJSON)
+		result, err := applyJSONReplacements(line, collectJSONLReplacements(parsed))
+		if err != nil {
+			return "", err
 		}
 		b.WriteString(result)
 	}
 	return b.String(), nil
+}
+
+// applyJSONReplacements applies collected (original, redacted) string pairs
+// to the raw JSON text, replacing JSON-encoded originals with their redacted forms.
+// Returns s unchanged if repls is empty.
+func applyJSONReplacements(s string, repls [][2]string) (string, error) {
+	if len(repls) == 0 {
+		return s, nil
+	}
+	for _, r := range repls {
+		origJSON, err := jsonEncodeString(r[0])
+		if err != nil {
+			return "", err
+		}
+		replJSON, err := jsonEncodeString(r[1])
+		if err != nil {
+			return "", err
+		}
+		s = strings.ReplaceAll(s, origJSON, replJSON)
+	}
+	return s, nil
+}
+
+// isSingleJSONValue returns true if the decoder has reached EOF (no more
+// top-level values). This distinguishes a single JSON value (e.g., pretty-printed
+// object) from JSONL (multiple concatenated values). We attempt a second Decode
+// and require io.EOF rather than relying on dec.More(), which is documented for
+// use inside arrays/objects and not for top-level value boundaries.
+func isSingleJSONValue(dec *json.Decoder) bool {
+	var discard json.RawMessage
+	return dec.Decode(&discard) == io.EOF
 }
 
 // collectJSONLReplacements walks a parsed JSON value and collects unique

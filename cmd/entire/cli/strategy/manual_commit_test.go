@@ -19,6 +19,7 @@ import (
 	"github.com/go-git/go-git/v6"
 	"github.com/go-git/go-git/v6/plumbing"
 	"github.com/go-git/go-git/v6/plumbing/object"
+	"github.com/stretchr/testify/require"
 )
 
 const testTrailerCheckpointID id.CheckpointID = "a1b2c3d4e5f6"
@@ -85,9 +86,7 @@ func TestShadowStrategy_SessionState_SaveLoad(t *testing.T) {
 	if err != nil {
 		t.Fatalf("loadSessionState() error = %v", err)
 	}
-	if loaded == nil {
-		t.Fatal("loadSessionState() returned nil")
-	}
+	require.NotNil(t, loaded, "loadSessionState() returned nil")
 
 	if loaded.SessionID != state.SessionID {
 		t.Errorf("SessionID = %q, want %q", loaded.SessionID, state.SessionID)
@@ -1316,9 +1315,7 @@ func TestSessionState_LastCheckpointID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("loadSessionState() error = %v", err)
 	}
-	if loaded == nil {
-		t.Fatal("loadSessionState() returned nil")
-	}
+	require.NotNil(t, loaded, "loadSessionState() returned nil")
 
 	if loaded.LastCheckpointID != state.LastCheckpointID {
 		t.Errorf("LastCheckpointID = %q, want %q", loaded.LastCheckpointID, state.LastCheckpointID)
@@ -1367,9 +1364,7 @@ func TestSessionState_TokenUsagePersistence(t *testing.T) {
 	if err != nil {
 		t.Fatalf("loadSessionState() error = %v", err)
 	}
-	if loaded == nil {
-		t.Fatal("loadSessionState() returned nil")
-	}
+	require.NotNil(t, loaded, "loadSessionState() returned nil")
 
 	// Verify CheckpointTranscriptStart
 	if loaded.CheckpointTranscriptStart != state.CheckpointTranscriptStart {
