@@ -567,6 +567,22 @@ Key difference: OpenCode stores transcripts in a database, not files. The transc
 **Position:** Message count (`len(session.Messages)`).
 **Offset:** Start iterating messages at index N.
 
+### JSONL Format (Factory AI Droid pattern)
+
+Similar to Claude Code's JSONL format (one JSON object per line), but with a different envelope structure. Factory AI Droid wraps messages as:
+
+```
+{"type":"message","id":"...","message":{"role":"assistant","content":[...]}}
+{"type":"message","id":"...","message":{"role":"user","content":"Fix the bug"}}
+```
+
+Unlike Claude Code's `{"type":"assistant",...}`, Droid uses `type: "message"` with the role inside the `message` object. Non-message entries (e.g., `session_start`) are skipped during parsing.
+
+**Chunking:** Same as Claude Code - `agent.ChunkJSONL(content, maxSize)` splits at newline boundaries.
+**Reassembly:** Same as Claude Code - `agent.ReassembleJSONL(chunks)` concatenates with newlines.
+**Position:** Line count (same as Claude Code).
+**Offset:** Start parsing at line N (skip first N lines).
+
 ### Using Chunking Helpers
 
 The `agent` package provides format-agnostic entry points:
@@ -650,6 +666,24 @@ Note: Gemini CLI requires `hooksConfig.enabled: true` and each hook entry requir
 ```
 
 Note: Cursor uses camelCase hook names in `.cursor/hooks.json` and provides a `conversation_id` field as the session identifier.
+
+### Example: Factory AI Droid Hook Config
+
+```json
+{
+  "hooks": {
+    "SessionStart": [{"command": "entire hooks factoryai-droid session-start"}],
+    "SessionEnd": [{"command": "entire hooks factoryai-droid session-end"}],
+    "UserPromptSubmit": [{"command": "entire hooks factoryai-droid user-prompt-submit"}],
+    "Stop": [{"command": "entire hooks factoryai-droid stop"}],
+    "PreToolUse": [{"tool_name": "Task", "command": "entire hooks factoryai-droid pre-tool-use"}],
+    "PostToolUse": [{"tool_name": "Task", "command": "entire hooks factoryai-droid post-tool-use"}],
+    "PreCompact": [{"command": "entire hooks factoryai-droid pre-compact"}]
+  }
+}
+```
+
+Note: Factory AI Droid uses PascalCase hook names in `.factory/settings.json`. PreToolUse/PostToolUse use `tool_name` matchers to scope to specific tools (e.g., `Task` for subagent tracking).
 
 ### Plugin File Pattern (OpenCode)
 
@@ -792,6 +826,9 @@ func TestInstallHooks_Idempotent(t *testing.T) {
 - OpenCode lifecycle tests: `cmd/entire/cli/agent/opencode/lifecycle_test.go`
 - OpenCode hooks tests: `cmd/entire/cli/agent/opencode/hooks_test.go`
 - OpenCode transcript tests: `cmd/entire/cli/agent/opencode/transcript_test.go`
+- Factory AI Droid lifecycle tests: `cmd/entire/cli/agent/factoryaidroid/lifecycle_test.go`
+- Factory AI Droid hooks tests: `cmd/entire/cli/agent/factoryaidroid/hooks_test.go`
+- Factory AI Droid transcript tests: `cmd/entire/cli/agent/factoryaidroid/transcript_test.go`
 
 ## Common Pitfalls
 
