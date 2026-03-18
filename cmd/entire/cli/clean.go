@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"strings"
 
@@ -425,19 +426,13 @@ func runCleanAllWithItems(ctx context.Context, w io.Writer, force, dryRun bool, 
 
 // listTempFiles returns files in .entire/tmp/ that are safe to delete,
 // excluding files belonging to active sessions.
+// Uses os.DirFS + fs.WalkDir to confine listing to the temp directory.
 func listTempFiles(ctx context.Context) ([]string, error) {
-	tmpDir, err := paths.AbsPath(ctx, paths.EntireTmpDir)
+	root, err := os.OpenRoot(paths.EntireTmpDir)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get temp dir path: %w", err)
+		return nil, fmt.Errorf("failed to open root: %w", err)
 	}
-
-	entries, err := os.ReadDir(tmpDir)
-	if os.IsNotExist(err) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, fmt.Errorf("failed to read temp dir: %w", err)
-	}
+	defer root.Close()
 
 	// Build set of active session IDs to protect their temp files
 	activeSessionIDs := make(map[string]bool)
@@ -448,17 +443,27 @@ func listTempFiles(ctx context.Context) ([]string, error) {
 	}
 
 	var files []string
-	for _, entry := range entries {
-		if entry.IsDir() {
-			continue
+	err = fs.WalkDir(root.FS(), ".", func(_ string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return nil
 		}
 		// Skip temp files belonging to active sessions (e.g., "session-id.json")
-		name := entry.Name()
+		name := d.Name()
 		sessionID := strings.TrimSuffix(name, ".json")
 		if sessionID != name && activeSessionIDs[sessionID] {
-			continue
+			return nil
 		}
 		files = append(files, name)
+		return nil
+	})
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to list temp dir: %w", err)
 	}
 	return files, nil
 }
