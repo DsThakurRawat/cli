@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -61,130 +62,42 @@ Supported agents: claude-code, gemini, opencode, cursor, copilot-cli, factoryai-
 func runAttach(ctx context.Context, w io.Writer, sessionID string, agentName types.AgentName, force bool) error {
 	logCtx := logging.WithComponent(ctx, "attach")
 
-	// Validate session ID format
-	if err := validation.ValidateSessionID(sessionID); err != nil {
-		return fmt.Errorf("invalid session ID: %w", err)
+	repoRoot, err := validateAttachPreconditions(ctx, sessionID)
+	if err != nil {
+		return err
 	}
 
-	// Ensure we're in a git repo
-	repoRoot, err := paths.WorktreeRoot(ctx)
+	ag, transcriptPath, err := resolveAgentAndTranscript(logCtx, w, sessionID, agentName)
 	if err != nil {
-		return fmt.Errorf("not a git repository: %w", err)
-	}
-
-	// Bail out early if repo has no commits (strategy requires HEAD)
-	if repo, repoErr := strategy.OpenRepository(ctx); repoErr == nil && strategy.IsEmptyRepository(repo) {
-		return errors.New("repository has no commits yet — make an initial commit before running attach")
-	}
-
-	// Check session isn't already tracked
-	store, err := session.NewStateStore(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to open session store: %w", err)
-	}
-	existing, err := store.Load(ctx, sessionID)
-	if err != nil {
-		return fmt.Errorf("failed to check existing session: %w", err)
-	}
-	if existing != nil {
-		return fmt.Errorf("session %s is already tracked by Entire", sessionID)
-	}
-
-	// Resolve agent and transcript path (auto-detect agent if transcript not found)
-	ag, err := agent.Get(agentName)
-	if err != nil {
-		return fmt.Errorf("agent %q not available: %w", agentName, err)
-	}
-
-	transcriptPath, err := resolveAndValidateTranscript(logCtx, sessionID, agentName, ag)
-	if err != nil {
-		// Try other agents to auto-detect
-		if detectedAg, detectedPath, detectErr := detectAgentByTranscript(logCtx, sessionID, agentName); detectErr == nil {
-			ag = detectedAg
-			transcriptPath = detectedPath
-			logging.Info(logCtx, "auto-detected agent from transcript", "agent", ag.Name())
-			fmt.Fprintf(w, "Auto-detected agent: %s\n", ag.Name())
-		} else {
-			return err // return original error
-		}
+		return err
 	}
 	agentType := ag.Type()
 
-	// Read transcript data
 	transcriptData, err := ag.ReadTranscript(transcriptPath)
 	if err != nil {
 		return fmt.Errorf("failed to read transcript: %w", err)
 	}
 
-	// Extract modified files from transcript
-	var modifiedFiles []string
-	if analyzer, ok := agent.AsTranscriptAnalyzer(ag); ok {
-		if files, _, fileErr := analyzer.ExtractModifiedFilesFromOffset(transcriptPath, 0); fileErr != nil {
-			logging.Warn(logCtx, "failed to extract modified files from transcript", "error", fileErr)
-		} else {
-			modifiedFiles = files
-		}
-	}
-
-	// Detect file changes via git status (no pre-untracked filter since we don't know pre-state)
-	changes, err := DetectFileChanges(ctx, nil)
-	if err != nil {
-		logging.Warn(logCtx, "failed to detect file changes, checkpoint may be incomplete", "error", err)
-	}
-
-	// Filter and normalize paths
-	relModifiedFiles := FilterAndNormalizePaths(modifiedFiles, repoRoot)
-	var relNewFiles, relDeletedFiles []string
-	if changes != nil {
-		relNewFiles = FilterAndNormalizePaths(changes.New, repoRoot)
-		relDeletedFiles = FilterAndNormalizePaths(changes.Deleted, repoRoot)
-		relModifiedFiles = mergeUnique(relModifiedFiles, FilterAndNormalizePaths(changes.Modified, repoRoot))
-	}
-
-	// Filter to uncommitted files only
-	relModifiedFiles = filterToUncommittedFiles(ctx, relModifiedFiles, repoRoot)
+	relModifiedFiles, relNewFiles, relDeletedFiles := collectFileChanges(ctx, logCtx, ag, transcriptPath, repoRoot)
 
 	if err := strategy.EnsureSetup(ctx); err != nil {
 		return fmt.Errorf("failed to set up strategy: %w", err)
 	}
 
-	// Create session metadata directory and copy transcript
-	sessionDir := paths.SessionMetadataDirFromSessionID(sessionID)
-	sessionDirAbs, err := paths.AbsPath(ctx, sessionDir)
+	logFile, sessionDir, sessionDirAbs, err := storeTranscript(logCtx, ctx, sessionID, agentType, transcriptData)
 	if err != nil {
-		return fmt.Errorf("failed to resolve session directory path: %w", err)
-	}
-	if err := os.MkdirAll(sessionDirAbs, 0o750); err != nil {
-		return fmt.Errorf("failed to create session directory: %w", err)
-	}
-	// Normalize Gemini transcripts so the content field is a plain string
-	// (Gemini user messages use [{"text":"..."}] arrays, which the UI can't render).
-	storedTranscript := transcriptData
-	if agentType == agent.AgentTypeGemini {
-		if normalized, normErr := normalizeGeminiTranscript(transcriptData); normErr == nil {
-			storedTranscript = normalized
-		} else {
-			logging.Warn(logCtx, "failed to normalize Gemini transcript, storing raw", "error", normErr)
-		}
-	}
-	logFile := filepath.Join(sessionDirAbs, paths.TranscriptFileName)
-	if err := os.WriteFile(logFile, storedTranscript, 0o600); err != nil {
-		return fmt.Errorf("failed to write transcript: %w", err)
+		return err
 	}
 
-	// Get git author
 	author, err := GetGitAuthor(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to get git author: %w", err)
 	}
 
-	// Extract transcript metadata (prompt, turns, model) in a single parse pass
 	meta := extractTranscriptMetadata(transcriptData)
 	firstPrompt := meta.FirstPrompt
 	commitMessage := generateCommitMessage(firstPrompt, agentType)
 
-	// Write prompt.txt so SaveStep includes it on the shadow branch
-	// and CondenseSession can read it for the checkpoint metadata.
 	if firstPrompt != "" {
 		promptFile := filepath.Join(sessionDirAbs, paths.PromptFileName)
 		if err := os.WriteFile(promptFile, []byte(firstPrompt), 0o600); err != nil {
@@ -192,23 +105,16 @@ func runAttach(ctx context.Context, w io.Writer, sessionID string, agentName typ
 		}
 	}
 
-	// Initialize session state BEFORE SaveStep so it exists when SaveStep loads it.
-	// Use logFile (the normalized local copy) as the transcript path so that
-	// CondenseSession reads the normalized version instead of the raw agent file.
 	strat := GetStrategy(ctx)
 	if err := strat.InitializeSession(ctx, sessionID, agentType, logFile, firstPrompt, ""); err != nil {
 		return fmt.Errorf("failed to initialize session: %w", err)
 	}
 
-	// Enrich session state with transcript-derived metadata
 	if err := enrichSessionState(logCtx, sessionID, ag, transcriptData, logFile, meta); err != nil {
 		return err
 	}
 
-	// Build step context and save checkpoint.
-	// Use the local (potentially normalized) transcript so SaveStep stores the cleaned version.
 	totalChanges := len(relModifiedFiles) + len(relNewFiles) + len(relDeletedFiles)
-
 	stepCtx := strategy.StepContext{
 		SessionID:      sessionID,
 		ModifiedFiles:  relModifiedFiles,
@@ -229,7 +135,130 @@ func runAttach(ctx context.Context, w io.Writer, sessionID string, agentName typ
 
 	checkpointIDStr, condenseErr := condenseAndFinalizeSession(logCtx, strat, sessionID)
 
-	// Print confirmation
+	printAttachConfirmation(w, sessionID, totalChanges, condenseErr)
+
+	if checkpointIDStr != "" {
+		if err := promptAmendCommit(ctx, w, checkpointIDStr, force); err != nil {
+			logging.Warn(logCtx, "failed to amend commit", "error", err)
+			fmt.Fprintf(w, "\nCopy to your commit message to attach:\n\n  Entire-Checkpoint: %s\n", checkpointIDStr)
+		}
+	}
+
+	return nil
+}
+
+// validateAttachPreconditions checks session ID format, git repo state, and duplicate sessions.
+func validateAttachPreconditions(ctx context.Context, sessionID string) (string, error) {
+	if err := validation.ValidateSessionID(sessionID); err != nil {
+		return "", fmt.Errorf("invalid session ID: %w", err)
+	}
+
+	repoRoot, err := paths.WorktreeRoot(ctx)
+	if err != nil {
+		return "", fmt.Errorf("not a git repository: %w", err)
+	}
+
+	repo, repoErr := strategy.OpenRepository(ctx)
+	if repoErr != nil {
+		return "", fmt.Errorf("failed to open repository: %w", repoErr)
+	}
+	if strategy.IsEmptyRepository(repo) {
+		return "", errors.New("repository has no commits yet — make an initial commit before running attach")
+	}
+
+	store, err := session.NewStateStore(ctx)
+	if err != nil {
+		return "", fmt.Errorf("failed to open session store: %w", err)
+	}
+	existing, err := store.Load(ctx, sessionID)
+	if err != nil {
+		return "", fmt.Errorf("failed to check existing session: %w", err)
+	}
+	if existing != nil {
+		return "", fmt.Errorf("session %s is already tracked by Entire", sessionID)
+	}
+
+	return repoRoot, nil
+}
+
+// resolveAgentAndTranscript resolves the agent and transcript path, with auto-detection fallback.
+func resolveAgentAndTranscript(ctx context.Context, w io.Writer, sessionID string, agentName types.AgentName) (agent.Agent, string, error) {
+	ag, err := agent.Get(agentName)
+	if err != nil {
+		return nil, "", fmt.Errorf("agent %q not available: %w", agentName, err)
+	}
+
+	transcriptPath, err := resolveAndValidateTranscript(ctx, sessionID, agentName, ag)
+	if err != nil {
+		detectedAg, detectedPath, detectErr := detectAgentByTranscript(ctx, sessionID, agentName)
+		if detectErr != nil {
+			return nil, "", err
+		}
+		ag = detectedAg
+		transcriptPath = detectedPath
+		logging.Info(ctx, "auto-detected agent from transcript", "agent", ag.Name())
+		fmt.Fprintf(w, "Auto-detected agent: %s\n", ag.Name())
+	}
+
+	return ag, transcriptPath, nil
+}
+
+// collectFileChanges gathers modified, new, and deleted files from both transcript analysis and git status.
+func collectFileChanges(ctx, logCtx context.Context, ag agent.Agent, transcriptPath, repoRoot string) (modified, added, deleted []string) {
+	var transcriptFiles []string
+	if analyzer, ok := agent.AsTranscriptAnalyzer(ag); ok {
+		if files, _, fileErr := analyzer.ExtractModifiedFilesFromOffset(transcriptPath, 0); fileErr != nil {
+			logging.Warn(logCtx, "failed to extract modified files from transcript", "error", fileErr)
+		} else {
+			transcriptFiles = files
+		}
+	}
+
+	changes, err := DetectFileChanges(ctx, nil)
+	if err != nil {
+		logging.Warn(logCtx, "failed to detect file changes, checkpoint may be incomplete", "error", err)
+	}
+
+	modified = FilterAndNormalizePaths(transcriptFiles, repoRoot)
+	if changes != nil {
+		added = FilterAndNormalizePaths(changes.New, repoRoot)
+		deleted = FilterAndNormalizePaths(changes.Deleted, repoRoot)
+		modified = mergeUnique(modified, FilterAndNormalizePaths(changes.Modified, repoRoot))
+	}
+
+	modified = filterToUncommittedFiles(ctx, modified, repoRoot)
+	return modified, added, deleted
+}
+
+// storeTranscript creates the session metadata directory and writes the (optionally normalized) transcript.
+func storeTranscript(logCtx, ctx context.Context, sessionID string, agentType types.AgentType, transcriptData []byte) (logFile, sessionDir, sessionDirAbs string, err error) {
+	sessionDir = paths.SessionMetadataDirFromSessionID(sessionID)
+	sessionDirAbs, err = paths.AbsPath(ctx, sessionDir)
+	if err != nil {
+		return "", "", "", fmt.Errorf("failed to resolve session directory path: %w", err)
+	}
+	if err := os.MkdirAll(sessionDirAbs, 0o750); err != nil {
+		return "", "", "", fmt.Errorf("failed to create session directory: %w", err)
+	}
+
+	storedTranscript := transcriptData
+	if agentType == agent.AgentTypeGemini {
+		if normalized, normErr := normalizeGeminiTranscript(transcriptData); normErr == nil {
+			storedTranscript = normalized
+		} else {
+			logging.Warn(logCtx, "failed to normalize Gemini transcript, storing raw", "error", normErr)
+		}
+	}
+
+	logFile = filepath.Join(sessionDirAbs, paths.TranscriptFileName)
+	if err := os.WriteFile(logFile, storedTranscript, 0o600); err != nil {
+		return "", "", "", fmt.Errorf("failed to write transcript: %w", err)
+	}
+	return logFile, sessionDir, sessionDirAbs, nil
+}
+
+// printAttachConfirmation prints the post-attach status message.
+func printAttachConfirmation(w io.Writer, sessionID string, totalChanges int, condenseErr error) {
 	fmt.Fprintf(w, "Attached session %s\n", sessionID)
 	if totalChanges > 0 {
 		fmt.Fprintf(w, "  Checkpoint saved with %d file(s)\n", totalChanges)
@@ -240,16 +269,6 @@ func runAttach(ctx context.Context, w io.Writer, sessionID string, agentName typ
 		fmt.Fprintln(w, "  Warning: checkpoint saved on shadow branch only (condensation failed)")
 	}
 	fmt.Fprintln(w, "  Session is now tracked — future prompts will be captured automatically")
-
-	// Offer to amend the last commit with the checkpoint trailer
-	if checkpointIDStr != "" {
-		if err := promptAmendCommit(ctx, w, checkpointIDStr, force); err != nil {
-			logging.Warn(logCtx, "failed to amend commit", "error", err)
-			fmt.Fprintf(w, "\nCopy to your commit message to attach:\n\n  Entire-Checkpoint: %s\n", checkpointIDStr)
-		}
-	}
-
-	return nil
 }
 
 // enrichSessionState loads the session state after initialization and populates it with
@@ -359,9 +378,12 @@ func detectAgentByTranscript(ctx context.Context, sessionID string, skip types.A
 		if err != nil {
 			continue
 		}
-		if path, resolveErr := resolveAndValidateTranscript(ctx, sessionID, name, ag); resolveErr == nil {
-			return ag, path, nil
+		path, resolveErr := resolveAndValidateTranscript(ctx, sessionID, name, ag)
+		if resolveErr != nil {
+			logging.Debug(ctx, "auto-detect: agent did not match", "agent", string(name), "error", resolveErr)
+			continue
 		}
+		return ag, path, nil
 	}
 	return nil, "", errors.New("transcript not found for any registered agent")
 }
@@ -418,23 +440,65 @@ func promptAmendCommit(ctx context.Context, w io.Writer, checkpointIDStr string,
 	}
 
 	// Amend the commit with the checkpoint trailer.
-	// If the message already has trailers, append on a new line; otherwise add a blank line first.
-	trimmed := strings.TrimRight(headCommit.Message, "\n")
-	trailer := fmt.Sprintf("%s: %s", trailers.CheckpointTrailerKey, checkpointIDStr)
-	var newMessage string
-	if _, found := trailers.ParseCheckpoint(headCommit.Message); found {
-		newMessage = fmt.Sprintf("%s\n%s\n", trimmed, trailer)
-	} else {
-		newMessage = fmt.Sprintf("%s\n\n%s\n", trimmed, trailer)
-	}
+	newMessage := appendCheckpointTrailer(headCommit.Message, checkpointIDStr)
 
-	cmd := exec.CommandContext(ctx, "git", "commit", "--amend", "-m", newMessage)
+	// --only ensures this amend updates the commit message only and does not
+	// accidentally include unrelated staged changes.
+	cmd := exec.CommandContext(ctx, "git", "commit", "--amend", "--only", "-m", newMessage)
 	if output, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("failed to amend commit: %w\n%s", err, output)
 	}
 
 	fmt.Fprintf(w, "Amended commit %s with Entire-Checkpoint: %s\n", shortHash, checkpointIDStr)
 	return nil
+}
+
+// trailerLineRe matches git trailer format: "Key-Name: value" (no spaces before colon).
+var trailerLineRe = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9-]*: `)
+
+// isTrailerLine reports whether a line matches git trailer format.
+func isTrailerLine(line string) bool {
+	return trailerLineRe.MatchString(line)
+}
+
+// appendCheckpointTrailer appends Entire-Checkpoint in trailer-aware format.
+// If the message already ends with a trailer paragraph, append directly to it;
+// otherwise add a blank line before starting a new trailer block.
+func appendCheckpointTrailer(message, checkpointID string) string {
+	trimmed := strings.TrimRight(message, "\n")
+	trailer := fmt.Sprintf("%s: %s", trailers.CheckpointTrailerKey, checkpointID)
+
+	lines := strings.Split(trimmed, "\n")
+	i := len(lines) - 1
+	for i >= 0 && strings.HasPrefix(strings.TrimSpace(lines[i]), "#") {
+		i--
+	}
+
+	hasTrailerBlock := false
+	if i >= 0 {
+		last := strings.TrimSpace(lines[i])
+		if last != "" && isTrailerLine(last) {
+			for i > 0 {
+				i--
+				above := strings.TrimSpace(lines[i])
+				if strings.HasPrefix(above, "#") {
+					continue
+				}
+				if above == "" {
+					hasTrailerBlock = true
+					break
+				}
+				if !isTrailerLine(above) {
+					break
+				}
+			}
+		}
+	}
+
+	if hasTrailerBlock {
+		return trimmed + "\n" + trailer + "\n"
+	}
+	return trimmed + "\n\n" + trailer + "\n"
 }
 
 // transcriptMetadata holds metadata extracted from a single transcript parse pass.
@@ -560,7 +624,11 @@ func normalizeGeminiTranscript(data []byte) ([]byte, error) {
 	}
 	raw["messages"] = rewrittenMessages
 
-	return json.MarshalIndent(raw, "", "  ")
+	result, err := json.MarshalIndent(raw, "", "  ")
+	if err != nil {
+		return nil, fmt.Errorf("failed to re-serialize transcript: %w", err)
+	}
+	return result, nil
 }
 
 // estimateSessionDuration estimates session duration in milliseconds from JSONL transcript timestamps.

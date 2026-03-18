@@ -408,6 +408,52 @@ func TestExtractFirstPromptFromTranscript_JSONLFormat(t *testing.T) {
 	}
 }
 
+func TestAppendCheckpointTrailer(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		msg  string
+		want string
+	}{
+		{
+			name: "no existing trailers",
+			msg:  "feat: add attach command\n",
+			want: "feat: add attach command\n\nEntire-Checkpoint: abc123def456\n",
+		},
+		{
+			name: "existing non-checkpoint trailer block",
+			msg:  "feat: add attach command\n\nSigned-off-by: Test User <test@example.com>\n",
+			want: "feat: add attach command\n\nSigned-off-by: Test User <test@example.com>\nEntire-Checkpoint: abc123def456\n",
+		},
+		{
+			name: "existing checkpoint trailer block",
+			msg:  "feat: add attach command\n\nEntire-Checkpoint: deadbeefcafe\n",
+			want: "feat: add attach command\n\nEntire-Checkpoint: deadbeefcafe\nEntire-Checkpoint: abc123def456\n",
+		},
+		{
+			name: "subject with colon is not trailer block",
+			msg:  "docs: update readme\n",
+			want: "docs: update readme\n\nEntire-Checkpoint: abc123def456\n",
+		},
+		{
+			name: "body text containing colon-space is not trailer block",
+			msg:  "fix: login\n\nThis fixes the error: connection refused\n",
+			want: "fix: login\n\nThis fixes the error: connection refused\n\nEntire-Checkpoint: abc123def456\n",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := appendCheckpointTrailer(tt.msg, "abc123def456")
+			if got != tt.want {
+				t.Errorf("appendCheckpointTrailer() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestAttach_GeminiSubdirectorySession(t *testing.T) {
 	setupAttachTestRepo(t)
 
