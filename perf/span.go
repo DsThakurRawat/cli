@@ -83,7 +83,8 @@ func (s *Span) End() {
 	// to prevent later values from overwriting earlier ones in JSON output.
 	//
 	// Group spans (children that have their own children) also emit grandchildren
-	// with 0-based indexing: steps.<name>.0_ms, steps.<name>.1_ms, etc.
+	// with 0-based indexing: steps.<name>.0_ms, steps.<name>.1_ms, etc. The ~N
+	// suffix avoids collisions with this .0, .1, ... iteration indexing.
 	seen := make(map[string]int, len(s.children))
 	for _, child := range s.children {
 		// Auto-end children that were not explicitly ended
