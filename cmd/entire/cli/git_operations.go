@@ -454,11 +454,11 @@ func FetchMetadataTreeOnly(ctx context.Context) error {
 }
 
 // FetchBlobsByHash fetches specific blob objects from the remote by their SHA-1 hashes.
-// Uses git fetch-pack to request individual objects, which works when the server
-// supports allow-reachable-sha1-in-want (GitHub, GitLab, Bitbucket all do).
+// Uses "git fetch origin <hash>" which goes through normal credential helpers,
+// unlike fetch-pack which bypasses them. Requires the server to support
+// uploadpack.allowReachableSHA1InWant (GitHub, GitLab, Bitbucket all do).
 //
-// If fetch-pack fails (e.g., old server without SHA-in-want support), falls back
-// to a full metadata branch fetch.
+// If fetching by hash fails, falls back to a full metadata branch fetch.
 func FetchBlobsByHash(ctx context.Context, hashes []plumbing.Hash) error {
 	if len(hashes) == 0 {
 		return nil
@@ -467,30 +467,23 @@ func FetchBlobsByHash(ctx context.Context, hashes []plumbing.Hash) error {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
 
-	// Get remote URL for fetch-pack
-	urlCmd := exec.CommandContext(ctx, "git", "remote", "get-url", "origin")
-	urlOutput, err := urlCmd.Output()
-	if err != nil {
-		return fmt.Errorf("failed to get remote URL: %w", err)
-	}
-	remoteURL := strings.TrimSpace(string(urlOutput))
-
-	// Build fetch-pack args with blob hashes
-	args := []string{"fetch-pack", "--thin", "--no-progress", remoteURL}
+	// Build fetch args: "git fetch origin <hash1> <hash2> ..."
+	// This uses the normal transport + credential helpers, unlike fetch-pack.
+	args := []string{"fetch", "--no-write-fetch-head", "origin"}
 	for _, h := range hashes {
 		args = append(args, h.String())
 	}
 
 	fetchCmd := exec.CommandContext(ctx, "git", args...)
 	if output, fetchErr := fetchCmd.CombinedOutput(); fetchErr != nil {
-		logging.Debug(ctx, "fetch-pack failed, falling back to full metadata fetch",
+		logging.Debug(ctx, "fetch-by-hash failed, falling back to full metadata fetch",
 			slog.Int("blob_count", len(hashes)),
 			slog.String("error", fetchErr.Error()),
 			slog.String("output", strings.TrimSpace(string(output))),
 		)
 		// Fallback: full metadata branch fetch (pack negotiation skips already-local objects)
 		if fallbackErr := FetchMetadataBranch(ctx); fallbackErr != nil {
-			return fmt.Errorf("fetch-pack failed (%s: %w) and fallback fetch also failed: %w",
+			return fmt.Errorf("fetch-by-hash failed (%s: %w) and fallback fetch also failed: %w",
 				strings.TrimSpace(string(output)), fetchErr, fallbackErr)
 		}
 	}
