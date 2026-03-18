@@ -294,14 +294,30 @@ func buildSessionMetrics(state *SessionState) *cpkg.SessionMetrics {
 	}
 }
 
+func hasTokenUsageData(usage *agent.TokenUsage) bool {
+	if usage == nil {
+		return false
+	}
+
+	if usage.InputTokens > 0 || usage.CacheCreationTokens > 0 || usage.CacheReadTokens > 0 || usage.OutputTokens > 0 || usage.APICallCount > 0 {
+		return true
+	}
+
+	return hasTokenUsageData(usage.SubagentTokens)
+}
+
 // sessionStateBackfillTokenUsage returns the best session-level token usage to
 // persist in session state after condensation.
 func sessionStateBackfillTokenUsage(ctx context.Context, ag agent.Agent, agentType types.AgentType, transcript []byte, checkpointUsage *agent.TokenUsage) *agent.TokenUsage {
 	if agentType == agent.AgentTypeCopilotCLI && len(transcript) > 0 {
 		fullSessionUsage := agent.CalculateTokenUsage(ctx, ag, transcript, 0, "")
-		if fullSessionUsage != nil && fullSessionUsage.InputTokens > 0 {
+		if hasTokenUsageData(fullSessionUsage) {
 			return fullSessionUsage
 		}
+	}
+
+	if agentType == agent.AgentTypeCopilotCLI && hasTokenUsageData(checkpointUsage) {
+		return checkpointUsage
 	}
 
 	if checkpointUsage != nil && checkpointUsage.InputTokens > 0 {

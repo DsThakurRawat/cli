@@ -203,13 +203,13 @@ func TestCalculateTokenUsage_CursorWithOffset(t *testing.T) {
 	}
 }
 
-func TestSessionStateBackfillTokenUsage_CopilotUsesFullSessionAggregate(t *testing.T) {
+func TestSessionStateBackfillTokenUsage_CopilotUsesZeroInputSessionAggregate(t *testing.T) {
 	t.Parallel()
 
 	transcript := []byte(strings.Join([]string{
 		`{"type":"user.message","data":{"content":"hello"},"id":"1","timestamp":"2026-03-03T00:00:00Z","parentId":""}`,
 		`{"type":"assistant.message","data":{"content":"hi","outputTokens":25},"id":"2","timestamp":"2026-03-03T00:00:01Z","parentId":"1"}`,
-		`{"type":"session.shutdown","data":{"modelMetrics":[{"modelId":"claude-sonnet-4.6","requests":{"count":3},"usage":{"inputTokens":500,"outputTokens":50,"cacheReadTokens":20,"cacheWriteTokens":10}}]},"id":"3","timestamp":"2026-03-03T00:00:02Z","parentId":""}`,
+		`{"type":"session.shutdown","data":{"modelMetrics":[{"modelId":"claude-sonnet-4.6","requests":{"count":3},"usage":{"inputTokens":0,"outputTokens":50,"cacheReadTokens":20,"cacheWriteTokens":10}}]},"id":"3","timestamp":"2026-03-03T00:00:02Z","parentId":""}`,
 	}, "\n") + "\n")
 
 	ag, err := agent.GetByAgentType(agent.AgentTypeCopilotCLI)
@@ -222,7 +222,7 @@ func TestSessionStateBackfillTokenUsage_CopilotUsesFullSessionAggregate(t *testi
 
 	backfillUsage := sessionStateBackfillTokenUsage(context.Background(), ag, agent.AgentTypeCopilotCLI, transcript, checkpointUsage)
 	require.NotNil(t, backfillUsage)
-	require.Equal(t, 500, backfillUsage.InputTokens)
+	require.Zero(t, backfillUsage.InputTokens)
 	require.Equal(t, 50, backfillUsage.OutputTokens)
 	require.Equal(t, 20, backfillUsage.CacheReadTokens)
 	require.Equal(t, 10, backfillUsage.CacheCreationTokens)
