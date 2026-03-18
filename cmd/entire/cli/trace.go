@@ -13,27 +13,27 @@ import (
 	"time"
 )
 
-// perfStep represents a single timed step within a perf span.
+// traceStep represents a single timed step within a trace span.
 // Group steps (from nested spans) have SubSteps with 0-based iteration numbering.
-type perfStep struct {
+type traceStep struct {
 	Name       string
 	DurationMs int64
 	Error      bool
-	SubSteps   []perfStep
+	SubSteps   []traceStep
 }
 
-// perfEntry represents a parsed performance trace log entry.
-type perfEntry struct {
+// traceEntry represents a parsed performance trace log entry.
+type traceEntry struct {
 	Op         string
 	DurationMs int64
 	Error      bool
 	Time       time.Time
-	Steps      []perfStep
+	Steps      []traceStep
 }
 
-// parsePerfEntry parses a JSON log line into a perfEntry.
-// Returns nil if the line is not valid JSON or is not a perf entry (msg != "perf").
-func parsePerfEntry(line string) *perfEntry {
+// parseTraceEntry parses a JSON log line into a traceEntry.
+// Returns nil if the line is not valid JSON or is not a trace entry (msg != "perf").
+func parseTraceEntry(line string) *traceEntry {
 	var raw map[string]json.RawMessage
 	if err := json.Unmarshal([]byte(line), &raw); err != nil {
 		return nil
@@ -47,7 +47,7 @@ func parsePerfEntry(line string) *perfEntry {
 		return nil
 	}
 
-	entry := &perfEntry{}
+	entry := &traceEntry{}
 
 	// Extract op
 	if opRaw, ok := raw["op"]; ok {
@@ -131,9 +131,9 @@ func parsePerfEntry(line string) *perfEntry {
 	}
 
 	// Build steps slice sorted alphabetically by name
-	steps := make([]perfStep, 0, len(parentStepDurations))
+	steps := make([]traceStep, 0, len(parentStepDurations))
 	for name, ms := range parentStepDurations {
-		step := perfStep{
+		step := traceStep{
 			Name:       name,
 			DurationMs: ms,
 			Error:      parentStepErrors[name],
@@ -147,9 +147,9 @@ func parsePerfEntry(line string) *perfEntry {
 			}
 			sort.Ints(indices)
 
-			subList := make([]perfStep, 0, len(subs))
+			subList := make([]traceStep, 0, len(subs))
 			for _, idx := range indices {
-				subList = append(subList, perfStep{
+				subList = append(subList, traceStep{
 					Name:       fmt.Sprintf("%s.%d", name, idx),
 					DurationMs: subs[idx],
 					Error:      subStepErrors[name][idx],
@@ -190,24 +190,24 @@ func parseSubStepKey(name string, allSteps map[string]int64) (string, int, bool)
 	return parent, idx, true
 }
 
-// collectPerfEntries reads a JSONL log file and returns the last N perf entries,
+// collectTraceEntries reads a JSONL log file and returns the last N trace entries,
 // ordered newest first. If hookFilter is non-empty, only entries with a matching
 // Op field are included.
-func collectPerfEntries(logFile string, last int, hookFilter string) ([]perfEntry, error) {
+func collectTraceEntries(logFile string, last int, hookFilter string) ([]traceEntry, error) {
 	f, err := os.Open(logFile) //nolint:gosec // logFile is a CLI-resolved path, not user-supplied input
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return nil, nil
 		}
-		return nil, fmt.Errorf("opening perf log: %w", err)
+		return nil, fmt.Errorf("opening log file: %w", err)
 	}
 	defer f.Close()
 
-	var entries []perfEntry
+	var entries []traceEntry
 
 	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {
-		entry := parsePerfEntry(scanner.Text())
+		entry := parseTraceEntry(scanner.Text())
 		if entry == nil {
 			continue
 		}
@@ -218,7 +218,7 @@ func collectPerfEntries(logFile string, last int, hookFilter string) ([]perfEntr
 	}
 
 	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("reading perf log: %w", err)
+		return nil, fmt.Errorf("reading log file: %w", err)
 	}
 
 	// Take the last N entries
@@ -234,12 +234,12 @@ func collectPerfEntries(logFile string, last int, hookFilter string) ([]perfEntr
 	return entries, nil
 }
 
-// renderPerfEntries writes a formatted table of perf entries to w.
-// If entries is empty, it prints a help message about enabling perf traces.
-func renderPerfEntries(w io.Writer, entries []perfEntry) {
+// renderTraceEntries writes a formatted table of trace entries to w.
+// If entries is empty, it prints a help message about enabling traces.
+func renderTraceEntries(w io.Writer, entries []traceEntry) {
 	if len(entries) == 0 {
-		fmt.Fprintln(w, "No perf entries found.")
-		fmt.Fprintln(w, `Perf traces are logged at DEBUG level. Make sure ENTIRE_LOG_LEVEL=DEBUG is set`)
+		fmt.Fprintln(w, "No trace entries found.")
+		fmt.Fprintln(w, `Traces are logged at DEBUG level. Make sure ENTIRE_LOG_LEVEL=DEBUG is set`)
 		fmt.Fprintln(w, `in your shell profile, or set log_level to "DEBUG" in .entire/settings.json.`)
 		return
 	}

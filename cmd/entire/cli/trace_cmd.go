@@ -9,23 +9,23 @@ import (
 	"github.com/spf13/cobra"
 )
 
-func newPerfCmd() *cobra.Command {
+func newTraceCmd() *cobra.Command {
 	var last int
 	var hookFilter string
 
 	cmd := &cobra.Command{
-		Use:   "perf",
+		Use:   "trace",
 		Short: "Show hook performance traces",
 		Long: `Show timing information for recent hook invocations.
 
-Perf traces are emitted at DEBUG log level. To enable them, either:
+Traces are emitted at DEBUG log level. To enable them, either:
   - Set ENTIRE_LOG_LEVEL=DEBUG in your shell profile
   - Add "log_level": "DEBUG" to .entire/settings.json
 
 Examples:
-  entire perf                  Show the most recent hook trace
-  entire perf --last 5         Show the last 5 hook traces
-  entire perf --hook post-commit  Show only post-commit hook traces`,
+  entire trace                     Show the most recent hook trace
+  entire trace --last 5            Show the last 5 hook traces
+  entire trace --hook post-commit  Show only post-commit hook traces`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if last < 1 {
 				return fmt.Errorf("--last must be at least 1, got %d", last)
@@ -40,12 +40,12 @@ Examples:
 
 			logFile := filepath.Join(repoRoot, logging.LogsDir, "entire.log")
 
-			entries, err := collectPerfEntries(logFile, last, hookFilter)
+			entries, err := collectTraceEntries(logFile, last, hookFilter)
 			if err != nil {
-				return fmt.Errorf("collecting perf entries: %w", err)
+				return fmt.Errorf("collecting trace entries: %w", err)
 			}
 
-			renderPerfEntries(cmd.OutOrStdout(), entries)
+			renderTraceEntries(cmd.OutOrStdout(), entries)
 			return nil
 		},
 	}

@@ -12,17 +12,17 @@ import (
 
 const testOpPostCommit = "post-commit"
 
-func TestParsePerfEntry(t *testing.T) {
+func TestParseTraceEntry(t *testing.T) {
 	t.Parallel()
 
-	t.Run("valid perf entry", func(t *testing.T) {
+	t.Run("valid trace entry", func(t *testing.T) {
 		t.Parallel()
 
 		line := `{"time":"2026-01-15T10:30:00.000Z","level":"DEBUG","msg":"perf","component":"perf","op":"post-commit","duration_ms":150,"error":true,"steps.load_session_ms":50,"steps.save_checkpoint_ms":80,"steps.save_checkpoint_err":true}`
 
-		entry := parsePerfEntry(line)
+		entry := parseTraceEntry(line)
 		if entry == nil {
-			t.Fatal("parsePerfEntry returned nil for valid perf entry")
+			t.Fatal("parseTraceEntry returned nil for valid trace entry")
 		}
 
 		if entry.Op != testOpPostCommit {
@@ -74,23 +74,23 @@ func TestParsePerfEntry(t *testing.T) {
 
 		line := `{"time":"2026-01-15T10:30:00.000Z","level":"INFO","msg":"hook invoked","component":"lifecycle","hook":"post-commit"}`
 
-		entry := parsePerfEntry(line)
+		entry := parseTraceEntry(line)
 		if entry != nil {
-			t.Errorf("parsePerfEntry returned %+v for non-perf entry, want nil", entry)
+			t.Errorf("parseTraceEntry returned %+v for non-perf entry, want nil", entry)
 		}
 	})
 
 	t.Run("invalid JSON returns nil", func(t *testing.T) {
 		t.Parallel()
 
-		entry := parsePerfEntry("this is not json at all{{{")
+		entry := parseTraceEntry("this is not json at all{{{")
 		if entry != nil {
-			t.Errorf("parsePerfEntry returned %+v for invalid JSON, want nil", entry)
+			t.Errorf("parseTraceEntry returned %+v for invalid JSON, want nil", entry)
 		}
 	})
 }
 
-func TestCollectPerfEntries(t *testing.T) {
+func TestCollectTraceEntries(t *testing.T) {
 	t.Parallel()
 
 	// Fixture: 4 lines — 2 prepare-commit-msg, 1 non-perf, 1 post-commit
@@ -105,7 +105,7 @@ func TestCollectPerfEntries(t *testing.T) {
 	writeFixture := func(t *testing.T) string {
 		t.Helper()
 		dir := t.TempDir()
-		p := filepath.Join(dir, "perf.jsonl")
+		p := filepath.Join(dir, "trace.jsonl")
 		if err := os.WriteFile(p, []byte(fixtureContent), 0o644); err != nil {
 			t.Fatalf("failed to write fixture: %v", err)
 		}
@@ -116,9 +116,9 @@ func TestCollectPerfEntries(t *testing.T) {
 		t.Parallel()
 		logFile := writeFixture(t)
 
-		entries, err := collectPerfEntries(logFile, 2, "")
+		entries, err := collectTraceEntries(logFile, 2, "")
 		if err != nil {
-			t.Fatalf("collectPerfEntries returned error: %v", err)
+			t.Fatalf("collectTraceEntries returned error: %v", err)
 		}
 
 		if len(entries) != 2 {
@@ -144,9 +144,9 @@ func TestCollectPerfEntries(t *testing.T) {
 		t.Parallel()
 		logFile := writeFixture(t)
 
-		entries, err := collectPerfEntries(logFile, 10, testOpPostCommit)
+		entries, err := collectTraceEntries(logFile, 10, testOpPostCommit)
 		if err != nil {
-			t.Fatalf("collectPerfEntries returned error: %v", err)
+			t.Fatalf("collectTraceEntries returned error: %v", err)
 		}
 
 		if len(entries) != 1 {
@@ -160,7 +160,7 @@ func TestCollectPerfEntries(t *testing.T) {
 	t.Run("file not found returns empty", func(t *testing.T) {
 		t.Parallel()
 
-		entries, err := collectPerfEntries("/nonexistent/path/perf.jsonl", 10, "")
+		entries, err := collectTraceEntries("/nonexistent/path/trace.jsonl", 10, "")
 		if err != nil {
 			t.Fatalf("expected nil error for missing file, got %v", err)
 		}
@@ -170,15 +170,15 @@ func TestCollectPerfEntries(t *testing.T) {
 	})
 }
 
-func TestRenderPerfEntries(t *testing.T) {
+func TestRenderTraceEntries(t *testing.T) {
 	t.Parallel()
 
-	entries := []perfEntry{
+	entries := []traceEntry{
 		{
 			Op:         "post-commit",
 			DurationMs: 250,
 			Time:       time.Date(2026, 1, 15, 10, 30, 0, 0, time.UTC),
-			Steps: []perfStep{
+			Steps: []traceStep{
 				{Name: "load_session", DurationMs: 50, Error: false},
 				{Name: "save_checkpoint", DurationMs: 80, Error: true},
 				{Name: "condense", DurationMs: 120, Error: false},
@@ -187,7 +187,7 @@ func TestRenderPerfEntries(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	renderPerfEntries(&buf, entries)
+	renderTraceEntries(&buf, entries)
 	out := buf.String()
 
 	// Verify header contains op name, total duration, and timestamp
@@ -243,14 +243,14 @@ func TestRenderPerfEntries(t *testing.T) {
 	}
 }
 
-func TestParsePerfEntry_WithSubSteps(t *testing.T) {
+func TestParseTraceEntry_WithSubSteps(t *testing.T) {
 	t.Parallel()
 
 	line := `{"time":"2026-01-15T10:30:00Z","level":"DEBUG","msg":"perf","op":"post-commit","duration_ms":350,"steps.process_sessions_ms":300,"steps.process_sessions.0_ms":100,"steps.process_sessions.1_ms":200,"steps.process_sessions.1_err":true,"steps.cleanup_ms":50}`
 
-	entry := parsePerfEntry(line)
+	entry := parseTraceEntry(line)
 	if entry == nil {
-		t.Fatal("parsePerfEntry returned nil")
+		t.Fatal("parseTraceEntry returned nil")
 	}
 
 	if len(entry.Steps) != 2 {
@@ -295,16 +295,16 @@ func TestParsePerfEntry_WithSubSteps(t *testing.T) {
 	}
 }
 
-func TestParsePerfEntry_SubStepNumericOrdering(t *testing.T) {
+func TestParseTraceEntry_SubStepNumericOrdering(t *testing.T) {
 	t.Parallel()
 
-	// Build a perf entry with 12 sub-steps to verify numeric (not lexicographic) ordering.
+	// Build a trace entry with 12 sub-steps to verify numeric (not lexicographic) ordering.
 	// Lexicographic sort would place .10 and .11 before .2.
 	line := `{"time":"2026-01-15T10:30:00Z","level":"DEBUG","msg":"perf","op":"post-commit","duration_ms":1000,"steps.loop_ms":900,"steps.loop.0_ms":10,"steps.loop.1_ms":20,"steps.loop.2_ms":30,"steps.loop.3_ms":40,"steps.loop.4_ms":50,"steps.loop.5_ms":60,"steps.loop.6_ms":70,"steps.loop.7_ms":80,"steps.loop.8_ms":90,"steps.loop.9_ms":100,"steps.loop.10_ms":110,"steps.loop.11_ms":120}`
 
-	entry := parsePerfEntry(line)
+	entry := parseTraceEntry(line)
 	if entry == nil {
-		t.Fatal("parsePerfEntry returned nil")
+		t.Fatal("parseTraceEntry returned nil")
 	}
 
 	if len(entry.Steps) != 1 {
@@ -328,15 +328,15 @@ func TestParsePerfEntry_SubStepNumericOrdering(t *testing.T) {
 	}
 }
 
-func TestRenderPerfEntries_WithSubSteps(t *testing.T) {
+func TestRenderTraceEntries_WithSubSteps(t *testing.T) {
 	t.Parallel()
 
-	entries := []perfEntry{
+	entries := []traceEntry{
 		{
 			Op:         "post-commit",
 			DurationMs: 350,
-			Steps: []perfStep{
-				{Name: "process_sessions", DurationMs: 300, SubSteps: []perfStep{
+			Steps: []traceStep{
+				{Name: "process_sessions", DurationMs: 300, SubSteps: []traceStep{
 					{Name: "process_sessions.0", DurationMs: 100},
 					{Name: "process_sessions.1", DurationMs: 200, Error: true},
 				}},
@@ -346,7 +346,7 @@ func TestRenderPerfEntries_WithSubSteps(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	renderPerfEntries(&buf, entries)
+	renderTraceEntries(&buf, entries)
 	out := buf.String()
 
 	// Parent step appears
@@ -384,7 +384,7 @@ func TestRenderPerfEntries_WithSubSteps(t *testing.T) {
 	}
 }
 
-func TestPerfCmd_InvalidLastFlag(t *testing.T) {
+func TestTraceCmd_InvalidLastFlag(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -400,7 +400,7 @@ func TestPerfCmd_InvalidLastFlag(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			cmd := newPerfCmd()
+			cmd := newTraceCmd()
 			cmd.SetArgs(tt.args)
 			cmd.SilenceUsage = true
 
@@ -415,14 +415,14 @@ func TestPerfCmd_InvalidLastFlag(t *testing.T) {
 	}
 }
 
-func TestRenderPerfEntries_Empty(t *testing.T) {
+func TestRenderTraceEntries_Empty(t *testing.T) {
 	t.Parallel()
 
 	var buf bytes.Buffer
-	renderPerfEntries(&buf, nil)
+	renderTraceEntries(&buf, nil)
 	out := buf.String()
 
-	if !strings.Contains(out, "No perf entries found.") {
-		t.Errorf("expected 'No perf entries found.' message, got:\n%s", out)
+	if !strings.Contains(out, "No trace entries found.") {
+		t.Errorf("expected 'No trace entries found.' message, got:\n%s", out)
 	}
 }
