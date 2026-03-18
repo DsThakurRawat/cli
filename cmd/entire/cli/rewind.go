@@ -14,6 +14,7 @@ import (
 	"unicode"
 
 	agentpkg "github.com/entireio/cli/cmd/entire/cli/agent"
+	"github.com/entireio/cli/cmd/entire/cli/agent/external"
 	"github.com/entireio/cli/cmd/entire/cli/agent/types"
 	"github.com/entireio/cli/cmd/entire/cli/checkpoint"
 	"github.com/entireio/cli/cmd/entire/cli/checkpoint/id"
@@ -62,6 +63,9 @@ your agent's context.`,
 			}
 
 			ctx := cmd.Context()
+
+			// Discover external agents so checkpoints from external agents can be resolved.
+			external.DiscoverAndRegister(ctx)
 			w := cmd.OutOrStdout()
 			errW := cmd.ErrOrStderr()
 			if listFlag {

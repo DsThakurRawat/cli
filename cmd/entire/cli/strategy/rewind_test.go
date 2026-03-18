@@ -11,6 +11,7 @@ import (
 	"github.com/entireio/cli/cmd/entire/cli/agent"
 	_ "github.com/entireio/cli/cmd/entire/cli/agent/claudecode" // Register agent for ResolveAgentForRewind tests
 	_ "github.com/entireio/cli/cmd/entire/cli/agent/geminicli"  // Register agent for ResolveAgentForRewind tests
+	"github.com/entireio/cli/cmd/entire/cli/agent/types"
 	"github.com/entireio/cli/cmd/entire/cli/paths"
 	"github.com/stretchr/testify/require"
 
@@ -240,6 +241,28 @@ func TestResolveAgentForRewind(t *testing.T) {
 		_, err := ResolveAgentForRewind("Nonexistent Agent")
 		if err == nil {
 			t.Error("expected error for unknown agent type")
+		}
+	})
+
+	t.Run("dynamically registered agent resolves by type", func(t *testing.T) {
+		t.Parallel()
+
+		// Simulate what external.DiscoverAndRegister does: register an agent at runtime.
+		testName := types.AgentName("test-external-kiro")
+		testType := types.AgentType("Kiro")
+		agent.Register(testName, func() agent.Agent {
+			return &fakeExternalAgent{name: testName, agentType: testType}
+		})
+
+		ag, err := ResolveAgentForRewind(testType)
+		if err != nil {
+			t.Fatalf("expected dynamically registered agent to resolve, got error: %v", err)
+		}
+		if ag.Type() != testType {
+			t.Errorf("Type() = %q, want %q", ag.Type(), testType)
+		}
+		if ag.Name() != testName {
+			t.Errorf("Name() = %q, want %q", ag.Name(), testName)
 		}
 	})
 }
@@ -501,3 +524,30 @@ func TestShadowStrategy_Rewind_FromRepoRoot(t *testing.T) {
 		t.Errorf("README.md content = %q, want %q", string(content), "# Test\n")
 	}
 }
+
+// fakeExternalAgent is a minimal Agent implementation for testing dynamic registration.
+// It simulates an external agent that was discovered and registered at runtime.
+type fakeExternalAgent struct {
+	name      types.AgentName
+	agentType types.AgentType
+}
+
+func (f *fakeExternalAgent) Name() types.AgentName                          { return f.name }
+func (f *fakeExternalAgent) Type() types.AgentType                          { return f.agentType }
+func (f *fakeExternalAgent) Description() string                            { return "Fake external agent" }
+func (f *fakeExternalAgent) IsPreview() bool                                { return false }
+func (f *fakeExternalAgent) DetectPresence(_ context.Context) (bool, error) { return false, nil }
+func (f *fakeExternalAgent) ProtectedDirs() []string                        { return nil }
+func (f *fakeExternalAgent) ReadTranscript(_ string) ([]byte, error)        { return nil, nil }
+func (f *fakeExternalAgent) ChunkTranscript(_ context.Context, _ []byte, _ int) ([][]byte, error) {
+	return nil, nil
+}
+func (f *fakeExternalAgent) ReassembleTranscript(_ [][]byte) ([]byte, error) { return nil, nil }
+func (f *fakeExternalAgent) GetSessionID(_ *agent.HookInput) string          { return "" }
+func (f *fakeExternalAgent) GetSessionDir(_ string) (string, error)          { return "", nil }
+func (f *fakeExternalAgent) ResolveSessionFile(_, _ string) string           { return "" }
+func (f *fakeExternalAgent) ReadSession(_ *agent.HookInput) (*agent.AgentSession, error) {
+	return nil, nil //nolint:nilnil // test stub
+}
+func (f *fakeExternalAgent) WriteSession(_ context.Context, _ *agent.AgentSession) error { return nil }
+func (f *fakeExternalAgent) FormatResumeCommand(_ string) string                         { return "" }

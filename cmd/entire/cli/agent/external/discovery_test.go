@@ -333,13 +333,13 @@ type fakeBuiltInAgent struct {
 	name types.AgentName
 }
 
-func (f *fakeBuiltInAgent) Name() types.AgentName                           { return f.name }
-func (f *fakeBuiltInAgent) Type() types.AgentType                           { return "fake" }
-func (f *fakeBuiltInAgent) Description() string                             { return "fake" }
-func (f *fakeBuiltInAgent) IsPreview() bool                                 { return false }
-func (f *fakeBuiltInAgent) DetectPresence(context.Context) (bool, error)    { return false, nil }
-func (f *fakeBuiltInAgent) ProtectedDirs() []string                         { return nil }
-func (f *fakeBuiltInAgent) ReadTranscript(string) ([]byte, error)           { return nil, nil }
+func (f *fakeBuiltInAgent) Name() types.AgentName                        { return f.name }
+func (f *fakeBuiltInAgent) Type() types.AgentType                        { return "fake" }
+func (f *fakeBuiltInAgent) Description() string                          { return "fake" }
+func (f *fakeBuiltInAgent) IsPreview() bool                              { return false }
+func (f *fakeBuiltInAgent) DetectPresence(context.Context) (bool, error) { return false, nil }
+func (f *fakeBuiltInAgent) ProtectedDirs() []string                      { return nil }
+func (f *fakeBuiltInAgent) ReadTranscript(string) ([]byte, error)        { return nil, nil }
 func (f *fakeBuiltInAgent) ChunkTranscript(context.Context, []byte, int) ([][]byte, error) {
 	return nil, nil
 }

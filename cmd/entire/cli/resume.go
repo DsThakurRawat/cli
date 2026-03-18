@@ -11,6 +11,7 @@ import (
 	"sort"
 
 	"github.com/entireio/cli/cmd/entire/cli/agent"
+	"github.com/entireio/cli/cmd/entire/cli/agent/external"
 	"github.com/entireio/cli/cmd/entire/cli/checkpoint"
 	"github.com/entireio/cli/cmd/entire/cli/checkpoint/id"
 	"github.com/entireio/cli/cmd/entire/cli/logging"
@@ -50,6 +51,10 @@ most recent commit with a checkpoint.  You'll be prompted to confirm resuming in
 			if checkDisabledGuard(cmd.Context(), cmd.OutOrStdout()) {
 				return nil
 			}
+
+			// Discover external agents so checkpoints from external agents can be resolved.
+			external.DiscoverAndRegister(cmd.Context())
+
 			return runResume(cmd.Context(), cmd, args[0], force)
 		},
 	}
