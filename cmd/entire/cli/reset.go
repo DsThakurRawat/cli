@@ -21,22 +21,23 @@ func newResetCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			ctx := cmd.Context()
 
+			// Check if in git repository before initializing logging,
+			// to avoid creating .entire/logs in arbitrary directories.
+			if _, err := paths.WorktreeRoot(ctx); err != nil {
+				return errors.New("not a git repository")
+			}
+
 			// Initialize logging
 			logging.SetLogLevelGetter(GetLogLevel)
 			if err := logging.Init(ctx, ""); err == nil {
 				defer logging.Close()
 			}
 
-			// Check if in git repository
-			if _, err := paths.WorktreeRoot(ctx); err != nil {
-				return errors.New("not a git repository")
-			}
-
 			strat := GetStrategy(ctx)
 
 			// Handle --session flag: delegate to clean's session logic
 			if sessionFlag != "" {
-				return runCleanSession(ctx, cmd, strat, sessionFlag, forceFlag, false)
+				return runCleanSession(ctx, cmd, strat, sessionFlag, forceFlag, false, "Reset", "reset")
 			}
 
 			// Check for active sessions before bulk reset
@@ -78,7 +79,7 @@ func newResetCmd() *cobra.Command {
 				}
 			}
 
-			if err := strat.Reset(ctx); err != nil {
+			if err := strat.Reset(ctx, cmd.ErrOrStderr()); err != nil {
 				return fmt.Errorf("reset failed: %w", err)
 			}
 

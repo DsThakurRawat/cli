@@ -37,8 +37,9 @@ By default, cleans session state and shadow branches for the current HEAD:
 Use --all to clean all orphaned Entire data across the repository:
   - Orphaned shadow branches
   - Orphaned session state files
+  - Orphaned checkpoint entries on entire/checkpoints/v1
   - Temporary files (.entire/tmp/)
-  - Checkpoint metadata is never deleted
+The entire/checkpoints/v1 branch itself is preserved.
 
 Use --session <id> to clean a specific session only.
 
@@ -69,7 +70,7 @@ Use --dry-run to preview what would be deleted without prompting.`,
 
 			if sessionFlag != "" {
 				strat := GetStrategy(ctx)
-				return runCleanSession(ctx, cmd, strat, sessionFlag, forceFlag, dryRunFlag)
+				return runCleanSession(ctx, cmd, strat, sessionFlag, forceFlag, dryRunFlag, "Clean", "cleaned")
 			}
 
 			return runCleanCurrentHead(ctx, cmd, forceFlag, dryRunFlag)
@@ -136,7 +137,7 @@ func runCleanCurrentHead(ctx context.Context, cmd *cobra.Command, force, dryRun 
 		}
 	}
 
-	if err := strat.Reset(ctx); err != nil {
+	if err := strat.Reset(ctx, cmd.ErrOrStderr()); err != nil {
 		return fmt.Errorf("clean failed: %w", err)
 	}
 
@@ -201,8 +202,10 @@ func previewCurrentHead(ctx context.Context, w io.Writer) error {
 	return nil
 }
 
-// runCleanSession handles the --session flag: clean a single session.
-func runCleanSession(ctx context.Context, cmd *cobra.Command, strat *strategy.ManualCommitStrategy, sessionID string, force, dryRun bool) error {
+// runCleanSession handles the --session flag: clean/reset a single session.
+// actionVerb is the capitalized verb (e.g., "Clean" or "Reset") and pastVerb
+// is the past tense (e.g., "cleaned" or "reset") used in user-facing messages.
+func runCleanSession(ctx context.Context, cmd *cobra.Command, strat *strategy.ManualCommitStrategy, sessionID string, force, dryRun bool, actionVerb, pastVerb string) error {
 	// Verify the session exists
 	state, err := strategy.LoadSessionState(ctx, sessionID)
 	if err != nil {
@@ -214,14 +217,14 @@ func runCleanSession(ctx context.Context, cmd *cobra.Command, strat *strategy.Ma
 
 	if dryRun {
 		w := cmd.OutOrStdout()
-		fmt.Fprintf(w, "Would clean session %s (phase: %s, checkpoints: %d)\n", sessionID, state.Phase, state.StepCount)
+		fmt.Fprintf(w, "Would %s session %s (phase: %s, checkpoints: %d)\n", strings.ToLower(actionVerb), sessionID, state.Phase, state.StepCount)
 		return nil
 	}
 
 	if !force {
 		var confirmed bool
 
-		title := fmt.Sprintf("Clean session %s?", sessionID)
+		title := fmt.Sprintf("%s session %s?", actionVerb, sessionID)
 		description := fmt.Sprintf("Phase: %s, Checkpoints: %d", state.Phase, state.StepCount)
 
 		form := NewAccessibleForm(
@@ -245,11 +248,11 @@ func runCleanSession(ctx context.Context, cmd *cobra.Command, strat *strategy.Ma
 		}
 	}
 
-	if err := strat.ResetSession(ctx, sessionID); err != nil {
-		return fmt.Errorf("clean session failed: %w", err)
+	if err := strat.ResetSession(ctx, cmd.ErrOrStderr(), sessionID); err != nil {
+		return fmt.Errorf("%s session failed: %w", strings.ToLower(actionVerb), err)
 	}
 
-	fmt.Fprintf(cmd.OutOrStdout(), "Session %s has been cleaned. File changes remain in the working directory.\n", sessionID)
+	fmt.Fprintf(cmd.OutOrStdout(), "Session %s has been %s. File changes remain in the working directory.\n", sessionID, pastVerb)
 	return nil
 }
 
