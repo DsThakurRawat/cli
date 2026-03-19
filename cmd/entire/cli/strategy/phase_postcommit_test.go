@@ -340,7 +340,8 @@ func TestPostCommit_IdleSession_NoNewContent_PreservesBaseCommit(t *testing.T) {
 	require.NoError(t, err)
 	state.Phase = session.PhaseIdle
 	state.LastInteractionTime = nil
-	state.CheckpointTranscriptStart = 2 // Transcript has exactly 2 lines
+	state.CheckpointTranscriptStart = 2                                   // Transcript has exactly 2 lines
+	state.CheckpointTranscriptSize = shadowTranscriptSize(t, repo, state) // Match blob size on shadow branch
 	require.NoError(t, s.saveSessionState(context.Background(), state))
 
 	// Record shadow branch name and original BaseCommit
@@ -375,6 +376,53 @@ func TestPostCommit_IdleSession_NoNewContent_PreservesBaseCommit(t *testing.T) {
 	// StepCount should be unchanged
 	assert.Equal(t, originalStepCount, state.StepCount,
 		"StepCount should be unchanged when no condensation happened")
+}
+
+// TestPostCommit_LegacySession_NoTranscriptSize_Condenses verifies that a session
+// created by an older CLI (has CheckpointTranscriptStart but no CheckpointTranscriptSize)
+// conservatively condenses rather than silently skipping. After condensation,
+// CheckpointTranscriptSize is populated so future commits use the fast path.
+func TestPostCommit_LegacySession_NoTranscriptSize_Condenses(t *testing.T) {
+	dir := setupGitRepo(t)
+	t.Chdir(dir)
+
+	repo, err := git.PlainOpen(dir)
+	require.NoError(t, err)
+
+	s := &ManualCommitStrategy{}
+	sessionID := "test-postcommit-legacy-no-size"
+
+	// Initialize session and save a checkpoint
+	setupSessionWithCheckpoint(t, s, repo, dir, sessionID)
+
+	// Simulate a legacy session: has line count but no byte size (old CLI version).
+	// The transcript has 2 lines and hasn't changed, but without CheckpointTranscriptSize
+	// the new code can't verify that — it should conservatively condense.
+	state, err := s.loadSessionState(context.Background(), sessionID)
+	require.NoError(t, err)
+	state.Phase = session.PhaseIdle
+	state.LastInteractionTime = nil
+	state.CheckpointTranscriptStart = 2 // Set by old CLI after condensation
+	state.CheckpointTranscriptSize = 0  // Not set by old CLI (field didn't exist)
+	require.NoError(t, s.saveSessionState(context.Background(), state))
+
+	// Create a commit with the checkpoint trailer
+	commitWithCheckpointTrailer(t, repo, dir, "a1b2c3d4e5f6")
+
+	// Run PostCommit
+	err = s.PostCommit(context.Background())
+	require.NoError(t, err)
+
+	// Legacy session should have been condensed (conservative assumption)
+	_, err = repo.Reference(plumbing.NewBranchReferenceName(paths.MetadataBranchName), true)
+	require.NoError(t, err,
+		"entire/checkpoints/v1 should exist — legacy session should condense conservatively")
+
+	// After condensation, CheckpointTranscriptSize should now be populated
+	state, err = s.loadSessionState(context.Background(), sessionID)
+	require.NoError(t, err)
+	assert.Positive(t, state.CheckpointTranscriptSize,
+		"CheckpointTranscriptSize should be populated after condensation (self-healing)")
 }
 
 // TestPostCommit_EndedSession_FilesTouched_Condenses verifies that an ENDED
@@ -459,7 +507,8 @@ func TestPostCommit_EndedSession_FilesTouched_NoNewContent(t *testing.T) {
 	state.Phase = session.PhaseEnded
 	state.EndedAt = &now
 	state.FilesTouched = []string{"test.txt"}
-	state.CheckpointTranscriptStart = 2 // Transcript has exactly 2 lines
+	state.CheckpointTranscriptStart = 2                                   // Transcript has exactly 2 lines
+	state.CheckpointTranscriptSize = shadowTranscriptSize(t, repo, state) // Match blob size on shadow branch
 	require.NoError(t, s.saveSessionState(context.Background(), state))
 
 	// Record shadow branch name, original BaseCommit, and StepCount
@@ -1358,6 +1407,23 @@ func setupSessionWithCheckpoint(t *testing.T, s *ManualCommitStrategy, _ *git.Re
 		AuthorEmail:    "test@test.com",
 	})
 	require.NoError(t, err, "SaveStep should succeed to create shadow branch content")
+}
+
+// shadowTranscriptSize returns the byte size of the transcript blob on the shadow branch.
+// Used in tests to set CheckpointTranscriptSize without hardcoding sizes.
+func shadowTranscriptSize(t *testing.T, repo *git.Repository, state *SessionState) int64 {
+	t.Helper()
+	shadowBranch := getShadowBranchNameForCommit(state.BaseCommit, state.WorktreeID)
+	ref, err := repo.Reference(plumbing.NewBranchReferenceName(shadowBranch), true)
+	require.NoError(t, err)
+	commit, err := repo.CommitObject(ref.Hash())
+	require.NoError(t, err)
+	tree, err := commit.Tree()
+	require.NoError(t, err)
+	metadataDir := paths.EntireMetadataDir + "/" + state.SessionID
+	size, err := tree.Size(metadataDir + "/" + paths.TranscriptFileName)
+	require.NoError(t, err)
+	return size
 }
 
 // commitWithCheckpointTrailer creates a commit on the current branch with the

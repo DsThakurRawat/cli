@@ -100,6 +100,11 @@ type State struct {
 	// for checkpoint condensation: "everything since last checkpoint".
 	CheckpointTranscriptStart int `json:"checkpoint_transcript_start,omitempty"`
 
+	// CheckpointTranscriptSize is the byte size of the transcript at last condensation.
+	// Used for fast "has new content?" checks in PostCommit: compare the git blob size
+	// against this value without reading the full transcript content.
+	CheckpointTranscriptSize int64 `json:"checkpoint_transcript_size,omitempty"`
+
 	// Deprecated: CondensedTranscriptLines is replaced by CheckpointTranscriptStart.
 	// Kept for backward compatibility with existing state files.
 	// Use NormalizeAfterLoad() to migrate.

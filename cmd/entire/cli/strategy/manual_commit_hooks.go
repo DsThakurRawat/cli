@@ -1116,6 +1116,7 @@ func (s *ManualCommitStrategy) condenseAndUpdateState(
 	state.AttributionBaseCommit = newHead
 	state.StepCount = 0
 	state.CheckpointTranscriptStart = result.TotalTranscriptLines
+	state.CheckpointTranscriptSize = int64(len(result.Transcript))
 
 	// Clear attribution tracking — condensation already used these values
 	state.PromptAttributions = nil
@@ -1301,21 +1302,19 @@ func (s *ManualCommitStrategy) sessionHasNewContent(ctx context.Context, repo *g
 		}
 	}
 
-	// Look for transcript file
+	// Look for transcript file — use blob size for fast growth check when possible.
+	// This avoids reading the full transcript content (potentially tens of MB) just
+	// to count lines, which was the main source of PostCommit latency with many sessions.
 	metadataDir := paths.EntireMetadataDir + "/" + state.SessionID
-	var transcriptLines int
 	var hasTranscriptFile bool
+	var transcriptBlobSize int64
 
-	if file, fileErr := tree.File(metadataDir + "/" + paths.TranscriptFileName); fileErr == nil {
+	if size, sizeErr := tree.Size(metadataDir + "/" + paths.TranscriptFileName); sizeErr == nil {
 		hasTranscriptFile = true
-		if content, contentErr := file.Contents(); contentErr == nil {
-			transcriptLines = countTranscriptItems(state.AgentType, content)
-		}
-	} else if file, fileErr := tree.File(metadataDir + "/" + paths.TranscriptFileNameLegacy); fileErr == nil {
+		transcriptBlobSize = size
+	} else if size, sizeErr := tree.Size(metadataDir + "/" + paths.TranscriptFileNameLegacy); sizeErr == nil {
 		hasTranscriptFile = true
-		if content, contentErr := file.Contents(); contentErr == nil {
-			transcriptLines = countTranscriptItems(state.AgentType, content)
-		}
+		transcriptBlobSize = size
 	}
 
 	// If shadow branch exists but has no transcript (e.g., carry-forward from mid-session commit),
@@ -1359,13 +1358,28 @@ func (s *ManualCommitStrategy) sessionHasNewContent(ctx context.Context, repo *g
 	// For PostCommit context, stagedFiles is nil/empty (files already committed),
 	// so we return true and let the caller do the overlap check via filesOverlapWithContent.
 
-	hasTranscriptGrowth := transcriptLines > state.CheckpointTranscriptStart
+	// Fast path: compare blob size against stored size from last condensation.
+	// This avoids reading the full transcript content just to count items.
+	var hasTranscriptGrowth bool
+	switch {
+	case state.CheckpointTranscriptSize > 0:
+		hasTranscriptGrowth = transcriptBlobSize > state.CheckpointTranscriptSize
+	case state.CheckpointTranscriptStart > 0:
+		// Legacy session: condensed at least once (has line count) but no size tracking.
+		// Cannot safely compare sizes — conservatively assume growth so condensation
+		// can do the full content check. After one condensation with the new CLI,
+		// CheckpointTranscriptSize will be populated and this path won't be hit again.
+		hasTranscriptGrowth = true
+	default:
+		// Never condensed (CheckpointTranscriptStart == 0): any content means growth.
+		hasTranscriptGrowth = transcriptBlobSize > 0
+	}
 	hasUncommittedFiles := len(state.FilesTouched) > 0
 
-	logging.Debug(logCtx, "sessionHasNewContent: transcript check",
+	logging.Debug(logCtx, "sessionHasNewContent: transcript size check",
 		slog.String("session_id", state.SessionID),
-		slog.Int("transcript_lines", transcriptLines),
-		slog.Int("checkpoint_transcript_start", state.CheckpointTranscriptStart),
+		slog.Int64("transcript_blob_size", transcriptBlobSize),
+		slog.Int64("checkpoint_transcript_size", state.CheckpointTranscriptSize),
 		slog.Bool("has_transcript_growth", hasTranscriptGrowth),
 		slog.Bool("has_uncommitted_files", hasUncommittedFiles),
 	)
@@ -2389,6 +2403,7 @@ func (s *ManualCommitStrategy) carryForwardToNewShadowBranch(
 	// but this would complicate checkpoint retrieval and require careful tracking of dependencies.
 	state.StepCount = 1
 	state.CheckpointTranscriptStart = 0
+	state.CheckpointTranscriptSize = 0
 	state.LastCheckpointID = ""
 	// NOTE: TurnCheckpointIDs is intentionally NOT cleared here. Those checkpoint
 	// IDs from earlier in the turn still need finalization with the full transcript
