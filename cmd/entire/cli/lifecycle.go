@@ -308,7 +308,6 @@ func handleLifecycleTurnEnd(ctx context.Context, ag agent.Agent, event *agent.Ev
 	// Return nil (not an error) so the hook exits 0 — agents treat non-zero
 	// exit codes as hook failures. The user was already warned at session start.
 	if repo, err := strategy.OpenRepository(ctx); err == nil && strategy.IsEmptyRepository(repo) {
-		prepareSpan.RecordError(strategy.ErrEmptyRepository)
 		prepareSpan.End()
 		logging.Info(logCtx, "skipping checkpoint - will activate after first commit")
 		return nil
