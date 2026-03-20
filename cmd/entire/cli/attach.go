@@ -61,6 +61,12 @@ Supported agents: claude-code, gemini, opencode, cursor, copilot-cli, factoryai-
 }
 
 func runAttach(ctx context.Context, w io.Writer, sessionID string, agentName types.AgentName, force bool) error {
+	// Initialize structured logger so logging.Warn/Info write to .entire/logs/ not stderr.
+	if err := logging.Init(ctx, sessionID); err != nil {
+		// Init failed — logging will use stderr fallback, non-fatal.
+		_ = err
+	}
+
 	logCtx := logging.WithComponent(ctx, "attach")
 
 	existingState, err := validateAttachPreconditions(ctx, sessionID)
@@ -331,6 +337,9 @@ func resolveAndValidateTranscript(ctx context.Context, sessionID string, ag agen
 	if err != nil {
 		return "", fmt.Errorf("failed to resolve transcript path: %w", err)
 	}
+	// Some agents write transcripts asynchronously. PrepareTranscript ensures the
+	// file is fully flushed before we read it. For finished sessions the file is
+	// typically stale (>2 min old) and the call returns immediately.
 	if preparer, ok := agent.AsTranscriptPreparer(ag); ok {
 		if prepErr := preparer.PrepareTranscript(ctx, transcriptPath); prepErr != nil {
 			logging.Debug(ctx, "PrepareTranscript failed (best-effort)", "error", prepErr)
