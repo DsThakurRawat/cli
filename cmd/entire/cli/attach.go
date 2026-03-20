@@ -41,8 +41,10 @@ session for future tracking. Use this when hooks failed to fire or weren't
 installed when the session started.
 
 Supported agents: claude-code, gemini, opencode, cursor, copilot-cli, factoryai-droid`,
-		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if len(args) != 1 {
+				return cmd.Help()
+			}
 			if checkDisabledGuard(cmd.Context(), cmd.OutOrStdout()) {
 				return nil
 			}

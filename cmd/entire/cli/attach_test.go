@@ -30,8 +30,11 @@ func TestAttach_MissingSessionID(t *testing.T) {
 	cmd.SetErr(&out)
 
 	err := cmd.Execute()
-	if err == nil {
-		t.Fatal("expected error for missing session ID")
+	if err != nil {
+		t.Fatalf("expected help output, got error: %v", err)
+	}
+	if !strings.Contains(out.String(), "attach <session-id>") {
+		t.Errorf("expected help output containing usage, got: %s", out.String())
 	}
 }
 
