@@ -1,6 +1,14 @@
 name: E2E Triage
 
 on:
+  push:
+    branches:
+      - alisha/e2e-triage-ci-job
+    paths:
+      - .github/workflows/e2e-triage.yml
+      - scripts/run-e2e-triage.sh
+      - cmd/e2e-triage-dispatch/**
+      - internal/slacktriage/**
   repository_dispatch:
     types:
       - slack_e2e_triage_requested
@@ -60,7 +68,14 @@ jobs:
             printf '%s' "$1" | jq -R -s -c 'split(",") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0))'
           }
 
-          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+          if [ "$EVENT_NAME" = "push" ]; then
+            # Push-triggered test mode: use current SHA and vogon canary agent
+            run_url="${GITHUB_SERVER_URL}/${REPO_NAME}/actions/runs/${GITHUB_RUN_ID}"
+            sha="${GITHUB_SHA}"
+            agents_json='["vogon"]'
+            slack_channel=""
+            slack_thread_ts=""
+          elif [ "$EVENT_NAME" = "workflow_dispatch" ]; then
             run_url="$RUN_URL_INPUT"
             sha="${SHA_INPUT:-}"
             slack_channel="${SLACK_CHANNEL_INPUT:-}"
