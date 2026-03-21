@@ -227,6 +227,7 @@ jobs:
         run: |
           set -euo pipefail
 
+          mkdir -p "$(dirname "$PLAN_FILE")"
           jq -r '[.[] | select(.type == "assistant") | .message.content[]
             | select(.type == "text") | .text] | join("\n")' \
             "$EXECUTION_FILE" > "$PLAN_FILE"
