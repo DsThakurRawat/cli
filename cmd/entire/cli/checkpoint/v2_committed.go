@@ -42,6 +42,137 @@ func (s *V2GitStore) WriteCommitted(ctx context.Context, opts WriteCommittedOpti
 	return nil
 }
 
+// UpdateCommitted replaces the prompts and/or transcript for an existing v2 checkpoint.
+// Called at stop time to finalize checkpoints with the complete session transcript.
+//
+// On /main: replaces prompts (transcript is not stored there).
+// On /full/current: replaces the raw transcript (if provided).
+//
+// Returns ErrCheckpointNotFound if the checkpoint doesn't exist on /main.
+func (s *V2GitStore) UpdateCommitted(ctx context.Context, opts UpdateCommittedOptions) error {
+	if opts.CheckpointID.IsEmpty() {
+		return errors.New("invalid update options: checkpoint ID is required")
+	}
+
+	sessionIndex, err := s.updateCommittedMain(ctx, opts)
+	if err != nil {
+		return fmt.Errorf("v2 /main update failed: %w", err)
+	}
+
+	if len(opts.Transcript) > 0 {
+		if err := s.updateCommittedFullTranscript(ctx, opts, sessionIndex); err != nil {
+			return fmt.Errorf("v2 /full/current update failed: %w", err)
+		}
+	}
+
+	return nil
+}
+
+// updateCommittedMain updates prompts on the /main ref for an existing checkpoint.
+// Returns the session index for coordination with /full/current.
+func (s *V2GitStore) updateCommittedMain(ctx context.Context, opts UpdateCommittedOptions) (int, error) {
+	refName := plumbing.ReferenceName(paths.V2MainRefName)
+	parentHash, rootTreeHash, err := s.getRefState(refName)
+	if err != nil {
+		return 0, ErrCheckpointNotFound
+	}
+
+	basePath := opts.CheckpointID.Path() + "/"
+	checkpointPath := opts.CheckpointID.Path()
+
+	entries, err := s.gs.flattenCheckpointEntries(rootTreeHash, checkpointPath)
+	if err != nil {
+		return 0, err
+	}
+
+	// Read root summary to find session index
+	rootMetadataPath := basePath + paths.MetadataFileName
+	entry, exists := entries[rootMetadataPath]
+	if !exists {
+		return 0, ErrCheckpointNotFound
+	}
+
+	summary, err := readJSONFromBlob[CheckpointSummary](s.repo, entry.Hash)
+	if err != nil {
+		return 0, fmt.Errorf("failed to read checkpoint summary: %w", err)
+	}
+	if len(summary.Sessions) == 0 {
+		return 0, ErrCheckpointNotFound
+	}
+
+	// Find session index by ID, fall back to latest
+	sessionIndex := s.gs.findSessionIndex(ctx, basePath, summary, entries, opts.SessionID)
+	if sessionIndex >= len(summary.Sessions) {
+		// findSessionIndex returns next-available when not found; fall back to latest
+		sessionIndex = len(summary.Sessions) - 1
+	}
+
+	sessionPath := fmt.Sprintf("%s%d/", basePath, sessionIndex)
+
+	// Replace prompts
+	if len(opts.Prompts) > 0 {
+		promptContent := redact.String(strings.Join(opts.Prompts, "\n\n---\n\n"))
+		blobHash, err := CreateBlobFromContent(s.repo, []byte(promptContent))
+		if err != nil {
+			return 0, fmt.Errorf("failed to create prompt blob: %w", err)
+		}
+		entries[sessionPath+paths.PromptFileName] = object.TreeEntry{
+			Name: sessionPath + paths.PromptFileName,
+			Mode: filemode.Regular,
+			Hash: blobHash,
+		}
+	}
+
+	newTreeHash, err := s.gs.spliceCheckpointSubtree(rootTreeHash, opts.CheckpointID, basePath, entries)
+	if err != nil {
+		return 0, err
+	}
+
+	authorName, authorEmail := GetGitAuthorFromRepo(s.repo)
+	commitMsg := fmt.Sprintf("Finalize checkpoint: %s\n", opts.CheckpointID)
+	if err := s.updateRef(refName, newTreeHash, parentHash, commitMsg, authorName, authorEmail); err != nil {
+		return 0, err
+	}
+
+	return sessionIndex, nil
+}
+
+// updateCommittedFullTranscript replaces the transcript on /full/current for a finalized checkpoint.
+func (s *V2GitStore) updateCommittedFullTranscript(ctx context.Context, opts UpdateCommittedOptions, sessionIndex int) error {
+	refName := plumbing.ReferenceName(paths.V2FullCurrentRefName)
+	if err := s.ensureRef(refName); err != nil {
+		return fmt.Errorf("failed to ensure /full/current ref: %w", err)
+	}
+
+	parentHash, _, err := s.getRefState(refName)
+	if err != nil {
+		return err
+	}
+
+	// Build fresh tree with finalized transcript (replaces previous content)
+	basePath := opts.CheckpointID.Path() + "/"
+	sessionPath := fmt.Sprintf("%s%d/", basePath, sessionIndex)
+
+	entries := make(map[string]object.TreeEntry)
+	redactedTranscript, err := s.writeTranscriptBlobs(ctx, opts.Transcript, opts.Agent, sessionPath, entries)
+	if err != nil {
+		return err
+	}
+
+	if err := s.writeContentHash(redactedTranscript, sessionPath, entries); err != nil {
+		return err
+	}
+
+	newTreeHash, err := BuildTreeFromEntries(s.repo, entries)
+	if err != nil {
+		return fmt.Errorf("failed to build /full/current tree: %w", err)
+	}
+
+	authorName, authorEmail := GetGitAuthorFromRepo(s.repo)
+	commitMsg := fmt.Sprintf("Finalize checkpoint: %s\n", opts.CheckpointID)
+	return s.updateRef(refName, newTreeHash, parentHash, commitMsg, authorName, authorEmail)
+}
+
 // writeCommittedMain writes metadata entries to the /main ref.
 // This includes session metadata, prompts, and content hash — but NOT the
 // raw transcript (full.jsonl), which goes to /full/current.

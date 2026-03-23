@@ -2276,13 +2276,15 @@ func (s *ManualCommitStrategy) finalizeAllTurnCheckpoints(ctx context.Context, s
 			continue
 		}
 
-		updateErr := store.UpdateCommitted(ctx, checkpoint.UpdateCommittedOptions{
+		updateOpts := checkpoint.UpdateCommittedOptions{
 			CheckpointID: cpID,
 			SessionID:    state.SessionID,
 			Transcript:   fullTranscript,
 			Prompts:      prompts,
 			Agent:        state.AgentType,
-		})
+		}
+
+		updateErr := store.UpdateCommitted(ctx, updateOpts)
 		if updateErr != nil {
 			logging.Warn(logCtx, "finalize: failed to update checkpoint",
 				slog.String("checkpoint_id", cpIDStr),
@@ -2291,6 +2293,9 @@ func (s *ManualCommitStrategy) finalizeAllTurnCheckpoints(ctx context.Context, s
 			errCount++
 			continue
 		}
+
+		// Dual-write: update v2 refs when enabled
+		updateCommittedV2IfEnabled(ctx, repo, updateOpts)
 
 		logging.Info(logCtx, "finalize: checkpoint updated with full transcript",
 			slog.String("checkpoint_id", cpIDStr),

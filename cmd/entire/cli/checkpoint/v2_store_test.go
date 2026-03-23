@@ -613,3 +613,106 @@ func TestV2GitStore_WriteCommitted_MultiSession_ConsistentIndex(t *testing.T) {
 	contentY := v2ReadFile(t, fullTree, cpPath+"/1/"+paths.TranscriptFileName)
 	assert.Contains(t, contentY, `"from":"Y"`)
 }
+
+func TestV2GitStore_UpdateCommitted_UpdatesBothRefs(t *testing.T) {
+	t.Parallel()
+	repo := initTestRepo(t)
+	store := NewV2GitStore(repo)
+	ctx := context.Background()
+
+	cpID := id.MustCheckpointID("ff11aa22bb33")
+
+	// Initial write
+	err := store.WriteCommitted(ctx, WriteCommittedOptions{
+		CheckpointID: cpID,
+		SessionID:    "test-session-update",
+		Strategy:     "manual-commit",
+		Agent:        agent.AgentTypeClaudeCode,
+		Transcript:   []byte(`{"type":"assistant","message":"initial"}`),
+		Prompts:      []string{"first prompt"},
+		AuthorName:   "Test",
+		AuthorEmail:  "test@test.com",
+	})
+	require.NoError(t, err)
+
+	// Update with finalized transcript and prompts
+	err = store.UpdateCommitted(ctx, UpdateCommittedOptions{
+		CheckpointID: cpID,
+		SessionID:    "test-session-update",
+		Transcript:   []byte(`{"type":"assistant","message":"finalized"}`),
+		Prompts:      []string{"first prompt", "second prompt"},
+		Agent:        agent.AgentTypeClaudeCode,
+	})
+	require.NoError(t, err)
+
+	cpPath := cpID.Path()
+
+	// /main should have updated prompts
+	mainTree := v2MainTree(t, repo)
+	promptContent := v2ReadFile(t, mainTree, cpPath+"/0/"+paths.PromptFileName)
+	assert.Contains(t, promptContent, "second prompt")
+
+	// /full/current should have finalized transcript
+	fullTree := v2FullTree(t, repo)
+	content := v2ReadFile(t, fullTree, cpPath+"/0/"+paths.TranscriptFileName)
+	assert.Contains(t, content, "finalized")
+	assert.NotContains(t, content, "initial")
+}
+
+func TestV2GitStore_UpdateCommitted_NoTranscript_OnlyUpdatesMain(t *testing.T) {
+	t.Parallel()
+	repo := initTestRepo(t)
+	store := NewV2GitStore(repo)
+	ctx := context.Background()
+
+	cpID := id.MustCheckpointID("aa33bb44cc55")
+
+	// Initial write with transcript
+	err := store.WriteCommitted(ctx, WriteCommittedOptions{
+		CheckpointID: cpID,
+		SessionID:    "test-session-noupdate",
+		Strategy:     "manual-commit",
+		Transcript:   []byte(`{"type":"assistant","message":"original"}`),
+		Prompts:      []string{"old prompt"},
+		AuthorName:   "Test",
+		AuthorEmail:  "test@test.com",
+	})
+	require.NoError(t, err)
+
+	// Update with only prompts (no transcript)
+	err = store.UpdateCommitted(ctx, UpdateCommittedOptions{
+		CheckpointID: cpID,
+		SessionID:    "test-session-noupdate",
+		Prompts:      []string{"old prompt", "new prompt"},
+		Agent:        agent.AgentTypeClaudeCode,
+	})
+	require.NoError(t, err)
+
+	// /main should have updated prompts
+	mainTree := v2MainTree(t, repo)
+	promptContent := v2ReadFile(t, mainTree, cpID.Path()+"/0/"+paths.PromptFileName)
+	assert.Contains(t, promptContent, "new prompt")
+
+	// /full/current should still have original transcript (not replaced)
+	fullTree := v2FullTree(t, repo)
+	content := v2ReadFile(t, fullTree, cpID.Path()+"/0/"+paths.TranscriptFileName)
+	assert.Contains(t, content, "original")
+}
+
+func TestV2GitStore_UpdateCommitted_CheckpointNotFound(t *testing.T) {
+	t.Parallel()
+	repo := initTestRepo(t)
+	store := NewV2GitStore(repo)
+	ctx := context.Background()
+
+	cpID := id.MustCheckpointID("bb44cc55dd66")
+
+	// Update without prior write should return error
+	err := store.UpdateCommitted(ctx, UpdateCommittedOptions{
+		CheckpointID: cpID,
+		SessionID:    "nonexistent",
+		Transcript:   []byte(`{"type":"assistant","message":"hello"}`),
+		Agent:        agent.AgentTypeClaudeCode,
+	})
+	require.Error(t, err)
+}

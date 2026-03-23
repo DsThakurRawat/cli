@@ -930,3 +930,20 @@ func writeCommittedV2IfEnabled(ctx context.Context, repo *git.Repository, opts c
 		)
 	}
 }
+
+// updateCommittedV2IfEnabled updates existing checkpoint data on v2 refs when
+// checkpoints_v2 is enabled. Used at stop time to finalize transcripts.
+// Failures are logged as warnings — must not block the v1 path.
+func updateCommittedV2IfEnabled(ctx context.Context, repo *git.Repository, opts cpkg.UpdateCommittedOptions) {
+	if !settings.IsCheckpointsV2Enabled(ctx) {
+		return
+	}
+
+	v2Store := cpkg.NewV2GitStore(repo)
+	if err := v2Store.UpdateCommitted(ctx, opts); err != nil {
+		logging.Warn(ctx, "v2 dual-write update failed",
+			slog.String("checkpoint_id", opts.CheckpointID.String()),
+			slog.String("error", err.Error()),
+		)
+	}
+}
