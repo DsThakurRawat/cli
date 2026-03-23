@@ -99,7 +99,7 @@ func TestInteractiveAttributionMultiCommitSameSession(t *testing.T) {
 		// Second prompt: modify same file and commit again.
 		s.Send(t, session, "add another stanza to poem.txt about debugging, then create a NEW commit (do not amend). Do not ask for confirmation.")
 		s.WaitFor(t, session, prompt, 90*time.Second)
-		testutil.AssertNewCommits(t, s, 2)
+		testutil.AssertNewCommitsWithTimeout(t, s, 2, 60*time.Second)
 
 		testutil.WaitForCheckpointAdvanceFrom(t, s.Dir, cpBranch1, 15*time.Second)
 		cpID2 := testutil.AssertHasCheckpointTrailer(t, s.Dir, "HEAD")

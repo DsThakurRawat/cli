@@ -61,7 +61,16 @@ func WaitForFileExists(t *testing.T, dir string, glob string, timeout time.Durat
 // agent's prompt pattern appears before its git commit lands on disk.
 func AssertNewCommits(t *testing.T, s *RepoState, atLeast int) {
 	t.Helper()
-	deadline := time.Now().Add(20 * time.Second)
+	AssertNewCommitsWithTimeout(t, s, atLeast, 20*time.Second)
+}
+
+// AssertNewCommitsWithTimeout is like AssertNewCommits but with a configurable
+// timeout. Use this when WaitFor may settle on stale pane content (e.g.
+// multi-turn interactive tests where the previous turn's prompt is still
+// visible), giving the agent more time to complete its commit.
+func AssertNewCommitsWithTimeout(t *testing.T, s *RepoState, atLeast int, timeout time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
 	for {
 		out := GitOutput(t, s.Dir, "log", "--oneline", s.HeadBefore+"..HEAD")
 		var lines []string
@@ -72,7 +81,7 @@ func AssertNewCommits(t *testing.T, s *RepoState, atLeast int) {
 			return
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("expected at least %d new commit(s), got %d after 20s", atLeast, len(lines))
+			t.Fatalf("expected at least %d new commit(s), got %d after %s", atLeast, len(lines), timeout)
 		}
 		time.Sleep(500 * time.Millisecond)
 	}
