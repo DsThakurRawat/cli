@@ -836,10 +836,6 @@ func (s *ManualCommitStrategy) PostCommit(ctx context.Context) error { //nolint:
 	findSessionsSpan.RecordError(err)
 	findSessionsSpan.End()
 
-	if stale := countStaleEndedSessions(sessions); stale >= staleEndedSessionWarnThreshold {
-		warnStaleEndedSessions(ctx, stale)
-	}
-
 	if err != nil || len(sessions) == 0 {
 		logging.Warn(logCtx, "post-commit: no active sessions despite trailer",
 			slog.String("strategy", "manual-commit"),
@@ -925,6 +921,10 @@ func (s *ManualCommitStrategy) PostCommit(ctx context.Context) error { //nolint:
 		}
 	}
 	cleanupBranchesSpan.End()
+
+	if stale := countWarnableStaleEndedSessions(repo, sessions); stale >= staleEndedSessionWarnThreshold {
+		warnStaleEndedSessions(ctx, stale)
+	}
 
 	return nil
 }

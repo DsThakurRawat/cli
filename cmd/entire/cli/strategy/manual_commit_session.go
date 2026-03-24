@@ -102,12 +102,25 @@ func (s *ManualCommitStrategy) listAllSessionStates(ctx context.Context) ([]*Ses
 	return states, nil
 }
 
-// countStaleEndedSessions returns the number of ENDED sessions that have not
-// been fully condensed. These sessions still incur PostCommit processing cost.
-func countStaleEndedSessions(sessions []*SessionState) int {
+// isWarnableStaleEndedSession reports whether an ENDED session is still both
+// expensive in PostCommit and actionable via 'entire doctor'.
+func isWarnableStaleEndedSession(repo *git.Repository, state *SessionState) bool {
+	if state.Phase != session.PhaseEnded || state.FullyCondensed || state.StepCount <= 0 {
+		return false
+	}
+
+	shadowBranch := getShadowBranchNameForCommit(state.BaseCommit, state.WorktreeID)
+	refName := plumbing.NewBranchReferenceName(shadowBranch)
+	_, err := repo.Reference(refName, true)
+	return err == nil
+}
+
+// countWarnableStaleEndedSessions returns the number of ENDED sessions that
+// still remain slow and fixable after PostCommit finishes processing.
+func countWarnableStaleEndedSessions(repo *git.Repository, sessions []*SessionState) int {
 	n := 0
-	for _, s := range sessions {
-		if s.Phase == session.PhaseEnded && !s.FullyCondensed {
+	for _, state := range sessions {
+		if isWarnableStaleEndedSession(repo, state) {
 			n++
 		}
 	}
