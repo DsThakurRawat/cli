@@ -50,6 +50,9 @@ brew install entireio/tap/entire
 # Or install via Go
 go install github.com/entireio/cli/cmd/entire@latest
 
+# Linux: Add Go binaries to PATH (add to ~/.zshrc or ~/.bashrc if not already configured)
+export PATH="$HOME/go/bin:$PATH"
+
 # Enable in your project
 cd your-project && entire enable
 
