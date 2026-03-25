@@ -35,7 +35,7 @@ func TestMain(m *testing.M) {
 
 	// Preflight: verify required dependencies before running any tests.
 	var missing []string
-	for _, bin := range []string{"git", "tmux"} {
+	for _, bin := range []string{"git"} {
 		if _, err := exec.LookPath(bin); err != nil {
 			missing = append(missing, bin)
 		}
@@ -63,7 +63,7 @@ func TestMain(m *testing.M) {
 
 	// Don't look at user's Git config, ignore everything except the project-local Git settings.
 	// This avoids oddball configs in ~/.gitconfig messing with our E2E tests.
-	os.Setenv("GIT_CONFIG_GLOBAL", "/dev/null")
+	os.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
 
 	os.Exit(m.Run())
 }

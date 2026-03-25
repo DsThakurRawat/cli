@@ -173,7 +173,7 @@ func (c *Claude) StartSession(ctx context.Context, dir string) (Session, error) 
 		return nil, fmt.Errorf("create clean config dir: %w", err)
 	}
 
-	envArgs := []string{
+	extraEnv := []string{
 		"ACCESSIBLE=1",
 
 		// See https://code.claude.com/docs/en/settings - without this setting Claude was going off and
@@ -185,9 +185,7 @@ func (c *Claude) StartSession(ctx context.Context, dir string) (Session, error) 
 		"CLAUDE_CONFIG_DIR=" + configDir,
 	}
 
-	args := append([]string{"env"}, envArgs...)
-	args = append(args, c.Binary(), "--dangerously-skip-permissions")
-	s, err := NewTmuxSession(name, dir, []string{"CLAUDECODE", "ENTIRE_TEST_TTY"}, args[0], args[1:]...)
+	s, err := NewPTYSession(name, dir, []string{"CLAUDECODE", "ENTIRE_TEST_TTY"}, extraEnv, c.Binary(), "--dangerously-skip-permissions")
 	if err != nil {
 		_ = os.RemoveAll(configDir)
 		return nil, err

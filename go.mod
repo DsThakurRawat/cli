@@ -3,6 +3,7 @@ module github.com/entireio/cli
 go 1.26.1
 
 require (
+	github.com/UserExistsError/conpty v0.1.4
 	github.com/charmbracelet/huh v0.8.0
 	github.com/charmbracelet/lipgloss v1.1.0
 	github.com/creack/pty v1.1.24

@@ -135,12 +135,12 @@ func (a *openCodeAgent) RunPrompt(ctx context.Context, dir string, prompt string
 func (a *openCodeAgent) StartSession(ctx context.Context, dir string) (Session, error) {
 	// opencode's TUI occasionally fails to render on CI (empty pane).
 	// Retry once if the first attempt produces no output at all.
-	var s *TmuxSession
+	var s *PTYSession
 	var lastErr error
 	for attempt := range 2 {
 		name := fmt.Sprintf("opencode-test-%d", time.Now().UnixNano())
 		var err error
-		s, err = NewTmuxSession(name, dir, []string{"ENTIRE_TEST_TTY"}, a.Binary(), "--model", a.model)
+		s, err = NewPTYSession(name, dir, []string{"ENTIRE_TEST_TTY"}, nil, a.Binary(), "--model", a.model)
 		if err != nil {
 			return nil, err
 		}

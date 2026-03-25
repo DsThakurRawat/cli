@@ -121,7 +121,7 @@ func (g *Gemini) StartSession(ctx context.Context, dir string) (Session, error) 
 	name := fmt.Sprintf("gemini-test-%d", time.Now().UnixNano())
 	// Unset CI and GITHUB_ACTIONS so gemini doesn't force headless mode —
 	// it checks both in isHeadlessMode() and skips interactive TUI entirely.
-	s, err := NewTmuxSession(name, dir, []string{"CI", "GITHUB_ACTIONS", "ENTIRE_TEST_TTY"}, "env", "ACCESSIBLE=1", g.Binary(), "--model", geminiDefaultModel, "-y")
+	s, err := NewPTYSession(name, dir, []string{"CI", "GITHUB_ACTIONS", "ENTIRE_TEST_TTY"}, []string{"ACCESSIBLE=1"}, g.Binary(), "--model", geminiDefaultModel, "-y")
 	if err != nil {
 		return nil, err
 	}

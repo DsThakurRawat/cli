@@ -168,11 +168,9 @@ func (a *CursorCLI) StartSession(ctx context.Context, dir string) (Session, erro
 	return s, nil
 }
 
-// startInteractiveSession creates a new tmux session running the Cursor CLI
+// startInteractiveSession creates a new PTY session running the Cursor CLI
 // in interactive mode (no -p flag) so all hooks fire.
 func (a *CursorCLI) startInteractiveSession(dir string) (*TmuxSession, error) {
-	// Resolve to absolute path so tmux can find the binary even if its
-	// shell doesn't inherit the test process's PATH (common on CI).
 	bin, err := exec.LookPath(a.Binary())
 	if err != nil {
 		return nil, fmt.Errorf("agent binary not found: %w", err)
