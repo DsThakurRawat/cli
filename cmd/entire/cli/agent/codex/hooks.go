@@ -122,6 +122,13 @@ func (c *CodexAgent) InstallHooks(ctx context.Context, localDev bool, force bool
 		return 0, fmt.Errorf("failed to write hooks.json: %w", err)
 	}
 
+	// Enable the codex_hooks feature flag in project-level config.toml.
+	// This is required because codex_hooks is default_enabled: false (UnderDevelopment).
+	// Writing to .codex/config.toml (project-level) ensures it only affects this repo.
+	if err := ensureFeatureEnabled(repoRoot); err != nil {
+		return count, fmt.Errorf("failed to enable codex_hooks feature: %w", err)
+	}
+
 	return count, nil
 }
 
@@ -284,4 +291,48 @@ func removeEntireHooks(groups []MatcherGroup) []MatcherGroup {
 		}
 	}
 	return result
+}
+
+// configFileName is the Codex config file name.
+const configFileName = "config.toml"
+
+// featureLine is the TOML line that enables the codex_hooks feature.
+const featureLine = "codex_hooks = true"
+
+// ensureFeatureEnabled ensures the codex_hooks feature flag is enabled
+// in the project-level .codex/config.toml. This is per-repo only.
+func ensureFeatureEnabled(repoRoot string) error {
+	configPath := filepath.Join(repoRoot, ".codex", configFileName)
+
+	data, err := os.ReadFile(configPath) //nolint:gosec // path constructed from repo root
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("failed to read config.toml: %w", err)
+	}
+
+	content := string(data)
+
+	// Already enabled — nothing to do
+	if strings.Contains(content, featureLine) {
+		return nil
+	}
+
+	// Check if there's already a [features] section
+	if strings.Contains(content, "[features]") {
+		// Insert our line after the [features] header
+		content = strings.Replace(content, "[features]", "[features]\n"+featureLine, 1)
+	} else {
+		// Append a new [features] section
+		if len(content) > 0 && !strings.HasSuffix(content, "\n") {
+			content += "\n"
+		}
+		content += "\n[features]\n" + featureLine + "\n"
+	}
+
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o750); err != nil {
+		return fmt.Errorf("failed to create .codex directory: %w", err)
+	}
+	if err := os.WriteFile(configPath, []byte(content), 0o600); err != nil { //nolint:gosec // path constructed from repo root
+		return fmt.Errorf("failed to write config.toml: %w", err)
+	}
+	return nil
 }

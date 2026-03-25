@@ -25,6 +25,13 @@ func TestInstallHooks_CreatesConfig(t *testing.T) {
 	require.Contains(t, string(data), "entire hooks codex session-start")
 	require.Contains(t, string(data), "entire hooks codex user-prompt-submit")
 	require.Contains(t, string(data), "entire hooks codex stop")
+
+	// Verify config.toml enables codex_hooks feature
+	configPath := filepath.Join(tempDir, ".codex", configFileName)
+	configData, err := os.ReadFile(configPath)
+	require.NoError(t, err)
+	require.Contains(t, string(configData), "codex_hooks = true")
+	require.Contains(t, string(configData), "[features]")
 }
 
 func TestInstallHooks_Idempotent(t *testing.T) {
