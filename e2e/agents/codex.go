@@ -62,6 +62,7 @@ func (c *Codex) RunPrompt(ctx context.Context, dir string, prompt string, opts .
 		"exec",
 		"--dangerously-bypass-approvals-and-sandbox",
 		"--skip-git-repo-check",
+		"--enable", "codex_hooks",
 	}
 	if cfg.Model != "" {
 		args = append(args, "-m", cfg.Model)
@@ -72,6 +73,7 @@ func (c *Codex) RunPrompt(ctx context.Context, dir string, prompt string, opts .
 		"exec",
 		"--dangerously-bypass-approvals-and-sandbox",
 		"--skip-git-repo-check",
+		"--enable", "codex_hooks",
 	}
 	if cfg.Model != "" {
 		displayArgs = append(displayArgs, "-m", cfg.Model)
@@ -130,7 +132,7 @@ func (c *Codex) StartSession(ctx context.Context, dir string) (Session, error) {
 		}
 	}
 
-	_ = s.Send("codex --dangerously-bypass-approvals-and-sandbox")
+	_ = s.Send("codex --dangerously-bypass-approvals-and-sandbox --enable codex_hooks")
 
 	// Wait for the interactive prompt
 	if _, err := s.WaitFor(c.PromptPattern(), 30*time.Second); err != nil {
