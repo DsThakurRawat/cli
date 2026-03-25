@@ -32,6 +32,11 @@ import (
 // determined from the /main ref and passed to the /full/current write to
 // keep both refs consistent.
 func (s *V2GitStore) WriteCommitted(ctx context.Context, opts WriteCommittedOptions) error {
+	// Validate upfront before any writes to avoid partial ref updates
+	if err := validateWriteOpts(opts); err != nil {
+		return err
+	}
+
 	sessionIndex, err := s.writeCommittedMain(ctx, opts)
 	if err != nil {
 		return fmt.Errorf("v2 /main write failed: %w", err)
@@ -87,7 +92,6 @@ func (s *V2GitStore) updateCommittedMain(ctx context.Context, opts UpdateCommitt
 		return 0, err
 	}
 
-	// Read root summary to find session index
 	rootMetadataPath := basePath + paths.MetadataFileName
 	entry, exists := entries[rootMetadataPath]
 	if !exists {
@@ -116,7 +120,6 @@ func (s *V2GitStore) updateCommittedMain(ctx context.Context, opts UpdateCommitt
 
 	sessionPath := fmt.Sprintf("%s%d/", basePath, sessionIndex)
 
-	// Replace prompts
 	if len(opts.Prompts) > 0 {
 		promptContent := redact.String(strings.Join(opts.Prompts, "\n\n---\n\n"))
 		blobHash, err := CreateBlobFromContent(s.repo, []byte(promptContent))
@@ -199,10 +202,6 @@ func (s *V2GitStore) updateCommittedFullTranscript(ctx context.Context, opts Upd
 // (full.jsonl) or content hash (content_hash.txt), which go to /full/current.
 // Returns the session index used, so the caller can pass it to writeCommittedFullTranscript.
 func (s *V2GitStore) writeCommittedMain(ctx context.Context, opts WriteCommittedOptions) (int, error) {
-	if err := validateWriteOpts(opts); err != nil {
-		return 0, err
-	}
-
 	refName := plumbing.ReferenceName(paths.V2MainRefName)
 	if err := s.ensureRef(refName); err != nil {
 		return 0, fmt.Errorf("failed to ensure /main ref: %w", err)
@@ -387,10 +386,6 @@ func (s *V2GitStore) writeCommittedFullTranscript(ctx context.Context, opts Writ
 	}
 	if len(transcript) == 0 {
 		return nil // No transcript to write
-	}
-
-	if err := validateWriteOpts(opts); err != nil {
-		return err
 	}
 
 	refName := plumbing.ReferenceName(paths.V2FullCurrentRefName)

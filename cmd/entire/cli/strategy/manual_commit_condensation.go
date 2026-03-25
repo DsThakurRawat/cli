@@ -272,7 +272,6 @@ func (s *ManualCommitStrategy) CondenseSession(ctx context.Context, repo *git.Re
 		return nil, fmt.Errorf("failed to write checkpoint metadata: %w", err)
 	}
 
-	// Dual-write to v2 refs when enabled
 	writeCommittedV2IfEnabled(ctx, repo, writeOpts)
 
 	return &CondenseResult{
