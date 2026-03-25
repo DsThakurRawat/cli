@@ -172,9 +172,20 @@ func (c *Codex) StartSession(ctx context.Context, dir string) (Session, error) {
 		}
 	}
 
-	if _, err := s.WaitFor(c.PromptPattern(), 30*time.Second); err != nil {
-		_ = s.Close()
-		return nil, fmt.Errorf("waiting for codex prompt: %w", err)
+	// Dismiss startup dialogs (model upgrade prompts, etc.) until we reach
+	// the input prompt. Similar to Claude's startup dialog handling.
+	for range 5 {
+		content, waitErr := s.WaitFor(c.PromptPattern(), 15*time.Second)
+		if waitErr != nil {
+			_ = s.Close()
+			return nil, fmt.Errorf("waiting for codex prompt: %w", waitErr)
+		}
+		if !strings.Contains(content, "press enter to confirm") &&
+			!strings.Contains(content, "Use ↑/↓ to move") {
+			break
+		}
+		_ = s.SendKeys("Enter")
+		time.Sleep(500 * time.Millisecond)
 	}
 
 	return s, nil
@@ -187,8 +198,8 @@ func seedCodexHome(home, projectDir string) error {
 		return err
 	}
 
-	// Write config with trust + feature flag
-	config := fmt.Sprintf("[features]\ncodex_hooks = true\n\n[projects.%q]\ntrust_level = \"trusted\"\n", projectDir)
+	// Write config with trust, feature flag, and pinned model to skip upgrade dialogs
+	config := fmt.Sprintf("model = \"gpt-5.4\"\n\n[features]\ncodex_hooks = true\n\n[projects.%q]\ntrust_level = \"trusted\"\n", projectDir)
 	if err := os.WriteFile(filepath.Join(home, "config.toml"), []byte(config), 0o600); err != nil {
 		return err
 	}
