@@ -5,7 +5,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -370,7 +369,7 @@ func (s *ManualCommitStrategy) PrepareCommitMsg(ctx context.Context, commitMsgFi
 	findSessionsSpan.End()
 
 	// Fast path: skip content detection for mid-turn agent commits.
-	if err := s.tryAgentCommitFastPath(ctx, commitMsgFile, sessions, source); err == nil {
+	if s.tryAgentCommitFastPath(ctx, commitMsgFile, sessions, source) {
 		return nil
 	}
 
@@ -1652,8 +1651,8 @@ func (s *ManualCommitStrategy) extractModifiedFilesFromLiveTranscript(ctx contex
 }
 
 // tryAgentCommitFastPath skips content detection for mid-turn agent commits.
-// Returns nil if the fast path was taken (trailer added), or a non-nil error
-// to signal the caller should continue with normal content detection.
+// Returns true if the fast path was taken (trailer added or attempt made),
+// false if the caller should continue with normal content detection.
 //
 // The fast path activates when an ACTIVE session exists and either:
 //   - No TTY is available (agent subprocess, CI), or
@@ -1661,9 +1660,7 @@ func (s *ManualCommitStrategy) extractModifiedFilesFromLiveTranscript(ctx contex
 //     some agents like Gemini subagents commit mid-turn from processes that
 //     have /dev/tty but can't respond to prompts, and content detection fails
 //     since the shadow branch doesn't exist yet).
-var errFastPathNotTaken = errors.New("fast path not taken")
-
-func (s *ManualCommitStrategy) tryAgentCommitFastPath(ctx context.Context, commitMsgFile string, sessions []*SessionState, source string) error {
+func (s *ManualCommitStrategy) tryAgentCommitFastPath(ctx context.Context, commitMsgFile string, sessions []*SessionState, source string) bool {
 	skipContentDetection := !hasTTY()
 	if !skipContentDetection {
 		if stngs, err := settings.Load(ctx); err == nil {
@@ -1671,36 +1668,38 @@ func (s *ManualCommitStrategy) tryAgentCommitFastPath(ctx context.Context, commi
 		}
 	}
 	if !skipContentDetection {
-		return errFastPathNotTaken
+		return false
 	}
 	for _, state := range sessions {
 		if state.Phase.IsActive() {
 			logCtx := logging.WithComponent(ctx, "checkpoint")
-			return s.addTrailerForAgentCommit(logCtx, commitMsgFile, state, source)
+			s.addTrailerForAgentCommit(logCtx, commitMsgFile, state, source)
+			return true
 		}
 	}
-	return errFastPathNotTaken
+	return false
 }
 
 // addTrailerForAgentCommit handles the fast path when an agent is committing
 // (ACTIVE session + no TTY). Generates a checkpoint ID and adds the trailer
 // directly, bypassing content detection and interactive prompts.
-func (s *ManualCommitStrategy) addTrailerForAgentCommit(logCtx context.Context, commitMsgFile string, state *SessionState, source string) error {
+// Silently returns on any error — hooks must be resilient.
+func (s *ManualCommitStrategy) addTrailerForAgentCommit(logCtx context.Context, commitMsgFile string, state *SessionState, source string) {
 	cpID, err := id.Generate()
 	if err != nil {
-		return nil //nolint:nilerr // Hook must be silent on failure
+		return
 	}
 
 	content, err := os.ReadFile(commitMsgFile) //nolint:gosec // commitMsgFile is provided by git hook
 	if err != nil {
-		return nil //nolint:nilerr // Hook must be silent on failure
+		return
 	}
 
 	message := string(content)
 
 	// Don't add if trailer already exists
 	if _, found := trailers.ParseCheckpoint(message); found {
-		return nil
+		return
 	}
 
 	message = addCheckpointTrailer(message, cpID)
@@ -1712,10 +1711,7 @@ func (s *ManualCommitStrategy) addTrailerForAgentCommit(logCtx context.Context, 
 		slog.String("session_id", state.SessionID),
 	)
 
-	if err := os.WriteFile(commitMsgFile, []byte(message), 0o600); err != nil { //nolint:gosec // path from git hook arg
-		return nil //nolint:nilerr // Hook must be silent on failure
-	}
-	return nil
+	_ = os.WriteFile(commitMsgFile, []byte(message), 0o600) //nolint:gosec,errcheck // path from git hook arg; best-effort
 }
 
 // addCheckpointTrailer adds the Entire-Checkpoint trailer to a commit message.
