@@ -80,7 +80,7 @@ func TestCodexAgent_ReadSession(t *testing.T) {
 	require.Equal(t, path, session.SessionRef)
 	require.Equal(t, time.Date(2026, time.March, 25, 11, 31, 10, 922000000, time.UTC), session.StartTime)
 	require.ElementsMatch(t, []string{"hello.txt", "docs/readme.md"}, session.ModifiedFiles)
-	require.JSONEq(t, sampleRollout, string(session.NativeData))
+	require.Equal(t, sampleRollout, string(session.NativeData))
 }
 
 func TestCodexAgent_ReadSession_InvalidSessionMeta(t *testing.T) {
