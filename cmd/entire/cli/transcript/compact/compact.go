@@ -55,7 +55,6 @@ func Compact(content []byte, opts Options) ([]byte, error) {
 		return compactOpenCode(truncated, opts)
 	}
 
-
 	return compactJSONL(truncated, opts)
 }
 
