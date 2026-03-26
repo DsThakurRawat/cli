@@ -3,6 +3,7 @@ package checkpoint
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sort"
@@ -59,7 +60,10 @@ func (s *V2GitStore) readGeneration(treeHash plumbing.Hash) (GenerationMetadata,
 
 	file, err := tree.File(paths.GenerationFileName)
 	if err != nil {
-		return GenerationMetadata{}, nil //nolint:nilerr // Missing file means empty/new generation
+		if errors.Is(err, object.ErrFileNotFound) || errors.Is(err, object.ErrEntryNotFound) {
+			return GenerationMetadata{}, nil
+		}
+		return GenerationMetadata{}, fmt.Errorf("failed to find %s in tree: %w", paths.GenerationFileName, err)
 	}
 
 	content, err := file.Contents()
