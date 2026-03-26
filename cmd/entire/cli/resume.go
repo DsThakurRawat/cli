@@ -812,6 +812,7 @@ func resumeSingleSession(ctx context.Context, w, errW io.Writer, ag agent.Agent,
 	}
 
 	var logContent []byte
+	err = nil // Reset before v2/v1 resolution to avoid stale error from earlier code paths
 	repo, repoErr := openRepository(ctx)
 	if repoErr != nil {
 		logContent, _, err = checkpoint.LookupSessionLog(ctx, checkpointID)
