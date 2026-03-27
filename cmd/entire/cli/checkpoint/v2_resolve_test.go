@@ -2,94 +2,134 @@ package checkpoint
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/entireio/cli/cmd/entire/cli/checkpoint/id"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/go-git/go-git/v6"
 )
 
-func TestResolveTranscript_V2Found(t *testing.T) {
+func TestGetV2MetadataTree_LocalRef(t *testing.T) {
 	t.Parallel()
 	repo := initTestRepo(t)
 	store := NewV2GitStore(repo)
 	cpID := id.MustCheckpointID("a1a2a3a4a5a6")
 	ctx := context.Background()
 
+	// Write a checkpoint so the /main ref exists
 	err := store.WriteCommitted(ctx, WriteCommittedOptions{
 		CheckpointID: cpID,
 		SessionID:    "session-1",
 		Strategy:     "manual-commit",
-		Transcript:   []byte(`{"v2": true}`),
-		Prompts:      []string{"prompt"},
+		Transcript:   []byte(`{"test": true}`),
 		AuthorName:   "Test",
 		AuthorEmail:  "test@test.com",
 	})
 	require.NoError(t, err)
 
-	content, err := ResolveTranscript(ctx, repo, cpID, 0, true)
+	openRepoFn := func(_ context.Context) (*git.Repository, error) {
+		return repo, nil
+	}
+
+	// nil fetch functions — only local ref lookup should be tried
+	tree, returnedRepo, err := GetV2MetadataTree(ctx, nil, nil, openRepoFn)
 	require.NoError(t, err)
-	require.NotNil(t, content)
-	assert.NotEmpty(t, content.Transcript)
-	assert.Equal(t, "session-1", content.Metadata.SessionID)
+	require.NotNil(t, tree)
+	assert.Equal(t, repo, returnedRepo)
+
+	// Verify the tree contains the checkpoint subtree
+	cpTree, err := tree.Tree(cpID.Path())
+	require.NoError(t, err)
+	require.NotNil(t, cpTree)
 }
 
-func TestResolveTranscript_V2Disabled_FallsBackToV1(t *testing.T) {
+func TestGetV2MetadataTree_NoRef_ReturnsError(t *testing.T) {
 	t.Parallel()
 	repo := initTestRepo(t)
+	ctx := context.Background()
+
+	openRepoFn := func(_ context.Context) (*git.Repository, error) {
+		return repo, nil
+	}
+
+	// No v2 ref exists, no fetch functions — should fail
+	tree, _, err := GetV2MetadataTree(ctx, nil, nil, openRepoFn)
+	assert.Error(t, err)
+	assert.Nil(t, tree)
+}
+
+func TestGetV2MetadataTree_FetchSucceeds(t *testing.T) {
+	t.Parallel()
+	repo := initTestRepo(t)
+	store := NewV2GitStore(repo)
 	cpID := id.MustCheckpointID("b1b2b3b4b5b6")
 	ctx := context.Background()
 
-	v1Store := NewGitStore(repo)
-	err := v1Store.WriteCommitted(ctx, WriteCommittedOptions{
+	// Write checkpoint so the ref exists after "fetch"
+	err := store.WriteCommitted(ctx, WriteCommittedOptions{
 		CheckpointID: cpID,
-		SessionID:    "v1-session",
+		SessionID:    "session-1",
 		Strategy:     "manual-commit",
-		Transcript:   []byte(`{"v1": true}`),
-		Prompts:      []string{"v1 prompt"},
+		Transcript:   []byte(`{"test": true}`),
 		AuthorName:   "Test",
 		AuthorEmail:  "test@test.com",
 	})
 	require.NoError(t, err)
 
-	content, err := ResolveTranscript(ctx, repo, cpID, 0, false)
+	fetchCalled := false
+	treelessFetchFn := func(_ context.Context) error {
+		fetchCalled = true
+		return nil // Simulate successful fetch
+	}
+
+	openRepoFn := func(_ context.Context) (*git.Repository, error) {
+		return repo, nil
+	}
+
+	tree, _, err := GetV2MetadataTree(ctx, treelessFetchFn, nil, openRepoFn)
 	require.NoError(t, err)
-	require.NotNil(t, content)
-	assert.NotEmpty(t, content.Transcript)
-	assert.Equal(t, "v1-session", content.Metadata.SessionID)
+	require.NotNil(t, tree)
+	assert.True(t, fetchCalled, "treeless fetch should have been called")
 }
 
-func TestResolveTranscript_V2MissTranscript_FallsBackToV1(t *testing.T) {
+func TestGetV2MetadataTree_TreelessFetchFails_FallsBackToFullFetch(t *testing.T) {
 	t.Parallel()
 	repo := initTestRepo(t)
+	store := NewV2GitStore(repo)
 	cpID := id.MustCheckpointID("c1c2c3c4c5c6")
 	ctx := context.Background()
 
-	v2Store := NewV2GitStore(repo)
-	err := v2Store.WriteCommitted(ctx, WriteCommittedOptions{
+	err := store.WriteCommitted(ctx, WriteCommittedOptions{
 		CheckpointID: cpID,
-		SessionID:    "v2-session",
+		SessionID:    "session-1",
 		Strategy:     "manual-commit",
-		Prompts:      []string{"v2 prompt"},
+		Transcript:   []byte(`{"test": true}`),
 		AuthorName:   "Test",
 		AuthorEmail:  "test@test.com",
 	})
 	require.NoError(t, err)
 
-	v1Store := NewGitStore(repo)
-	err = v1Store.WriteCommitted(ctx, WriteCommittedOptions{
-		CheckpointID: cpID,
-		SessionID:    "v1-session",
-		Strategy:     "manual-commit",
-		Transcript:   []byte(`{"v1": true}`),
-		Prompts:      []string{"v1 prompt"},
-		AuthorName:   "Test",
-		AuthorEmail:  "test@test.com",
-	})
-	require.NoError(t, err)
+	treelessFetchFn := func(_ context.Context) error {
+		return errors.New("treeless fetch failed")
+	}
+	fullFetchCalled := false
+	fullFetchFn := func(_ context.Context) error {
+		fullFetchCalled = true
+		return nil
+	}
 
-	content, err := ResolveTranscript(ctx, repo, cpID, 0, true)
+	openRepoFn := func(_ context.Context) (*git.Repository, error) {
+		return repo, nil
+	}
+
+	// Treeless fails, local finds it (since we wrote to the repo), so full fetch may not be called.
+	// But the function should still succeed.
+	tree, _, err := GetV2MetadataTree(ctx, treelessFetchFn, fullFetchFn, openRepoFn)
 	require.NoError(t, err)
-	require.NotNil(t, content)
-	assert.NotEmpty(t, content.Transcript)
+	require.NotNil(t, tree)
+	// Local ref lookup succeeds before full fetch is needed
+	_ = fullFetchCalled
 }

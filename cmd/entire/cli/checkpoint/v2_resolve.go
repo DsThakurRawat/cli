@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/entireio/cli/cmd/entire/cli/checkpoint/id"
 	"github.com/entireio/cli/cmd/entire/cli/paths"
 
 	"github.com/go-git/go-git/v6"
@@ -16,21 +15,6 @@ import (
 // FetchRefFunc is a function that fetches a ref from the remote.
 // Used as a dependency injection point so this package doesn't import cli.
 type FetchRefFunc func(ctx context.Context) error
-
-// ResolveTranscript tries v2 first (if v2Enabled), then falls back to v1.
-// Returns the session content including metadata, prompts, and transcript.
-func ResolveTranscript(ctx context.Context, repo *git.Repository, cpID id.CheckpointID, sessionIndex int, v2Enabled bool) (*SessionContent, error) {
-	if v2Enabled {
-		v2Store := NewV2GitStore(repo)
-		content, err := v2Store.ReadSessionContent(ctx, cpID, sessionIndex)
-		if err == nil && content != nil && len(content.Transcript) > 0 {
-			return content, nil
-		}
-	}
-
-	v1Store := NewGitStore(repo)
-	return v1Store.ReadSessionContent(ctx, cpID, sessionIndex)
-}
 
 // GetV2MetadataTree resolves the v2 /main ref tree with fetch fallback.
 // Follows the same pattern as getMetadataTree() in resume.go:

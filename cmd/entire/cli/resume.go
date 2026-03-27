@@ -813,16 +813,22 @@ func resumeSingleSession(ctx context.Context, w, errW io.Writer, ag agent.Agent,
 
 	var logContent []byte
 	err = nil // Reset before v2/v1 resolution to avoid stale error from earlier code paths
-	repo, repoErr := openRepository(ctx)
-	if repoErr != nil {
-		logContent, _, err = checkpoint.LookupSessionLog(ctx, checkpointID)
-	} else {
-		content, resolveErr := checkpoint.ResolveTranscript(ctx, repo, checkpointID, 0, settings.IsCheckpointsV2Enabled(ctx))
-		if resolveErr == nil && content != nil && len(content.Transcript) > 0 {
-			logContent = content.Transcript
-		} else {
-			logContent, _, err = checkpoint.LookupSessionLog(ctx, checkpointID)
+	if settings.IsCheckpointsV2Enabled(ctx) {
+		repo, repoErr := openRepository(ctx)
+		if repoErr == nil {
+			v2Store := checkpoint.NewV2GitStore(repo)
+			var v2Err error
+			logContent, _, v2Err = v2Store.GetSessionLog(ctx, checkpointID)
+			if v2Err != nil {
+				logging.Debug(ctx, "v2 GetSessionLog failed, falling back to v1",
+					slog.String("checkpoint_id", checkpointID.String()),
+					slog.String("error", v2Err.Error()),
+				)
+			}
 		}
+	}
+	if len(logContent) == 0 {
+		logContent, _, err = checkpoint.LookupSessionLog(ctx, checkpointID)
 	}
 	if err != nil {
 		if errors.Is(err, checkpoint.ErrCheckpointNotFound) || errors.Is(err, checkpoint.ErrNoTranscript) {
