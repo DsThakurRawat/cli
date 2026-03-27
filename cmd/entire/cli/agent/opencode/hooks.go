@@ -40,7 +40,8 @@ func getPluginPath(ctx context.Context) (string, error) {
 }
 
 // InstallHooks writes the Entire plugin file to .opencode/plugins/entire.ts.
-// Returns 1 if the plugin was installed, 0 if already present (idempotent).
+// Returns 1 if the plugin was written, 0 if already up-to-date (idempotent).
+// If the file exists but content differs (e.g., localDev vs production), it is rewritten.
 func (a *OpenCodeAgent) InstallHooks(ctx context.Context, localDev bool, force bool) (int, error) {
 	pluginPath, err := getPluginPath(ctx)
 	if err != nil {
