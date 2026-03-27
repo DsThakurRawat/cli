@@ -29,6 +29,13 @@ import (
 	"github.com/go-git/go-git/v6/plumbing/object"
 )
 
+// committedReader provides read access to committed checkpoint data.
+// Both checkpoint.GitStore (v1) and checkpoint.V2GitStore implement this interface.
+type committedReader interface {
+	ReadCommitted(ctx context.Context, checkpointID id.CheckpointID) (*cpkg.CheckpointSummary, error)
+	ReadSessionContent(ctx context.Context, checkpointID id.CheckpointID, sessionIndex int) (*cpkg.SessionContent, error)
+}
+
 // GetRewindPoints returns available rewind points.
 // Uses checkpoint.GitStore.ListTemporaryCheckpoints for reading from shadow branches.
 func (s *ManualCommitStrategy) GetRewindPoints(ctx context.Context, limit int) ([]RewindPoint, error) {
@@ -624,33 +631,38 @@ func (s *ManualCommitStrategy) RestoreLogsOnly(ctx context.Context, w, errW io.W
 		return nil, errors.New("missing checkpoint ID")
 	}
 
-	// Get v1 checkpoint store (always needed for fallback)
-	store, err := s.getCheckpointStore()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get checkpoint store: %w", err)
-	}
-
-	// Read checkpoint summary — try v2 first when enabled
+	// Resolve which store has this checkpoint. Try v2 first when enabled.
+	// The chosen reader is used for all subsequent reads (summary + session content)
+	// to avoid mixed v1/v2 reads.
+	var reader committedReader
 	var summary *cpkg.CheckpointSummary
-	v2Enabled := settings.IsCheckpointsV2Enabled(ctx)
-	if v2Enabled {
+
+	if settings.IsCheckpointsV2Enabled(ctx) {
 		v2Store, v2Err := s.getV2CheckpointStore()
 		if v2Err == nil {
-			var v2ReadErr error
-			summary, v2ReadErr = v2Store.ReadCommitted(ctx, point.CheckpointID)
-			if v2ReadErr != nil {
+			v2Summary, readErr := v2Store.ReadCommitted(ctx, point.CheckpointID)
+			if readErr != nil {
 				logging.Debug(ctx, "v2 ReadCommitted failed, falling back to v1",
 					slog.String("checkpoint_id", string(point.CheckpointID)),
-					slog.String("error", v2ReadErr.Error()),
+					slog.String("error", readErr.Error()),
 				)
+			} else if v2Summary != nil {
+				reader = v2Store
+				summary = v2Summary
 			}
 		}
 	}
+
 	if summary == nil {
-		summary, err = store.ReadCommitted(ctx, point.CheckpointID)
+		v1Store, err := s.getCheckpointStore()
+		if err != nil {
+			return nil, fmt.Errorf("failed to get checkpoint store: %w", err)
+		}
+		summary, err = v1Store.ReadCommitted(ctx, point.CheckpointID)
 		if err != nil {
 			return nil, fmt.Errorf("failed to read checkpoint: %w", err)
 		}
+		reader = v1Store
 	}
 	if summary == nil {
 		return nil, fmt.Errorf("checkpoint not found: %s", point.CheckpointID)
@@ -664,7 +676,7 @@ func (s *ManualCommitStrategy) RestoreLogsOnly(ctx context.Context, w, errW io.W
 
 	// Check for newer local logs if not forcing
 	if !force {
-		sessions := s.classifySessionsForRestore(ctx, repoRoot, store, point.CheckpointID, summary)
+		sessions := s.classifySessionsForRestore(ctx, repoRoot, reader, point.CheckpointID, summary)
 		hasConflicts := false
 		for _, sess := range sessions {
 			if sess.Status == StatusLocalNewer {
@@ -693,33 +705,7 @@ func (s *ManualCommitStrategy) RestoreLogsOnly(ctx context.Context, w, errW io.W
 	// Restore all sessions (oldest to newest, using 0-based indexing)
 	var restored []RestoredSession
 	for i := range totalSessions {
-		var content *cpkg.SessionContent
-		var readErr error
-
-		// Try v2 first when enabled
-		if v2Enabled {
-			v2Store, v2Err := s.getV2CheckpointStore()
-			if v2Err == nil {
-				content, readErr = v2Store.ReadSessionContent(ctx, point.CheckpointID, i)
-				if readErr != nil || content == nil || len(content.Transcript) == 0 {
-					if readErr != nil {
-						logging.Debug(ctx, "v2 ReadSessionContent failed, falling back to v1",
-							slog.String("checkpoint_id", string(point.CheckpointID)),
-							slog.Int("session_index", i),
-							slog.String("error", readErr.Error()),
-						)
-					}
-					content = nil // Fall through to v1
-					readErr = nil
-				}
-			}
-		}
-
-		// Fall back to v1
-		if content == nil {
-			content, readErr = store.ReadSessionContent(ctx, point.CheckpointID, i)
-		}
-
+		content, readErr := reader.ReadSessionContent(ctx, point.CheckpointID, i)
 		if readErr != nil {
 			fmt.Fprintf(errW, "  Warning: failed to read session %d: %v\n", i, readErr)
 			continue
@@ -863,7 +849,7 @@ type SessionRestoreInfo struct {
 // about each session, including whether local logs have newer timestamps.
 // repoRoot is used to compute per-session agent directories.
 // Sessions without agent metadata are skipped (cannot determine target directory).
-func (s *ManualCommitStrategy) classifySessionsForRestore(ctx context.Context, repoRoot string, store cpkg.Store, checkpointID id.CheckpointID, summary *cpkg.CheckpointSummary) []SessionRestoreInfo {
+func (s *ManualCommitStrategy) classifySessionsForRestore(ctx context.Context, repoRoot string, store committedReader, checkpointID id.CheckpointID, summary *cpkg.CheckpointSummary) []SessionRestoreInfo {
 	var sessions []SessionRestoreInfo
 
 	totalSessions := len(summary.Sessions)
