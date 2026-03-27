@@ -521,13 +521,13 @@ func TestManualCommit_AttributionNoDoubleCount(t *testing.T) {
 // when an unrelated commit advances BaseCommit via postCommitUpdateBaseCommitOnly.
 //
 // Bug scenario (observed in production):
-// 1. Agent works → commit (condensation, both BaseCommit and AttributionBaseCommit advance)
-// 2. New prompt (session becomes ACTIVE)
-// 3. While ACTIVE, user makes unrelated commit (no agent content to condense)
-//    → postCommitUpdateBaseCommitOnly advances BaseCommit but NOT AttributionBaseCommit
-// 4. Agent works → checkpoint → user commits (condensation)
-// 5. Attribution uses stale AttributionBaseCommit, causing getAllChangedFiles to find
-//    the unrelated file, inflating human_added with lines from a prior commit
+//  1. Agent works → commit (condensation, both BaseCommit and AttributionBaseCommit advance)
+//  2. New prompt (session becomes ACTIVE)
+//  3. While ACTIVE, user makes unrelated commit (no agent content to condense)
+//     → postCommitUpdateBaseCommitOnly advances BaseCommit but NOT AttributionBaseCommit
+//  4. Agent works → checkpoint → user commits (condensation)
+//  5. Attribution uses stale AttributionBaseCommit, causing getAllChangedFiles to find
+//     the unrelated file, inflating human_added with lines from a prior commit
 func TestManualCommit_AttributionStaleBase(t *testing.T) {
 	t.Parallel()
 	env := NewTestEnv(t)
@@ -621,7 +621,7 @@ func TestManualCommit_AttributionStaleBase(t *testing.T) {
 	// ========================================
 	t.Log("Second cycle: agent adds another function")
 
-	// Agent adds another function (3 lines: blank + func decl + body + close)
+	// Agent adds another function (4 lines: blank + func decl + body + close)
 	cycle2Content := cycle1Content + "\nfunc agentFunc2() {\n\treturn 2\n}\n"
 	env.WriteFile("main.go", cycle2Content)
 
@@ -687,13 +687,13 @@ func TestManualCommit_AttributionStaleBase(t *testing.T) {
 // switches branches mid-session and makes a commit on a different branch.
 //
 // Production scenario (observed on entire.io):
-// 1. Agent works on feature branch → commit (condensation, attribution correct)
-// 2. New prompt (session ACTIVE)
-// 3. User switches to a different branch, makes a commit there
-//    → PostCommit processes session from the feature branch
-//    → BaseCommit set to commit on the OTHER branch, AttributionBaseCommit stale
-// 4. User switches back to feature branch, agent works → commit
-// 5. Attribution should only reflect changes in this cycle, not cross-branch diff
+//  1. Agent works on feature branch → commit (condensation, attribution correct)
+//  2. New prompt (session ACTIVE)
+//  3. User switches to a different branch, makes a commit there
+//     → PostCommit processes session from the feature branch
+//     → BaseCommit set to commit on the OTHER branch, AttributionBaseCommit stale
+//  4. User switches back to feature branch, agent works → commit
+//  5. Attribution should only reflect changes in this cycle, not cross-branch diff
 func TestManualCommit_AttributionStaleBase_BranchSwitch(t *testing.T) {
 	t.Parallel()
 	env := NewTestEnv(t)
