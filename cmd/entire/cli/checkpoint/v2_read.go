@@ -106,7 +106,7 @@ func (s *V2GitStore) ReadSessionContent(ctx context.Context, checkpointID id.Che
 		}
 	}
 
-	transcript, transcriptErr := s.resolveTranscriptFromFull(ctx, checkpointID, sessionIndex, result.Metadata.Agent)
+	transcript, transcriptErr := s.readTranscriptFromFullRefs(ctx, checkpointID, sessionIndex, result.Metadata.Agent)
 	if transcriptErr != nil {
 		logging.Debug(ctx, "v2 transcript resolution failed",
 			slog.String("checkpoint_id", string(checkpointID)),
@@ -119,9 +119,9 @@ func (s *V2GitStore) ReadSessionContent(ctx context.Context, checkpointID id.Che
 	return result, nil
 }
 
-// resolveTranscriptFromFull searches /full/current then archived generations
-// for the raw transcript of a specific checkpoint session.
-func (s *V2GitStore) resolveTranscriptFromFull(ctx context.Context, checkpointID id.CheckpointID, sessionIndex int, agentType types.AgentType) ([]byte, error) {
+// readTranscriptFromFullRefs reads the raw transcript for a checkpoint session
+// by searching /full/current first, then archived generations in reverse order.
+func (s *V2GitStore) readTranscriptFromFullRefs(ctx context.Context, checkpointID id.CheckpointID, sessionIndex int, agentType types.AgentType) ([]byte, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err //nolint:wrapcheck // Propagating context cancellation
 	}
