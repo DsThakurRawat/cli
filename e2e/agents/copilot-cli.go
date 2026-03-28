@@ -272,14 +272,11 @@ func (c *CopilotCLI) StartSession(ctx context.Context, dir string) (Session, err
 		return nil, fmt.Errorf("agent binary not found: %w", err)
 	}
 
-	// Forward critical env vars into the tmux session. tmux starts a new
+	// Forward auth-related env vars into the tmux session. tmux starts a new
 	// shell that doesn't inherit Go's os.Environ(), so without this the
-	// session lacks auth tokens (COPILOT_GITHUB_TOKEN) and HOME (for gh auth).
-	if os.Getenv("COPILOT_GITHUB_TOKEN") == "" {
-		return nil, errors.New("COPILOT_GITHUB_TOKEN is not set; copilot-cli interactive session requires authentication")
-	}
+	// session can lose both token-based auth and local gh/copilot login state.
 	var envArgs []string
-	for _, key := range []string{"COPILOT_GITHUB_TOKEN", "HOME", "TERM"} {
+	for _, key := range []string{"COPILOT_GITHUB_TOKEN", "HOME", "TERM", "XDG_CONFIG_HOME", "GH_CONFIG_DIR"} {
 		if v := os.Getenv(key); v != "" {
 			envArgs = append(envArgs, key+"="+v)
 		}
