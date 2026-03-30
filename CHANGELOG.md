@@ -10,7 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Added
 
 - Codex CLI agent integration with lifecycle hooks, e2e runner, transcript parsing, and token tracking. note: subagent tracking is not yet supported due to missing `pre-task`/`post-task` hooks in codex ([#772](https://github.com/entireio/cli/pull/772), [#794](https://github.com/entireio/cli/pull/794))
-- Windows support: cross-platform path handling, CRLF-safe git parsing, native PTY-based E2E tests replacing tmux, detached process spawning, and `WINDOWS.md` guide ([#766](https://github.com/entireio/cli/pull/766))
+- Windows support: cross-platform path handling, CRLF-safe git parsing, detached process spawning, and `WINDOWS.md` guide ([#766](https://github.com/entireio/cli/pull/766))
 - Checkpoints v2 (work in progress): dual-write behind `checkpoints_v2` feature flag with `/main` and `/full/current` ref layout, generation rotation to bound transcript growth, and unified `transcript.jsonl` condensation for Claude Code and OpenCode ([#742](https://github.com/entireio/cli/pull/742), [#759](https://github.com/entireio/cli/pull/759), [#781](https://github.com/entireio/cli/pull/781), [#788](https://github.com/entireio/cli/pull/788))
 - `entire configure --checkpoint-remote` for setting the checkpoint remote interactively ([#798](https://github.com/entireio/cli/pull/798))
 - `entire logout` command to remove stored credentials ([#740](https://github.com/entireio/cli/pull/740))
