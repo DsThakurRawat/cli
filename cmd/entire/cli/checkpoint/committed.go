@@ -1762,7 +1762,7 @@ func CreateCommit(repo *git.Repository, treeHash, parentHash plumbing.Hash, mess
 		commit.ParentHashes = []plumbing.Hash{parentHash}
 	}
 
-	if err := signCommitBestEffort(commit); err != nil {
+	if err := SignCommitBestEffort(commit); err != nil {
 		return plumbing.ZeroHash, fmt.Errorf("failed to sign commit: %w", err)
 	}
 
@@ -1779,9 +1779,9 @@ func CreateCommit(repo *git.Repository, treeHash, parentHash plumbing.Hash, mess
 	return hash, nil
 }
 
-// signCommitBestEffort signs the commit using the registered ObjectSigner plugin.
+// SignCommitBestEffort signs the commit using the registered ObjectSigner plugin.
 // If no signer is registered, the commit is left unsigned and no error is returned.
-func signCommitBestEffort(commit *object.Commit) error {
+func SignCommitBestEffort(commit *object.Commit) error {
 	if !plugin.Has(plugin.ObjectSigner()) {
 		return nil
 	}

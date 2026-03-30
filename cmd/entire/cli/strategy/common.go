@@ -1605,6 +1605,10 @@ func createCommit(repo *git.Repository, treeHash, parentHash plumbing.Hash, mess
 		commit.ParentHashes = []plumbing.Hash{parentHash}
 	}
 
+	if err := checkpoint.SignCommitBestEffort(commit); err != nil {
+		return plumbing.ZeroHash, fmt.Errorf("failed to sign commit: %w", err)
+	}
+
 	obj := repo.Storer.NewEncodedObject()
 	if err := commit.Encode(obj); err != nil {
 		return plumbing.ZeroHash, fmt.Errorf("failed to encode commit: %w", err)

@@ -600,6 +600,10 @@ func createCherryPickCommit(repo *git.Repository, treeHash, parent plumbing.Hash
 		Message: original.Message,
 	}
 
+	if err := checkpoint.SignCommitBestEffort(commit); err != nil {
+		return plumbing.ZeroHash, fmt.Errorf("failed to sign commit: %w", err)
+	}
+
 	obj := repo.Storer.NewEncodedObject()
 	if err := commit.Encode(obj); err != nil {
 		return plumbing.ZeroHash, fmt.Errorf("failed to encode commit: %w", err)

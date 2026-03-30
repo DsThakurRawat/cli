@@ -514,6 +514,10 @@ func createMergeCommitCommon(repo *git.Repository, treeHash plumbing.Hash, paren
 		Message:      message,
 	}
 
+	if err := checkpoint.SignCommitBestEffort(commit); err != nil {
+		return plumbing.ZeroHash, fmt.Errorf("failed to sign commit: %w", err)
+	}
+
 	obj := repo.Storer.NewEncodedObject()
 	if err := commit.Encode(obj); err != nil {
 		return plumbing.ZeroHash, fmt.Errorf("failed to encode commit: %w", err)
