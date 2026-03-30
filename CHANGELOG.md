@@ -37,7 +37,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 - Windows-compatible external agent name derivation and binary discovery ([#729](https://github.com/entireio/cli/pull/729))
 - Linux PATH instruction for `go install` in README ([#764](https://github.com/entireio/cli/pull/764))
-- Bumped go-git to fix `index decoder: invalid checksum` on repos with `TREE` extension entries ([#801](https://github.com/entireio/cli/pull/801))
+- Bumped go-git to fix `index decoder: invalid checksum` on some repos using the `TREE` extension ([#801](https://github.com/entireio/cli/pull/801))
 - Dependency bumps: posthog-go 1.11.2, go-keyring 0.2.8, slackapi/slack-github-action 3.0.1 ([#786](https://github.com/entireio/cli/pull/786), [#755](https://github.com/entireio/cli/pull/755), [#695](https://github.com/entireio/cli/pull/695))
 
 ### Thanks
