@@ -83,6 +83,10 @@ func Compact(content []byte, opts MetadataFields) ([]byte, error) {
 		return compactOpenCode(truncated, opts)
 	}
 
+	if isGeminiFormat(truncated) {
+		return compactGemini(truncated, opts)
+	}
+
 	return compactJSONL(truncated, opts)
 }
 
