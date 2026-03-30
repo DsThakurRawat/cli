@@ -1143,7 +1143,11 @@ func (s *ManualCommitStrategy) updateBaseCommitIfChanged(ctx context.Context, st
 	}
 	if state.BaseCommit != newHead {
 		state.BaseCommit = newHead
-		logging.Debug(logCtx, "post-commit: updated BaseCommit",
+		// Keep AttributionBaseCommit in sync to prevent stale base drift.
+		// Without this, a subsequent condensation would diff from the old base,
+		// inflating human_added with lines from unrelated prior commits.
+		state.AttributionBaseCommit = newHead
+		logging.Debug(logCtx, "post-commit: updated BaseCommit and AttributionBaseCommit",
 			slog.String("session_id", state.SessionID),
 			slog.String("new_head", truncateHash(newHead)),
 		)
@@ -1177,12 +1181,16 @@ func (s *ManualCommitStrategy) postCommitUpdateBaseCommitOnly(ctx context.Contex
 			continue
 		}
 		if state.BaseCommit != newHead {
-			logging.Debug(logCtx, "post-commit (no trailer): updating BaseCommit",
+			logging.Debug(logCtx, "post-commit (no trailer): updating BaseCommit and AttributionBaseCommit",
 				slog.String("session_id", state.SessionID),
 				slog.String("old_base", truncateHash(state.BaseCommit)),
 				slog.String("new_head", truncateHash(newHead)),
 			)
 			state.BaseCommit = newHead
+			// Keep AttributionBaseCommit in sync to prevent stale base drift.
+			// Without this, a subsequent condensation would diff from the old base,
+			// inflating human_added with lines from unrelated prior commits.
+			state.AttributionBaseCommit = newHead
 			if err := s.saveSessionState(ctx, state); err != nil {
 				logging.Warn(logCtx, "failed to update session state",
 					slog.String("session_id", state.SessionID),
