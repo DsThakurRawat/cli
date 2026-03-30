@@ -18,7 +18,7 @@ func main() {
 
 	// Handle interrupt signals
 	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, os.Interrupt)
+	signal.Notify(sigChan, terminationSignals()...)
 	go func() {
 		<-sigChan
 		cancel()
