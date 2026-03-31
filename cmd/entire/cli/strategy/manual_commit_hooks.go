@@ -1759,62 +1759,9 @@ func (s *ManualCommitStrategy) addTrailerForAgentCommit(logCtx context.Context, 
 }
 
 // addCheckpointTrailer adds the Entire-Checkpoint trailer to a commit message.
-// Handles proper trailer formatting (blank line before trailers if needed).
+// Delegates to trailers.AppendCheckpointTrailer for trailer-aware formatting.
 func addCheckpointTrailer(message string, checkpointID id.CheckpointID) string {
-	trailer := trailers.CheckpointTrailerKey + ": " + checkpointID.String()
-
-	// If message already ends with trailers (lines starting with key:), just append
-	// Otherwise, add a blank line first
-	lines := strings.Split(strings.TrimRight(message, "\n"), "\n")
-
-	// Check if the message already ends with a trailer paragraph.
-	// Git trailers must be in a separate paragraph (preceded by a blank line).
-	// A single-paragraph message (e.g., just a subject line) cannot have trailers,
-	// even if the subject contains ": " (like conventional commits: "docs: Add foo").
-	//
-	// Scan from the bottom: find the last paragraph of non-comment content,
-	// then check if it looks like trailers AND has a blank line above it.
-	hasTrailers := false
-	i := len(lines) - 1
-
-	// Skip trailing comment lines
-	for i >= 0 && strings.HasPrefix(strings.TrimSpace(lines[i]), "#") {
-		i--
-	}
-
-	// Check if the last non-comment line looks like a trailer
-	if i >= 0 {
-		line := strings.TrimSpace(lines[i])
-		if line != "" && strings.Contains(line, ": ") {
-			// Found a trailer-like line. Now scan upward past the trailer block
-			// to verify there's a blank line (paragraph separator) above it.
-			for i > 0 {
-				i--
-				above := strings.TrimSpace(lines[i])
-				if strings.HasPrefix(above, "#") {
-					continue
-				}
-				if above == "" {
-					// Blank line found above trailer block — real trailers
-					hasTrailers = true
-					break
-				}
-				if !strings.Contains(above, ": ") {
-					// Non-trailer, non-blank line — this is message body, not trailers
-					break
-				}
-				// Another trailer-like line, keep scanning upward
-			}
-		}
-	}
-
-	if hasTrailers {
-		// Append trailer directly
-		return strings.TrimRight(message, "\n") + "\n" + trailer + "\n"
-	}
-
-	// Add blank line before trailer
-	return strings.TrimRight(message, "\n") + "\n\n" + trailer + "\n"
+	return trailers.AppendCheckpointTrailer(message, checkpointID.String())
 }
 
 // addCheckpointTrailerWithComment adds the Entire-Checkpoint trailer with an explanatory comment.
