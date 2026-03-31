@@ -403,12 +403,12 @@ func fetchV2MainRefIfMissing(ctx context.Context, remoteURL string) error {
 		"GIT_TERMINAL_PROMPT=0",
 	)
 	if err := fetchCmd.Run(); err != nil {
-		return nil //nolint:nilerr // Fetch failure is not fatal — ref may not exist on remote yet
+		return nil
 	}
 
 	fetchedRef, err := repo.Reference(plumbing.ReferenceName(tmpRef), true)
 	if err != nil {
-		return nil //nolint:nilerr // Ref not found after fetch — remote may not have it
+		return nil
 	}
 
 	newRef := plumbing.NewHashReference(refName, fetchedRef.Hash())
