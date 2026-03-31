@@ -16,18 +16,7 @@ import (
 	"github.com/go-git/go-git/v6"
 	"github.com/go-git/go-git/v6/plumbing"
 	"github.com/go-git/go-git/v6/plumbing/object"
-	"github.com/spf13/cobra"
 )
-
-// newTestCleanCmd creates a cobra.Command with captured stdout for testing runClean.
-func newTestCleanCmd(t *testing.T) (*cobra.Command, *bytes.Buffer) {
-	t.Helper()
-	cmd := &cobra.Command{}
-	cmd.SetContext(context.Background())
-	var stdout bytes.Buffer
-	cmd.SetOut(&stdout)
-	return cmd, &stdout
-}
 
 func setupCleanTestRepo(t *testing.T) (*git.Repository, plumbing.Hash) {
 	t.Helper()
@@ -394,8 +383,8 @@ func TestCleanCmd_All_PreviewMode(t *testing.T) {
 
 	output := stdout.String()
 
-	if !strings.Contains(output, "items to clean") {
-		t.Errorf("Expected 'items to clean' in output, got: %s", output)
+	if !strings.Contains(output, "to clean") {
+		t.Errorf("Expected 'to clean' in output, got: %s", output)
 	}
 	if !strings.Contains(output, "entire/abc1234") {
 		t.Errorf("Expected 'entire/abc1234' in output, got: %s", output)
@@ -441,8 +430,8 @@ func TestCleanCmd_All_DryRun(t *testing.T) {
 	}
 
 	output := stdout.String()
-	if !strings.Contains(output, "items to clean") {
-		t.Errorf("Expected 'items to clean' in output, got: %s", output)
+	if !strings.Contains(output, "to clean") {
+		t.Errorf("Expected 'to clean' in output, got: %s", output)
 	}
 	if !strings.Contains(output, "without --dry-run") {
 		t.Errorf("Expected '--dry-run' hint in output, got: %s", output)
@@ -598,21 +587,29 @@ func TestRunCleanAllWithItems_PartialFailure(t *testing.T) {
 	}
 
 	var stdout bytes.Buffer
-	err := runCleanAllWithItems(context.Background(), &stdout, true, false, items, nil)
+	var stderr bytes.Buffer
+	err := runCleanAllWithItems(context.Background(), &stdout, &stderr, true, false, items, nil)
 
 	if err == nil {
 		t.Fatal("runCleanAllWithItems() should return error when items fail to delete")
 	}
-	if !strings.Contains(err.Error(), "failed to delete") {
-		t.Errorf("Error should mention 'failed to delete', got: %v", err)
+	if !strings.Contains(err.Error(), "failed to delete 1 item") {
+		t.Errorf("Error should mention 'failed to delete 1 item', got: %v", err)
+	}
+	// Verify singular (not "1 items")
+	if strings.Contains(err.Error(), "1 items") {
+		t.Errorf("Error should use singular 'item' for count 1, got: %v", err)
 	}
 
+	// Output should show the successful deletion with singular grammar
 	output := stdout.String()
 	if !strings.Contains(output, "✓ Deleted 1 item:") {
 		t.Errorf("Output should show '✓ Deleted 1 item:', got: %s", output)
 	}
-	if !strings.Contains(output, "Failed to delete 1 items") {
-		t.Errorf("Output should show failures, got: %s", output)
+	// Stderr should show the failure with singular grammar
+	errOutput := stderr.String()
+	if !strings.Contains(errOutput, "Failed to delete 1 item:") {
+		t.Errorf("Stderr should show 'Failed to delete 1 item:', got: %s", errOutput)
 	}
 }
 
@@ -625,7 +622,8 @@ func TestRunCleanAllWithItems_AllFailures(t *testing.T) {
 	}
 
 	var stdout bytes.Buffer
-	err := runCleanAllWithItems(context.Background(), &stdout, true, false, items, nil)
+	var stderr bytes.Buffer
+	err := runCleanAllWithItems(context.Background(), &stdout, &stderr, true, false, items, nil)
 
 	if err == nil {
 		t.Fatal("runCleanAllWithItems() should return error when items fail to delete")
@@ -638,8 +636,10 @@ func TestRunCleanAllWithItems_AllFailures(t *testing.T) {
 	if strings.Contains(output, "✓ Deleted") {
 		t.Errorf("Output should not show successful deletions, got: %s", output)
 	}
-	if !strings.Contains(output, "Failed to delete 2 items") {
-		t.Errorf("Output should show failures, got: %s", output)
+	// Failures are written to stderr
+	errOutput := stderr.String()
+	if !strings.Contains(errOutput, "Failed to delete 2 items:") {
+		t.Errorf("Stderr should show 'Failed to delete 2 items:', got: %s", errOutput)
 	}
 }
 
@@ -647,7 +647,8 @@ func TestRunCleanAllWithItems_NoItems(t *testing.T) {
 	setupCleanTestRepo(t)
 
 	var stdout bytes.Buffer
-	err := runCleanAllWithItems(context.Background(), &stdout, false, false, []strategy.CleanupItem{}, nil)
+	var stderr bytes.Buffer
+	err := runCleanAllWithItems(context.Background(), &stdout, &stderr, false, false, []strategy.CleanupItem{}, nil)
 	if err != nil {
 		t.Fatalf("runCleanAllWithItems() error = %v", err)
 	}
@@ -668,7 +669,8 @@ func TestRunCleanAllWithItems_MixedTypes_Preview(t *testing.T) {
 	}
 
 	var stdout bytes.Buffer
-	err := runCleanAllWithItems(context.Background(), &stdout, false, false, items, nil)
+	var stderr bytes.Buffer
+	err := runCleanAllWithItems(context.Background(), &stdout, &stderr, false, false, items, nil)
 	if err != nil {
 		t.Fatalf("runCleanAllWithItems() error = %v", err)
 	}
