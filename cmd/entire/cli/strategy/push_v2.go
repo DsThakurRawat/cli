@@ -2,17 +2,23 @@ package strategy
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
+	"regexp"
+	"sort"
 	"strings"
 	"time"
 
 	"github.com/entireio/cli/cmd/entire/cli/checkpoint"
 	"github.com/entireio/cli/cmd/entire/cli/paths"
 
+	"github.com/go-git/go-git/v6"
 	"github.com/go-git/go-git/v6/plumbing"
+	"github.com/go-git/go-git/v6/plumbing/filemode"
 	"github.com/go-git/go-git/v6/plumbing/object"
 )
 
@@ -98,6 +104,10 @@ func doPushRef(ctx context.Context, target string, refName plumbing.ReferenceNam
 
 // fetchAndMergeRef fetches a remote custom ref and merges it into the local ref.
 // Uses the same tree-flattening merge as v1 (sharded paths are unique, so no conflicts).
+//
+// For /full/current: if the remote has archived generations not present locally,
+// another machine rotated. In that case, local data is merged into the latest
+// archived generation instead of into /full/current (see handleRotationConflict).
 func fetchAndMergeRef(ctx context.Context, target string, refName plumbing.ReferenceName) error {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
@@ -108,7 +118,6 @@ func fetchAndMergeRef(ctx context.Context, target string, refName plumbing.Refer
 	refSpec := fmt.Sprintf("+%s:%s", refName, tmpRefName)
 
 	fetchCmd := exec.CommandContext(ctx, "git", "fetch", target, refSpec)
-	fetchCmd.Stdin = nil
 	if output, err := fetchCmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("fetch failed: %s", output)
 	}
@@ -118,7 +127,17 @@ func fetchAndMergeRef(ctx context.Context, target string, refName plumbing.Refer
 		return fmt.Errorf("failed to open repository: %w", err)
 	}
 
-	// Get local ref state
+	// Check for rotation conflict on /full/current
+	if string(refName) == paths.V2FullCurrentRefName {
+		remoteOnlyArchives, detectErr := detectRemoteOnlyArchives(ctx, target, repo)
+		if detectErr == nil && len(remoteOnlyArchives) > 0 {
+			err := handleRotationConflict(ctx, target, repo, refName, tmpRefName, remoteOnlyArchives)
+			_ = repo.Storer.RemoveReference(tmpRefName) //nolint:errcheck
+			return err
+		}
+	}
+
+	// Standard tree merge (no rotation detected)
 	localRef, err := repo.Reference(refName, true)
 	if err != nil {
 		return fmt.Errorf("failed to get local ref: %w", err)
@@ -132,7 +151,6 @@ func fetchAndMergeRef(ctx context.Context, target string, refName plumbing.Refer
 		return fmt.Errorf("failed to get local tree: %w", err)
 	}
 
-	// Get fetched remote state
 	remoteRef, err := repo.Reference(tmpRefName, true)
 	if err != nil {
 		return fmt.Errorf("failed to get remote ref: %w", err)
@@ -146,7 +164,6 @@ func fetchAndMergeRef(ctx context.Context, target string, refName plumbing.Refer
 		return fmt.Errorf("failed to get remote tree: %w", err)
 	}
 
-	// Flatten both trees and combine entries
 	entries := make(map[string]object.TreeEntry)
 	if err := checkpoint.FlattenTree(repo, localTree, "", entries); err != nil {
 		return fmt.Errorf("failed to flatten local tree: %w", err)
@@ -155,13 +172,11 @@ func fetchAndMergeRef(ctx context.Context, target string, refName plumbing.Refer
 		return fmt.Errorf("failed to flatten remote tree: %w", err)
 	}
 
-	// Build merged tree
 	mergedTreeHash, err := checkpoint.BuildTreeFromEntries(repo, entries)
 	if err != nil {
 		return fmt.Errorf("failed to build merged tree: %w", err)
 	}
 
-	// Create merge commit
 	mergeCommitHash, err := createMergeCommitCommon(repo, mergedTreeHash,
 		[]plumbing.Hash{localRef.Hash(), remoteRef.Hash()},
 		"Merge remote "+shortRefName(refName))
@@ -169,16 +184,202 @@ func fetchAndMergeRef(ctx context.Context, target string, refName plumbing.Refer
 		return fmt.Errorf("failed to create merge commit: %w", err)
 	}
 
-	// Update local ref
 	newRef := plumbing.NewHashReference(refName, mergeCommitHash)
 	if err := repo.Storer.SetReference(newRef); err != nil {
 		return fmt.Errorf("failed to update ref: %w", err)
 	}
 
-	// Clean up temp ref (best-effort)
 	_ = repo.Storer.RemoveReference(tmpRefName) //nolint:errcheck // cleanup is best-effort
+	return nil
+}
+
+// generationRefPattern matches the 13-digit archived generation ref suffix format.
+var generationRefPattern = regexp.MustCompile(`^\d{13}$`)
+
+// detectRemoteOnlyArchives discovers archived generation refs on the remote
+// that don't exist locally. Returns them sorted ascending (oldest first).
+func detectRemoteOnlyArchives(ctx context.Context, target string, repo *git.Repository) ([]string, error) {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "git", "ls-remote", target, paths.V2FullRefPrefix+"*")
+	output, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("ls-remote failed: %w", err)
+	}
+
+	var remoteOnly []string
+	for _, line := range strings.Split(strings.TrimSpace(string(output)), "\n") {
+		if line == "" {
+			continue
+		}
+		parts := strings.Fields(line)
+		if len(parts) < 2 {
+			continue
+		}
+		refName := parts[1]
+		suffix := strings.TrimPrefix(refName, paths.V2FullRefPrefix)
+		if suffix == "current" || !generationRefPattern.MatchString(suffix) {
+			continue
+		}
+		// Only check for existence, not hash equality. A locally-present archive
+		// could be stale if another machine updated it via rotation conflict recovery,
+		// but that's unlikely and the checkpoints are still on /main regardless.
+		if _, err := repo.Reference(plumbing.ReferenceName(refName), true); err != nil {
+			remoteOnly = append(remoteOnly, suffix)
+		}
+	}
+
+	sort.Strings(remoteOnly)
+	return remoteOnly, nil
+}
+
+// handleRotationConflict handles the case where remote /full/current was rotated.
+// Merges local /full/current into the latest remote archived generation to avoid
+// duplicating checkpoint data, then adopts remote's /full/current as local.
+func handleRotationConflict(ctx context.Context, target string, repo *git.Repository, refName, tmpRefName plumbing.ReferenceName, remoteOnlyArchives []string) error {
+	// Use the latest remote-only archive
+	latestArchive := remoteOnlyArchives[len(remoteOnlyArchives)-1]
+	archiveRefName := plumbing.ReferenceName(paths.V2FullRefPrefix + latestArchive)
+
+	// Fetch the latest archived generation
+	archiveTmpRef := plumbing.ReferenceName("refs/entire-fetch-tmp/archive-" + latestArchive)
+	archiveRefSpec := fmt.Sprintf("+%s:%s", archiveRefName, archiveTmpRef)
+	fetchCmd := exec.CommandContext(ctx, "git", "fetch", target, archiveRefSpec)
+	if output, fetchErr := fetchCmd.CombinedOutput(); fetchErr != nil {
+		return fmt.Errorf("fetch archived generation failed: %s", output)
+	}
+	defer func() {
+		_ = repo.Storer.RemoveReference(archiveTmpRef) //nolint:errcheck
+	}()
+
+	// Get archived generation state
+	archiveRef, err := repo.Reference(archiveTmpRef, true)
+	if err != nil {
+		return fmt.Errorf("failed to get archived ref: %w", err)
+	}
+	archiveCommit, err := repo.CommitObject(archiveRef.Hash())
+	if err != nil {
+		return fmt.Errorf("failed to get archive commit: %w", err)
+	}
+	archiveTree, err := archiveCommit.Tree()
+	if err != nil {
+		return fmt.Errorf("failed to get archive tree: %w", err)
+	}
+
+	// Get local /full/current state
+	localRef, err := repo.Reference(refName, true)
+	if err != nil {
+		return fmt.Errorf("failed to get local ref: %w", err)
+	}
+	localCommit, err := repo.CommitObject(localRef.Hash())
+	if err != nil {
+		return fmt.Errorf("failed to get local commit: %w", err)
+	}
+	localTree, err := localCommit.Tree()
+	if err != nil {
+		return fmt.Errorf("failed to get local tree: %w", err)
+	}
+
+	// Tree-merge local /full/current into archived generation.
+	// Git content-addressing deduplicates shared shard paths automatically.
+	entries := make(map[string]object.TreeEntry)
+	if err := checkpoint.FlattenTree(repo, archiveTree, "", entries); err != nil {
+		return fmt.Errorf("failed to flatten archive tree: %w", err)
+	}
+	if err := checkpoint.FlattenTree(repo, localTree, "", entries); err != nil {
+		return fmt.Errorf("failed to flatten local tree: %w", err)
+	}
+
+	// Update generation.json timestamps if present in the merged tree.
+	// Use the local /full/current HEAD commit time as the newest checkpoint time
+	// (more accurate than time.Now() for cleanup scheduling).
+	if genEntry, exists := entries[paths.GenerationFileName]; exists {
+		if updatedEntry, updateErr := updateGenerationTimestamps(repo, genEntry.Hash, localCommit.Committer.When.UTC()); updateErr == nil {
+			entries[paths.GenerationFileName] = updatedEntry
+		}
+	}
+
+	mergedTreeHash, err := checkpoint.BuildTreeFromEntries(repo, entries)
+	if err != nil {
+		return fmt.Errorf("failed to build merged tree: %w", err)
+	}
+
+	// Create commit parented on archive's commit (fast-forward)
+	mergeCommitHash, err := createMergeCommitCommon(repo, mergedTreeHash,
+		[]plumbing.Hash{archiveRef.Hash()},
+		"Merge local checkpoints into archived generation")
+	if err != nil {
+		return fmt.Errorf("failed to create merge commit: %w", err)
+	}
+
+	// Update local archived ref and push it
+	newArchiveRef := plumbing.NewHashReference(archiveRefName, mergeCommitHash)
+	if err := repo.Storer.SetReference(newArchiveRef); err != nil {
+		return fmt.Errorf("failed to update archive ref: %w", err)
+	}
+
+	if pushErr := tryPushRef(ctx, target, archiveRefName); pushErr != nil {
+		return fmt.Errorf("failed to push updated archive: %w", pushErr)
+	}
+
+	// Adopt remote's /full/current as local
+	remoteRef, err := repo.Reference(tmpRefName, true)
+	if err != nil {
+		return fmt.Errorf("failed to get fetched /full/current: %w", err)
+	}
+	adoptedRef := plumbing.NewHashReference(refName, remoteRef.Hash())
+	if err := repo.Storer.SetReference(adoptedRef); err != nil {
+		return fmt.Errorf("failed to adopt remote /full/current: %w", err)
+	}
 
 	return nil
+}
+
+// updateGenerationTimestamps reads generation.json from a blob, updates
+// newest_checkpoint_at if the provided newestFromLocal is newer, and returns
+// an updated tree entry. Uses the local commit timestamp rather than
+// time.Now() so cleanup scheduling reflects actual checkpoint creation time.
+func updateGenerationTimestamps(repo *git.Repository, genBlobHash plumbing.Hash, newestFromLocal time.Time) (object.TreeEntry, error) {
+	blob, err := repo.BlobObject(genBlobHash)
+	if err != nil {
+		return object.TreeEntry{}, err
+	}
+	reader, err := blob.Reader()
+	if err != nil {
+		return object.TreeEntry{}, err
+	}
+	defer reader.Close()
+
+	data, err := io.ReadAll(reader)
+	if err != nil {
+		return object.TreeEntry{}, err
+	}
+
+	var gen checkpoint.GenerationMetadata
+	if err := json.Unmarshal(data, &gen); err != nil {
+		return object.TreeEntry{}, err
+	}
+
+	if newestFromLocal.After(gen.NewestCheckpointAt) {
+		gen.NewestCheckpointAt = newestFromLocal
+	}
+
+	updatedData, err := json.Marshal(gen)
+	if err != nil {
+		return object.TreeEntry{}, err
+	}
+
+	newBlobHash, err := checkpoint.CreateBlobFromContent(repo, updatedData)
+	if err != nil {
+		return object.TreeEntry{}, err
+	}
+
+	return object.TreeEntry{
+		Name: paths.GenerationFileName,
+		Mode: filemode.Regular,
+		Hash: newBlobHash,
+	}, nil
 }
 
 // pushV2Refs pushes v2 checkpoint refs to the target.

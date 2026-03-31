@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/entireio/cli/cmd/entire/cli/checkpoint"
 	"github.com/entireio/cli/cmd/entire/cli/checkpoint/id"
@@ -246,4 +247,131 @@ func TestPushV2Refs_PushesAllRefs(t *testing.T) {
 
 	_, err = bareRepo.Reference(plumbing.ReferenceName(paths.V2FullRefPrefix+"0000000000001"), true)
 	assert.Error(t, err, "older archived generation should NOT be pushed")
+}
+
+// TestFetchAndMergeRef_RotationConflict verifies that when /full/current push
+// fails because the remote was rotated, local data is merged into the latest
+// archived generation and remote's /full/current is adopted locally.
+// Not parallel: uses t.Chdir()
+func TestFetchAndMergeRef_RotationConflict(t *testing.T) {
+	ctx := context.Background()
+	fullCurrentRef := plumbing.ReferenceName(paths.V2FullCurrentRefName)
+
+	// Create bare "remote"
+	bareDir := t.TempDir()
+	initCmd := exec.CommandContext(ctx, "git", "init", "--bare")
+	initCmd.Dir = bareDir
+	initCmd.Env = testutil.GitIsolatedEnv()
+	require.NoError(t, initCmd.Run())
+
+	// Create local repo with a shared checkpoint on /full/current
+	localDir := t.TempDir()
+	testutil.InitRepo(t, localDir)
+	testutil.WriteFile(t, localDir, "f.txt", "init")
+	testutil.GitAdd(t, localDir, "f.txt")
+	testutil.GitCommit(t, localDir, "init")
+
+	localRepo, err := git.PlainOpen(localDir)
+	require.NoError(t, err)
+	writeV2Checkpoint(t, localRepo, id.MustCheckpointID("aabbccddeeff"), "shared-session")
+
+	// Push initial state to bare
+	pushCmd := exec.CommandContext(ctx, "git", "push", bareDir,
+		string(fullCurrentRef)+":"+string(fullCurrentRef))
+	pushCmd.Dir = localDir
+	require.NoError(t, pushCmd.Run())
+
+	// Simulate remote rotation: create a second repo, fetch, add checkpoint, rotate, push
+	remoteDir := t.TempDir()
+	testutil.InitRepo(t, remoteDir)
+	testutil.WriteFile(t, remoteDir, "f.txt", "init")
+	testutil.GitAdd(t, remoteDir, "f.txt")
+	testutil.GitCommit(t, remoteDir, "init")
+
+	fetchCmd := exec.CommandContext(ctx, "git", "fetch", bareDir,
+		"+"+string(fullCurrentRef)+":"+string(fullCurrentRef))
+	fetchCmd.Dir = remoteDir
+	require.NoError(t, fetchCmd.Run())
+
+	remoteRepo, err := git.PlainOpen(remoteDir)
+	require.NoError(t, err)
+	writeV2Checkpoint(t, remoteRepo, id.MustCheckpointID("112233445566"), "remote-session")
+
+	// Manually rotate: archive /full/current, create fresh orphan
+	remoteStore := checkpoint.NewV2GitStore(remoteRepo)
+	currentRef, err := remoteRepo.Reference(fullCurrentRef, true)
+	require.NoError(t, err)
+
+	// Write generation.json and archive
+	_, currentTreeHash, err := remoteStore.GetRefState(fullCurrentRef)
+	require.NoError(t, err)
+	gen := checkpoint.GenerationMetadata{
+		OldestCheckpointAt: time.Now().UTC().Add(-time.Hour),
+		NewestCheckpointAt: time.Now().UTC(),
+	}
+	archiveTreeHash, err := remoteStore.AddGenerationJSONToTree(currentTreeHash, gen)
+	require.NoError(t, err)
+	archiveCommitHash, err := checkpoint.CreateCommit(remoteRepo, archiveTreeHash,
+		currentRef.Hash(), "Archive", "Test", "test@test.com")
+	require.NoError(t, err)
+
+	archiveRefName := plumbing.ReferenceName(paths.V2FullRefPrefix + "0000000000001")
+	require.NoError(t, remoteRepo.Storer.SetReference(
+		plumbing.NewHashReference(archiveRefName, archiveCommitHash)))
+
+	// Create fresh orphan /full/current
+	emptyTree, err := checkpoint.BuildTreeFromEntries(remoteRepo, map[string]object.TreeEntry{})
+	require.NoError(t, err)
+	orphanHash, err := checkpoint.CreateCommit(remoteRepo, emptyTree, plumbing.ZeroHash,
+		"Start generation", "Test", "test@test.com")
+	require.NoError(t, err)
+	require.NoError(t, remoteRepo.Storer.SetReference(
+		plumbing.NewHashReference(fullCurrentRef, orphanHash)))
+
+	// Push rotated state to bare (force /full/current since it's now an orphan)
+	pushRotated := exec.CommandContext(ctx, "git", "push", "--force", bareDir,
+		string(fullCurrentRef)+":"+string(fullCurrentRef),
+		string(archiveRefName)+":"+string(archiveRefName))
+	pushRotated.Dir = remoteDir
+	out, pushErr := pushRotated.CombinedOutput()
+	require.NoError(t, pushErr, "push rotated state failed: %s", out)
+
+	// Add a local-only checkpoint
+	writeV2Checkpoint(t, localRepo, id.MustCheckpointID("ffeeddccbbaa"), "local-session")
+
+	t.Chdir(localDir)
+
+	// fetchAndMergeRef should detect rotation and merge into the archive
+	err = fetchAndMergeRef(ctx, bareDir, fullCurrentRef)
+	require.NoError(t, err)
+
+	// Verify: local /full/current should now be the fresh orphan from remote
+	localRepo, err = git.PlainOpen(localDir)
+	require.NoError(t, err)
+	localStore := checkpoint.NewV2GitStore(localRepo)
+	_, freshTreeHash, err := localStore.GetRefState(fullCurrentRef)
+	require.NoError(t, err)
+	freshCount, err := localStore.CountCheckpointsInTree(freshTreeHash)
+	require.NoError(t, err)
+	assert.Equal(t, 0, freshCount, "local /full/current should be fresh orphan after rotation recovery")
+
+	// Verify: archived generation should exist locally and contain the local-only checkpoint
+	archiveRef, err := localRepo.Reference(archiveRefName, true)
+	require.NoError(t, err)
+	archiveCommit, err := localRepo.CommitObject(archiveRef.Hash())
+	require.NoError(t, err)
+	archiveTree, err := archiveCommit.Tree()
+	require.NoError(t, err)
+
+	// Check that the local-only checkpoint (ffeeddccbbaa) is in the archive
+	_, err = archiveTree.Tree("ff/eeddccbbaa")
+	assert.NoError(t, err, "archived generation should contain local-only checkpoint ffeeddccbbaa")
+
+	// Check that the shared checkpoint (aabbccddeeff) is also there
+	_, err = archiveTree.Tree("aa/bbccddeeff")
+	assert.NoError(t, err, "archived generation should contain shared checkpoint aabbccddeeff")
+
+	// Check that the remote checkpoint (112233445566) is also there
+	_, err = archiveTree.Tree("11/2233445566")
+	assert.NoError(t, err, "archived generation should contain remote checkpoint 112233445566")
 }
