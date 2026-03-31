@@ -43,6 +43,9 @@ func (s *V2GitStore) maxCheckpoints() int {
 // fetchRemote is the git remote used for fetch-on-demand operations (e.g., fetching
 // /full/* refs during entire resume). Pass "origin" or the checkpoint remote URL.
 func NewV2GitStore(repo *git.Repository, fetchRemote string) *V2GitStore {
+	if fetchRemote == "" {
+		fetchRemote = "origin"
+	}
 	return &V2GitStore{
 		repo:        repo,
 		gs:          &GitStore{repo: repo},
