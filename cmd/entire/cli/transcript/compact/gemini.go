@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/entireio/cli/cmd/entire/cli/textutil"
 	"github.com/entireio/cli/cmd/entire/cli/transcript"
@@ -48,11 +49,13 @@ func isGeminiFormat(content []byte) bool {
 }
 
 // geminiMessage mirrors the Gemini message structure for unmarshaling.
+// Content is json.RawMessage because Gemini transcripts may encode it as
+// either a plain string or an array of content parts.
 type geminiMessage struct {
 	ID        string           `json:"id"`
 	Timestamp string           `json:"timestamp"`
 	Type      string           `json:"type"`
-	Content   string           `json:"content"`
+	Content   json.RawMessage  `json:"content"`
 	ToolCalls []geminiToolCall `json:"toolCalls"`
 	Tokens    *geminiTokens    `json:"tokens"`
 }
@@ -126,10 +129,10 @@ func compactGemini(content []byte, opts MetadataFields) ([]byte, error) {
 	return result, nil
 }
 
-// emitGeminiUser produces a single user line. Gemini user messages have
-// plain string content.
+// emitGeminiUser produces a single user line. Gemini user messages may have
+// content as a plain string or an array of content parts.
 func emitGeminiUser(result *[]byte, base transcriptLine, msg geminiMessage, ts json.RawMessage) {
-	text := textutil.StripIDEContextTags(msg.Content)
+	text := textutil.StripIDEContextTags(geminiContentText(msg.Content))
 	if text == "" {
 		return
 	}
@@ -151,10 +154,10 @@ func emitGeminiUser(result *[]byte, base transcriptLine, msg geminiMessage, ts j
 func emitGeminiAssistant(result *[]byte, base transcriptLine, msg geminiMessage, ts json.RawMessage) {
 	content := make([]map[string]json.RawMessage, 0, 1+len(msg.ToolCalls))
 
-	if msg.Content != "" {
+	if contentText := geminiContentText(msg.Content); contentText != "" {
 		b, err := json.Marshal(transcript.ContentTypeText)
 		if err == nil {
-			text, err := json.Marshal(msg.Content)
+			text, err := json.Marshal(contentText)
 			if err == nil {
 				content = append(content, map[string]json.RawMessage{
 					"type": b,
@@ -182,8 +185,10 @@ func emitGeminiAssistant(result *[]byte, base transcriptLine, msg geminiMessage,
 			"type":   b,
 			"id":     id,
 			"name":   name,
-			"input":  tc.Args,
 			"result": geminiToolResultCompact(tc),
+		}
+		if tc.Args != nil {
+			toolBlock["input"] = tc.Args
 		}
 		content = append(content, toolBlock)
 	}
@@ -207,6 +212,32 @@ func emitGeminiAssistant(result *[]byte, base transcriptLine, msg geminiMessage,
 		line.OutputTokens = msg.Tokens.Output
 	}
 	appendLine(result, line)
+}
+
+// geminiContentText extracts the text from a Gemini content field which may
+// be either a plain JSON string or an array of content parts (each with a
+// "text" field). Returns the concatenated text or "" if content is absent.
+func geminiContentText(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	// Try plain string first.
+	var s string
+	if json.Unmarshal(raw, &s) == nil {
+		return s
+	}
+	// Try array of parts with "text" fields.
+	var parts []struct {
+		Text string `json:"text"`
+	}
+	if json.Unmarshal(raw, &parts) == nil {
+		var sb strings.Builder
+		for _, p := range parts {
+			sb.WriteString(p.Text)
+		}
+		return sb.String()
+	}
+	return ""
 }
 
 // geminiToolResultCompact builds the compact {"output":"...","status":"..."}
