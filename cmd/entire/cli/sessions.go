@@ -12,6 +12,17 @@ import (
 	"github.com/spf13/cobra"
 )
 
+func newSessionsCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "sessions",
+		Short: "Manage agent sessions tracked by Entire",
+	}
+
+	cmd.AddCommand(newStopCmd())
+
+	return cmd
+}
+
 func newStopCmd() *cobra.Command {
 	var sessionFlag string
 	var allFlag bool
@@ -26,10 +37,10 @@ Fires EventSessionStop through the state machine with a no-op action handler,
 so no condensation or checkpoint-writing occurs. To flush pending work, commit first.
 
 Examples:
-  entire stop                     No sessions: exits. One session: confirm and stop. Multiple: show selector
-  entire stop --session <id>      Stop a specific session by ID
-  entire stop --all               Stop all active sessions in current worktree
-  entire stop --force             Skip confirmation prompt`,
+  entire sessions stop                     No sessions: exits. One session: confirm and stop. Multiple: show selector
+  entire sessions stop --session <id>      Stop a specific session by ID
+  entire sessions stop --all               Stop all active sessions in current worktree
+  entire sessions stop --force             Skip confirmation prompt`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			ctx := cmd.Context()
 

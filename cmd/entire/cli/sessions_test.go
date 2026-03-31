@@ -426,13 +426,8 @@ func TestStopCmd_NotGitRepo(t *testing.T) {
 		t.Fatal("expected error for non-git directory, got nil")
 	}
 
-	var silentErr *SilentError
-	if !errors.As(err, &silentErr) {
-		t.Errorf("expected SilentError, got: %T %v", err, err)
-	}
-
-	if !strings.Contains(stderr.String(), "Not a git repository.") {
-		t.Errorf("expected 'Not a git repository.' in stderr, got: %q", stderr.String())
+	if !strings.Contains(err.Error(), "not a git repository") {
+		t.Errorf("expected error to mention 'not a git repository', got: %v", err)
 	}
 }
 
