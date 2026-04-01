@@ -521,7 +521,7 @@ func getV2MetadataTree(ctx context.Context) (*object.Tree, *git.Repository, erro
 		)
 	}
 
-	return nil, nil, fmt.Errorf("v2 metadata tree: %w", err)
+	return nil, nil, fmt.Errorf("failed to get v2 metadata tree: %w", err)
 }
 
 // branchCheckpointsResult contains the result of searching for checkpoints on a branch.
