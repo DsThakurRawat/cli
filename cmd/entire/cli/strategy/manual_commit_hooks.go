@@ -2349,6 +2349,12 @@ func (s *ManualCommitStrategy) finalizeAllTurnCheckpoints(ctx context.Context, s
 			Agent:        state.AgentType,
 		}
 
+		// Generate compact transcript for v2 /main
+		if v2Store != nil && len(fullTranscript) > 0 {
+			finalAg, _ := agent.GetByAgentType(state.AgentType)
+			updateOpts.CompactTranscript = compactTranscriptForV2(logCtx, finalAg, fullTranscript, state.CheckpointTranscriptStart)
+		}
+
 		updateErr := store.UpdateCommitted(ctx, updateOpts)
 		if updateErr != nil {
 			logging.Warn(logCtx, "finalize: failed to update checkpoint",
