@@ -4,12 +4,17 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"path/filepath"
+	"sort"
+	"strings"
+	"time"
 
 	"github.com/charmbracelet/huh"
 	"github.com/entireio/cli/cmd/entire/cli/paths"
 	"github.com/entireio/cli/cmd/entire/cli/session"
 	"github.com/entireio/cli/cmd/entire/cli/strategy"
+	"github.com/entireio/cli/cmd/entire/cli/stringutil"
 	"github.com/spf13/cobra"
 )
 
@@ -19,6 +24,7 @@ func newSessionsCmd() *cobra.Command {
 		Short: "Manage agent sessions tracked by Entire",
 	}
 
+	cmd.AddCommand(newListCmd())
 	cmd.AddCommand(newStopCmd())
 
 	return cmd
@@ -135,6 +141,131 @@ func sessionWorktreeLabel(s *strategy.SessionState) string {
 		return filepath.Base(s.WorktreePath)
 	}
 	return "(unknown)"
+}
+
+// sessionPhaseLabel returns the display status for a session.
+func sessionPhaseLabel(s *strategy.SessionState) string {
+	if s.EndedAt != nil {
+		return "ended"
+	}
+	status := string(s.Phase)
+	if status == "" {
+		return "idle"
+	}
+	return status
+}
+
+func newListCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "list",
+		Short: "List all sessions",
+		Long: `List all sessions tracked by Entire, including ended sessions.
+
+For active sessions only, use 'entire status'.
+
+Examples:
+  entire sessions list    List all sessions across all worktrees`,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			ctx := cmd.Context()
+
+			if _, err := paths.WorktreeRoot(ctx); err != nil {
+				return errors.New("not a git repository")
+			}
+
+			return runSessionList(ctx, cmd)
+		},
+	}
+
+	return cmd
+}
+
+func runSessionList(ctx context.Context, cmd *cobra.Command) error {
+	states, err := strategy.ListSessionStates(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to list sessions: %w", err)
+	}
+
+	var filtered []*strategy.SessionState
+	for _, s := range states {
+		if s != nil {
+			filtered = append(filtered, s)
+		}
+	}
+
+	w := cmd.OutOrStdout()
+
+	if len(filtered) == 0 {
+		fmt.Fprintln(w, "No sessions.")
+		return nil
+	}
+
+	// Sort by StartedAt descending (newest first)
+	sort.Slice(filtered, func(i, j int) bool {
+		return filtered[i].StartedAt.After(filtered[j].StartedAt)
+	})
+
+	sty := newStatusStyles(w)
+
+	fmt.Fprintln(w, sty.sectionRule("Sessions", sty.width))
+	fmt.Fprintln(w)
+
+	for _, s := range filtered {
+		writeSessionCard(w, s, sty)
+	}
+
+	// Footer
+	fmt.Fprintln(w, sty.horizontalRule(sty.width))
+	if len(filtered) == 1 {
+		fmt.Fprintln(w, sty.render(sty.dim, "1 session"))
+	} else {
+		fmt.Fprintln(w, sty.render(sty.dim, fmt.Sprintf("%d sessions", len(filtered))))
+	}
+	fmt.Fprintln(w)
+
+	return nil
+}
+
+// writeSessionCard renders a single session in status-style card format.
+func writeSessionCard(w io.Writer, s *strategy.SessionState, sty statusStyles) {
+	agentLabel := string(s.AgentType)
+	if agentLabel == "" {
+		agentLabel = "(unknown)"
+	}
+	wt := sessionWorktreeLabel(s)
+
+	// Line 1: Agent · Model · worktree · session <id> [· checkpoint <id>]
+	fmt.Fprint(w, sty.render(sty.agent, agentLabel))
+	if s.ModelName != "" {
+		fmt.Fprintf(w, " %s %s", sty.render(sty.dim, "·"), sty.render(sty.dim, s.ModelName))
+	}
+	fmt.Fprintf(w, " %s %s", sty.render(sty.dim, "·"), wt)
+	fmt.Fprintf(w, " %s session %s", sty.render(sty.dim, "·"), s.SessionID)
+	if s.LastCheckpointID != "" {
+		fmt.Fprintf(w, " %s checkpoint %s", sty.render(sty.dim, "·"), string(s.LastCheckpointID))
+	}
+	fmt.Fprintln(w)
+
+	// Line 2: > "prompt" (truncated)
+	if s.LastPrompt != "" {
+		prompt := stringutil.TruncateRunes(s.LastPrompt, 60, "...")
+		fmt.Fprintf(w, "%s \"%s\"\n", sty.render(sty.dim, ">"), prompt)
+	}
+
+	// Line 3: status · started X ago · active X ago · tokens X.Xk
+	var stats []string
+	stats = append(stats, sessionPhaseLabel(s))
+	stats = append(stats, "started "+timeAgo(s.StartedAt))
+	if s.LastInteractionTime != nil && s.LastInteractionTime.Sub(s.StartedAt) > time.Minute {
+		stats = append(stats, activeTimeDisplay(s.LastInteractionTime))
+	}
+	tokens := "0"
+	if s.TokenUsage != nil {
+		tokens = formatTokenCount(totalTokens(s.TokenUsage))
+	}
+	stats = append(stats, "tokens "+tokens)
+	statsLine := strings.Join(stats, sty.render(sty.dim, " · "))
+	fmt.Fprintln(w, sty.render(sty.dim, statsLine))
+	fmt.Fprintln(w)
 }
 
 // runStopSession stops a single session by ID, with optional confirmation.
