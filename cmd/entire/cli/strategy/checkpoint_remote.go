@@ -368,6 +368,30 @@ func FetchMetadataBranch(ctx context.Context, remoteURL string) error {
 	return nil
 }
 
+// FetchV2MainFromURL fetches the v2 /main ref from a remote URL and updates the local ref.
+// Uses explicit refspec since v2 refs are under refs/entire/, not refs/heads/.
+func FetchV2MainFromURL(ctx context.Context, remoteURL string) error {
+	fetchCtx, cancel := context.WithTimeout(ctx, checkpointRemoteFetchTimeout)
+	defer cancel()
+
+	refSpec := fmt.Sprintf("+%s:%s", paths.V2MainRefName, paths.V2MainRefName)
+	fetchCmd := CheckpointGitCommand(fetchCtx, remoteURL, "fetch", "--no-tags", remoteURL, refSpec)
+	if fetchCmd.Env == nil {
+		fetchCmd.Env = os.Environ()
+	}
+	fetchCmd.Env = append(fetchCmd.Env, "GIT_TERMINAL_PROMPT=0")
+	if output, err := fetchCmd.CombinedOutput(); err != nil {
+		redactedURL := redactURL(remoteURL)
+		msg := strings.TrimSpace(strings.ReplaceAll(string(output), remoteURL, redactedURL))
+		if msg != "" {
+			return fmt.Errorf("fetch v2 /main from %s failed: %s: %w", redactedURL, msg, err)
+		}
+		return fmt.Errorf("fetch v2 /main from %s failed: %w", redactedURL, err)
+	}
+
+	return nil
+}
+
 // fetchMetadataBranchIfMissing fetches the metadata branch from a URL only if it doesn't exist locally.
 // This avoids network calls on every push — once the branch exists locally, this is a no-op.
 // Fetch failures are silently swallowed (returns nil): the push will handle creating the
