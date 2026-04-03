@@ -20,12 +20,12 @@ type statusStyles struct {
 	width        int
 
 	// Styles
-	green lipgloss.Style
-	red   lipgloss.Style
-	gray  lipgloss.Style
-	bold  lipgloss.Style
-	dim   lipgloss.Style
-	agent lipgloss.Style // amber/orange for agent names
+	green  lipgloss.Style
+	red    lipgloss.Style
+	gray   lipgloss.Style
+	bold   lipgloss.Style
+	dim    lipgloss.Style
+	agent  lipgloss.Style // amber/orange for agent names
 	cyan   lipgloss.Style
 	yellow lipgloss.Style // yellow for stale warnings
 }
