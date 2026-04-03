@@ -1008,6 +1008,67 @@ func TestFormatSettingsStatusShort_Disabled(t *testing.T) {
 	}
 }
 
+func TestRunStatus_ShowsEnabledAgents(t *testing.T) {
+	setupTestRepo(t)
+	writeSettings(t, testSettingsEnabled)
+
+	// Install Claude Code hooks so GetAgentsWithHooksInstalled finds them
+	claudeDir := ".claude"
+	if err := os.MkdirAll(claudeDir, 0o755); err != nil {
+		t.Fatalf("Failed to create .claude dir: %v", err)
+	}
+	claudeSettings := `{
+		"hooks": {
+			"Stop": [{"matcher": "", "hooks": [{"type": "command", "command": "entire hooks claude-code stop"}]}]
+		}
+	}`
+	if err := os.WriteFile(filepath.Join(claudeDir, "settings.json"), []byte(claudeSettings), 0o644); err != nil {
+		t.Fatalf("Failed to write claude settings: %v", err)
+	}
+
+	var stdout bytes.Buffer
+	if err := runStatus(context.Background(), &stdout, false); err != nil {
+		t.Fatalf("runStatus() error = %v", err)
+	}
+
+	output := stdout.String()
+	if !strings.Contains(output, "Hooks installed:") {
+		t.Errorf("Expected 'Hooks installed:' in output, got: %s", output)
+	}
+	if !strings.Contains(output, "Claude Code") {
+		t.Errorf("Expected 'Claude Code' in output, got: %s", output)
+	}
+}
+
+func TestRunStatus_DisabledDoesNotShowAgents(t *testing.T) {
+	setupTestRepo(t)
+	writeSettings(t, testSettingsDisabled)
+
+	// Install Claude Code hooks
+	claudeDir := ".claude"
+	if err := os.MkdirAll(claudeDir, 0o755); err != nil {
+		t.Fatalf("Failed to create .claude dir: %v", err)
+	}
+	claudeSettings := `{
+		"hooks": {
+			"Stop": [{"matcher": "", "hooks": [{"type": "command", "command": "entire hooks claude-code stop"}]}]
+		}
+	}`
+	if err := os.WriteFile(filepath.Join(claudeDir, "settings.json"), []byte(claudeSettings), 0o644); err != nil {
+		t.Fatalf("Failed to write claude settings: %v", err)
+	}
+
+	var stdout bytes.Buffer
+	if err := runStatus(context.Background(), &stdout, false); err != nil {
+		t.Fatalf("runStatus() error = %v", err)
+	}
+
+	output := stdout.String()
+	if strings.Contains(output, "Hooks installed:") {
+		t.Errorf("Disabled status should not show agents, got: %s", output)
+	}
+}
+
 func TestFormatSettingsStatus_Project(t *testing.T) {
 	t.Parallel()
 
