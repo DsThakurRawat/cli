@@ -1011,20 +1011,7 @@ func TestFormatSettingsStatusShort_Disabled(t *testing.T) {
 func TestRunStatus_ShowsEnabledAgents(t *testing.T) {
 	setupTestRepo(t)
 	writeSettings(t, testSettingsEnabled)
-
-	// Install Claude Code hooks so GetAgentsWithHooksInstalled finds them
-	claudeDir := ".claude"
-	if err := os.MkdirAll(claudeDir, 0o755); err != nil {
-		t.Fatalf("Failed to create .claude dir: %v", err)
-	}
-	claudeSettings := `{
-		"hooks": {
-			"Stop": [{"matcher": "", "hooks": [{"type": "command", "command": "entire hooks claude-code stop"}]}]
-		}
-	}`
-	if err := os.WriteFile(filepath.Join(claudeDir, "settings.json"), []byte(claudeSettings), 0o644); err != nil {
-		t.Fatalf("Failed to write claude settings: %v", err)
-	}
+	writeClaudeHooksFixture(t)
 
 	var stdout bytes.Buffer
 	if err := runStatus(context.Background(), &stdout, false); err != nil {
@@ -1043,20 +1030,7 @@ func TestRunStatus_ShowsEnabledAgents(t *testing.T) {
 func TestRunStatus_DisabledDoesNotShowAgents(t *testing.T) {
 	setupTestRepo(t)
 	writeSettings(t, testSettingsDisabled)
-
-	// Install Claude Code hooks
-	claudeDir := ".claude"
-	if err := os.MkdirAll(claudeDir, 0o755); err != nil {
-		t.Fatalf("Failed to create .claude dir: %v", err)
-	}
-	claudeSettings := `{
-		"hooks": {
-			"Stop": [{"matcher": "", "hooks": [{"type": "command", "command": "entire hooks claude-code stop"}]}]
-		}
-	}`
-	if err := os.WriteFile(filepath.Join(claudeDir, "settings.json"), []byte(claudeSettings), 0o644); err != nil {
-		t.Fatalf("Failed to write claude settings: %v", err)
-	}
+	writeClaudeHooksFixture(t)
 
 	var stdout bytes.Buffer
 	if err := runStatus(context.Background(), &stdout, false); err != nil {
