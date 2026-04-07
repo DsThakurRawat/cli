@@ -215,8 +215,11 @@ func fetchAndRebaseSessionsCommon(ctx context.Context, target, branchName string
 		return nil
 	}
 
-	// Collect local commits since merge base and cherry-pick onto remote tip
-	localCommits, err := collectCommitsSince(repo, localRef.Hash(), mergeBase)
+	// Collect commits reachable from local but not from remote and cherry-pick
+	// them onto the remote tip. This preserves local-only commits even when the
+	// local metadata branch already contains old merge commits, while avoiding
+	// replaying shared ancestors older than the true merge-base.
+	localCommits, err := collectCommitsSince(ctx, repo, repoPath, localRef.Hash(), remoteRef.Hash())
 	if err != nil {
 		return fmt.Errorf("failed to collect local commits: %w", err)
 	}
@@ -268,34 +271,35 @@ func getMergeBase(ctx context.Context, repoPath, hashA, hashB string) (plumbing.
 	return plumbing.NewHash(strings.TrimSpace(string(output))), nil
 }
 
-// collectCommitsSince walks from tip backwards (first parent only) and collects
-// commits until it reaches stopAt (exclusive). Returns commits oldest-first.
-func collectCommitsSince(repo *git.Repository, tip, stopAt plumbing.Hash) ([]*object.Commit, error) {
-	var chain []*object.Commit
-	current := tip
+// collectCommitsSince returns commits reachable from tip but not from exclude,
+// ordered oldest-first in topological order.
+func collectCommitsSince(ctx context.Context, repo *git.Repository, repoPath string, tip, exclude plumbing.Hash) ([]*object.Commit, error) {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
 
-	for range MaxCommitTraversalDepth {
-		if current == stopAt {
-			break
-		}
-		commit, err := repo.CommitObject(current)
-		if err != nil {
-			return nil, fmt.Errorf("failed to get commit %s: %w", current, err)
-		}
-		chain = append(chain, commit)
-
-		if len(commit.ParentHashes) == 0 {
-			break
-		}
-		current = commit.ParentHashes[0]
+	cmd := exec.CommandContext(ctx, "git", "rev-list", "--reverse", "--topo-order", exclude.String()+".."+tip.String())
+	cmd.Dir = repoPath
+	output, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("git rev-list failed: %w", err)
 	}
 
-	// Reverse to oldest-first
-	for i, j := 0, len(chain)-1; i < j; i, j = i+1, j-1 {
-		chain[i], chain[j] = chain[j], chain[i]
+	lines := strings.Fields(string(output))
+	if len(lines) > MaxCommitTraversalDepth {
+		return nil, fmt.Errorf("commit chain exceeded %d commits; aborting rebase", MaxCommitTraversalDepth)
 	}
 
-	return chain, nil
+	commits := make([]*object.Commit, 0, len(lines))
+	for _, line := range lines {
+		hash := plumbing.NewHash(line)
+		commit, commitErr := repo.CommitObject(hash)
+		if commitErr != nil {
+			return nil, fmt.Errorf("failed to get commit %s: %w", hash, commitErr)
+		}
+		commits = append(commits, commit)
+	}
+
+	return commits, nil
 }
 
 // startProgressDots prints dots to w every second until the returned stop function

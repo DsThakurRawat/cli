@@ -379,3 +379,124 @@ func TestFetchAndRebase_LocalBehind(t *testing.T) {
 
 	assert.Equal(t, remoteRef.Hash(), localRef.Hash(), "local should fast-forward to remote")
 }
+
+// TestFetchAndRebase_MergeBaseOnSecondParent_DoesNotReplayAncestors verifies
+// that rebasing a metadata branch with an existing merge commit does not replay
+// ancestors older than the true merge-base. Replaying those ancestors can
+// resurrect checkpoint shards that the remote deleted after the merge-base.
+//
+// Not parallel: uses t.Chdir() (required for OpenRepository).
+func TestFetchAndRebase_MergeBaseOnSecondParent_DoesNotReplayAncestors(t *testing.T) {
+	ctx := context.Background()
+	branchName := paths.MetadataBranchName
+
+	bareDir := t.TempDir()
+	setupDir := t.TempDir()
+	gitRun := func(dir string, args ...string) {
+		t.Helper()
+		cmd := exec.CommandContext(ctx, "git", args...)
+		cmd.Dir = dir
+		cmd.Env = testutil.GitIsolatedEnv()
+		out, err := cmd.CombinedOutput()
+		require.NoError(t, err, "git %v in %s failed: %s", args, dir, out)
+	}
+
+	// Initialize origin and seed main.
+	gitRun(bareDir, "init", "--bare", "-b", "main")
+	gitRun(setupDir, "clone", bareDir, ".")
+	gitRun(setupDir, "config", "user.email", "test@test.com")
+	gitRun(setupDir, "config", "user.name", "Test User")
+	gitRun(setupDir, "config", "commit.gpgsign", "false")
+	require.NoError(t, os.WriteFile(filepath.Join(setupDir, "README.md"), []byte("# Test"), 0o644))
+	gitRun(setupDir, "add", ".")
+	gitRun(setupDir, "commit", "-m", "init")
+	gitRun(setupDir, "push", "origin", "main")
+
+	// Seed metadata branch with checkpoint aa.
+	gitRun(setupDir, "checkout", "--orphan", branchName)
+	gitRun(setupDir, "rm", "-rf", ".")
+	baseDir := filepath.Join(setupDir, "aa", "aaaaaaaaaa")
+	require.NoError(t, os.MkdirAll(baseDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(baseDir, "metadata.json"),
+		[]byte(`{"checkpoint_id":"aaaaaaaaaaaa"}`), 0o644))
+	gitRun(setupDir, "add", ".")
+	gitRun(setupDir, "commit", "-m", "Checkpoint: aaaaaaaaaaaa")
+	gitRun(setupDir, "push", "origin", branchName)
+	gitRun(setupDir, "checkout", "main")
+
+	// Clone twice: local gets the old merge-commit history, remote advances later.
+	cloneLocal := filepath.Join(t.TempDir(), "clone-local")
+	cloneRemote := filepath.Join(t.TempDir(), "clone-remote")
+	require.NoError(t, os.MkdirAll(cloneLocal, 0o755))
+	require.NoError(t, os.MkdirAll(cloneRemote, 0o755))
+
+	for _, dir := range []string{cloneLocal, cloneRemote} {
+		gitRun(dir, "clone", bareDir, ".")
+		gitRun(dir, "config", "user.email", "test@test.com")
+		gitRun(dir, "config", "user.name", "Test User")
+		gitRun(dir, "config", "commit.gpgsign", "false")
+		gitRun(dir, "branch", branchName, "origin/"+branchName)
+	}
+
+	// Local commit B: add checkpoint bb.
+	gitRun(cloneLocal, "checkout", branchName)
+	localDir := filepath.Join(cloneLocal, "bb", "bbbbbbbbbb")
+	require.NoError(t, os.MkdirAll(localDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(localDir, "metadata.json"),
+		[]byte(`{"checkpoint_id":"bbbbbbbbbbbb"}`), 0o644))
+	gitRun(cloneLocal, "add", ".")
+	gitRun(cloneLocal, "commit", "-m", "Checkpoint: bbbbbbbbbbbb")
+
+	// Remote commit C: add checkpoint cc and push.
+	gitRun(cloneRemote, "checkout", branchName)
+	remoteDirC := filepath.Join(cloneRemote, "cc", "cccccccccc")
+	require.NoError(t, os.MkdirAll(remoteDirC, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(remoteDirC, "metadata.json"),
+		[]byte(`{"checkpoint_id":"cccccccccccc"}`), 0o644))
+	gitRun(cloneRemote, "add", ".")
+	gitRun(cloneRemote, "commit", "-m", "Checkpoint: cccccccccccc")
+	gitRun(cloneRemote, "push", "origin", branchName)
+
+	// Local old-style sync: fetch and merge origin/metadata, creating a merge commit.
+	gitRun(cloneLocal, "fetch", "origin", branchName)
+	gitRun(cloneLocal, "merge", "--no-ff", "--no-edit", "origin/"+branchName)
+
+	// Remote commit D: delete checkpoint aa after C and push.
+	require.NoError(t, os.Remove(filepath.Join(cloneRemote, "aa", "aaaaaaaaaa", "metadata.json")))
+	gitRun(cloneRemote, "add", "-A")
+	remoteDirD := filepath.Join(cloneRemote, "dd", "dddddddddd")
+	require.NoError(t, os.MkdirAll(remoteDirD, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(remoteDirD, "metadata.json"),
+		[]byte(`{"checkpoint_id":"dddddddddddd"}`), 0o644))
+	gitRun(cloneRemote, "add", ".")
+	gitRun(cloneRemote, "commit", "-m", "Checkpoint: dddddddddddd")
+	gitRun(cloneRemote, "push", "origin", branchName)
+	gitRun(cloneRemote, "checkout", "main")
+	gitRun(cloneLocal, "checkout", "main")
+
+	// Rebase local metadata branch onto the updated remote tip.
+	t.Chdir(cloneLocal)
+
+	err := fetchAndRebaseSessionsCommon(ctx, "origin", branchName)
+	require.NoError(t, err)
+
+	repo, err := git.PlainOpen(cloneLocal)
+	require.NoError(t, err)
+
+	localRef, err := repo.Reference(plumbing.NewBranchReferenceName(branchName), true)
+	require.NoError(t, err)
+
+	tipCommit, err := repo.CommitObject(localRef.Hash())
+	require.NoError(t, err)
+	tree, err := tipCommit.Tree()
+	require.NoError(t, err)
+
+	entries := make(map[string]object.TreeEntry)
+	require.NoError(t, checkpoint.FlattenTree(repo, tree, "", entries))
+
+	assert.NotContains(t, entries, "aa/aaaaaaaaaa/metadata.json",
+		"rebasing should not replay ancestors older than the true merge-base")
+	assert.Contains(t, entries, "bb/bbbbbbbbbb/metadata.json", "local checkpoint should be preserved")
+	assert.Contains(t, entries, "cc/cccccccccc/metadata.json", "merged remote checkpoint should be preserved")
+	assert.Contains(t, entries, "dd/dddddddddd/metadata.json", "new remote checkpoint should be preserved")
+}
