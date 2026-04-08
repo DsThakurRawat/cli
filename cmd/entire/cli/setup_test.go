@@ -1989,3 +1989,74 @@ func TestConfigureCmd_SummarizeProvider_InvalidProvider(t *testing.T) {
 		t.Fatal("expected error for unsupported summary provider")
 	}
 }
+
+func TestConfigureCmd_SummarizeProvider_SwitchClearsStaleModel(t *testing.T) {
+	setupTestRepo(t)
+	writeSettings(t, `{"enabled": true, "summary_generation": {"provider": "claude-code", "model": "sonnet"}}`)
+
+	cmd := newSetupCmd()
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"--summarize-provider", "codex"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("configure --summarize-provider codex failed: %v", err)
+	}
+
+	s, err := settings.LoadFromFile(EntireSettingsFile)
+	if err != nil {
+		t.Fatalf("failed to load settings: %v", err)
+	}
+	if s.SummaryGeneration == nil {
+		t.Fatal("expected summary_generation to be set")
+	}
+	if s.SummaryGeneration.Provider != "codex" {
+		t.Fatalf("summary provider = %q, want %q", s.SummaryGeneration.Provider, "codex")
+	}
+	if s.SummaryGeneration.Model != "" {
+		t.Fatalf("summary model = %q, want empty after provider switch", s.SummaryGeneration.Model)
+	}
+}
+
+func TestConfigureCmd_SummarizeModel_RequiresProvider(t *testing.T) {
+	setupTestRepo(t)
+	writeSettings(t, testSettingsEnabled)
+
+	cmd := newSetupCmd()
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"--summarize-model", "sonnet"})
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected error for summarize-model without provider")
+	}
+}
+
+func TestConfigureCmd_SummarizeModel_UsesExistingProvider(t *testing.T) {
+	setupTestRepo(t)
+	writeSettings(t, `{"enabled": true, "summary_generation": {"provider": "claude-code"}}`)
+
+	cmd := newSetupCmd()
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"--summarize-model", "sonnet"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("configure --summarize-model failed: %v", err)
+	}
+
+	s, err := settings.LoadFromFile(EntireSettingsFile)
+	if err != nil {
+		t.Fatalf("failed to load settings: %v", err)
+	}
+	if s.SummaryGeneration == nil {
+		t.Fatal("expected summary_generation to be set")
+	}
+	if s.SummaryGeneration.Provider != "claude-code" {
+		t.Fatalf("summary provider = %q, want %q", s.SummaryGeneration.Provider, "claude-code")
+	}
+	if s.SummaryGeneration.Model != "sonnet" {
+		t.Fatalf("summary model = %q, want %q", s.SummaryGeneration.Model, "sonnet")
+	}
+}

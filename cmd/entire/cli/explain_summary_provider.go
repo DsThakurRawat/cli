@@ -181,6 +181,9 @@ func persistSummaryProviderSelection(ctx context.Context, provider types.AgentNa
 	if s.SummaryGeneration == nil {
 		s.SummaryGeneration = &settings.SummaryGenerationSettings{}
 	}
+	if s.SummaryGeneration.Provider != "" && s.SummaryGeneration.Provider != string(provider) && model == "" {
+		s.SummaryGeneration.Model = ""
+	}
 	s.SummaryGeneration.Provider = string(provider)
 	if model != "" {
 		s.SummaryGeneration.Model = model

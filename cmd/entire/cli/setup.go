@@ -124,11 +124,6 @@ func updateSummaryGenerationSettings(ctx context.Context, w io.Writer, provider,
 	if provider == "" && model == "" {
 		return errors.New("at least one of --summarize-provider or --summarize-model must be set")
 	}
-	if provider != "" {
-		if err := validateSummaryProvider(provider); err != nil {
-			return err
-		}
-	}
 
 	targetFile, configDisplay := settingsTargetFile(ctx, opts.UseLocalSettings, opts.UseProjectSettings)
 	targetFileAbs, err := paths.AbsPath(ctx, targetFile)
@@ -143,7 +138,20 @@ func updateSummaryGenerationSettings(ctx context.Context, w io.Writer, provider,
 	if s.SummaryGeneration == nil {
 		s.SummaryGeneration = &settings.SummaryGenerationSettings{}
 	}
+
 	if provider != "" {
+		if err := validateSummaryProvider(provider); err != nil {
+			return err
+		}
+	}
+	if model != "" && provider == "" && s.SummaryGeneration.Provider == "" {
+		return errors.New("--summarize-model requires an existing summary provider or --summarize-provider")
+	}
+
+	if provider != "" {
+		if s.SummaryGeneration.Provider != "" && s.SummaryGeneration.Provider != provider && model == "" {
+			s.SummaryGeneration.Model = ""
+		}
 		s.SummaryGeneration.Provider = provider
 	}
 	if model != "" {
