@@ -36,6 +36,12 @@ import (
 	"golang.org/x/term"
 )
 
+const defaultCheckpointSummaryTimeout = 30 * time.Second
+
+var checkpointSummaryTimeout = defaultCheckpointSummaryTimeout
+
+var generateTranscriptSummary = summarize.GenerateFromTranscript
+
 // interaction holds a single prompt and its responses for display.
 type interaction struct {
 	Prompt    string
@@ -474,7 +480,7 @@ func generateCheckpointSummary(ctx context.Context, w, errW io.Writer, v1Store *
 		fmt.Fprintln(errW, "Generating checkpoint summary...")
 	}
 
-	summary, err := summarize.GenerateFromTranscript(ctx, scopedTranscript, cpSummary.FilesTouched, content.Metadata.Agent, nil)
+	summary, err := generateCheckpointAISummary(ctx, scopedTranscript, cpSummary.FilesTouched, content.Metadata.Agent)
 	if err != nil {
 		return fmt.Errorf("failed to generate summary: %w", err)
 	}
@@ -507,6 +513,41 @@ func generateCheckpointSummary(ctx context.Context, w, errW io.Writer, v1Store *
 
 	fmt.Fprintln(w, "✓ Summary generated and saved")
 	return nil
+}
+
+func generateCheckpointAISummary(ctx context.Context, scopedTranscript []byte, filesTouched []string, agentType types.AgentType) (*checkpoint.Summary, error) {
+	timeoutCtx := ctx
+	cancel := func() {}
+	timeoutDuration := checkpointSummaryTimeout
+
+	if deadline, ok := ctx.Deadline(); ok {
+		timeoutDuration = time.Until(deadline)
+	} else {
+		var cancelFunc context.CancelFunc
+		timeoutCtx, cancelFunc = context.WithTimeout(ctx, checkpointSummaryTimeout)
+		cancel = cancelFunc
+	}
+	defer cancel()
+
+	summary, err := generateTranscriptSummary(timeoutCtx, scopedTranscript, filesTouched, agentType, nil)
+	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) || errors.Is(timeoutCtx.Err(), context.DeadlineExceeded) {
+			return nil, fmt.Errorf("summary generation timed out after %s: %w", formatSummaryTimeout(timeoutDuration), context.DeadlineExceeded)
+		}
+		return nil, err
+	}
+
+	return summary, nil
+}
+
+func formatSummaryTimeout(d time.Duration) string {
+	if d < 0 {
+		d = 0
+	}
+	if d < time.Second {
+		return d.Round(10 * time.Millisecond).String()
+	}
+	return d.Round(time.Second).String()
 }
 
 // explainTemporaryCheckpoint finds and formats a temporary checkpoint by shadow commit hash prefix.
