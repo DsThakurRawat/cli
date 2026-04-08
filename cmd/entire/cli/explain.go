@@ -339,10 +339,15 @@ func generateCheckpointSummary(ctx context.Context, w, _ io.Writer, store *check
 		return fmt.Errorf("checkpoint %s has no transcript content for this checkpoint (scoped)", checkpointID)
 	}
 
+	provider, err := resolveCheckpointSummaryProvider(ctx, w)
+	if err != nil {
+		return fmt.Errorf("failed to resolve summary provider: %w", err)
+	}
+
 	// Generate summary using shared helper
 	logging.Info(ctx, "generating checkpoint summary")
 
-	summary, err := summarize.GenerateFromTranscript(ctx, scopedTranscript, cpSummary.FilesTouched, content.Metadata.Agent, nil)
+	summary, err := summarize.GenerateFromTranscript(ctx, scopedTranscript, cpSummary.FilesTouched, content.Metadata.Agent, provider.Generator)
 	if err != nil {
 		return fmt.Errorf("failed to generate summary: %w", err)
 	}
@@ -353,6 +358,7 @@ func generateCheckpointSummary(ctx context.Context, w, _ io.Writer, store *check
 	}
 
 	fmt.Fprintln(w, "✓ Summary generated and saved")
+	fmt.Fprint(w, formatSummaryProviderDetails(provider))
 	return nil
 }
 

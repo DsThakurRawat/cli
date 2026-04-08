@@ -59,6 +59,7 @@ func TestLoad_AcceptsValidKeys(t *testing.T) {
 		"local_dev": false,
 		"log_level": "debug",
 		"strategy_options": {"key": "value"},
+		"summary_generation": {"provider": "claude-code", "model": "sonnet"},
 		"telemetry": true,
 		"redaction": {"pii": {"enabled": true, "email": true, "phone": false}},
 		"external_agents": true
@@ -90,6 +91,15 @@ func TestLoad_AcceptsValidKeys(t *testing.T) {
 	}
 	if settings.Telemetry == nil || !*settings.Telemetry {
 		t.Error("expected telemetry to be true")
+	}
+	if settings.SummaryGeneration == nil {
+		t.Fatal("expected summary_generation to be non-nil")
+	}
+	if settings.SummaryGeneration.Provider != "claude-code" {
+		t.Errorf("expected summary_generation.provider 'claude-code', got %q", settings.SummaryGeneration.Provider)
+	}
+	if settings.SummaryGeneration.Model != "sonnet" {
+		t.Errorf("expected summary_generation.model 'sonnet', got %q", settings.SummaryGeneration.Model)
 	}
 	if settings.Redaction == nil {
 		t.Fatal("expected redaction to be non-nil")
@@ -444,6 +454,81 @@ func TestMergeJSON_ExternalAgents(t *testing.T) {
 	}
 	if !s.ExternalAgents {
 		t.Error("expected ExternalAgents to be true from local override")
+	}
+}
+
+func TestLoad_SummaryGenerationField(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	entireDir := filepath.Join(tmpDir, ".entire")
+	if err := os.MkdirAll(entireDir, 0o755); err != nil {
+		t.Fatalf("failed to create .entire directory: %v", err)
+	}
+
+	settingsFile := filepath.Join(entireDir, "settings.json")
+	if err := os.WriteFile(settingsFile, []byte(`{"enabled": true, "summary_generation": {"provider": "codex", "model": "gpt-5"}}`), 0o644); err != nil {
+		t.Fatalf("failed to write settings file: %v", err)
+	}
+
+	if err := os.MkdirAll(filepath.Join(tmpDir, ".git"), 0o755); err != nil {
+		t.Fatalf("failed to create .git directory: %v", err)
+	}
+
+	t.Chdir(tmpDir)
+
+	s, err := Load(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if s.SummaryGeneration == nil {
+		t.Fatal("expected SummaryGeneration to be non-nil")
+	}
+	if s.SummaryGeneration.Provider != "codex" {
+		t.Errorf("SummaryGeneration.Provider = %q, want %q", s.SummaryGeneration.Provider, "codex")
+	}
+	if s.SummaryGeneration.Model != "gpt-5" {
+		t.Errorf("SummaryGeneration.Model = %q, want %q", s.SummaryGeneration.Model, "gpt-5")
+	}
+}
+
+func TestMergeJSON_SummaryGeneration(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	entireDir := filepath.Join(tmpDir, ".entire")
+	if err := os.MkdirAll(entireDir, 0o755); err != nil {
+		t.Fatalf("failed to create .entire directory: %v", err)
+	}
+
+	settingsFile := filepath.Join(entireDir, "settings.json")
+	base := `{"enabled": true, "summary_generation": {"provider": "claude-code", "model": "sonnet"}}`
+	if err := os.WriteFile(settingsFile, []byte(base), 0o644); err != nil {
+		t.Fatalf("failed to write settings file: %v", err)
+	}
+
+	localFile := filepath.Join(entireDir, "settings.local.json")
+	local := `{"summary_generation": {"provider": "codex"}}`
+	if err := os.WriteFile(localFile, []byte(local), 0o644); err != nil {
+		t.Fatalf("failed to write local settings file: %v", err)
+	}
+
+	if err := os.MkdirAll(filepath.Join(tmpDir, ".git"), 0o755); err != nil {
+		t.Fatalf("failed to create .git directory: %v", err)
+	}
+
+	t.Chdir(tmpDir)
+
+	s, err := Load(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if s.SummaryGeneration == nil {
+		t.Fatal("expected SummaryGeneration to be non-nil")
+	}
+	if s.SummaryGeneration.Provider != "codex" {
+		t.Errorf("SummaryGeneration.Provider = %q, want %q", s.SummaryGeneration.Provider, "codex")
+	}
+	if s.SummaryGeneration.Model != "sonnet" {
+		t.Errorf("SummaryGeneration.Model = %q, want %q", s.SummaryGeneration.Model, "sonnet")
 	}
 }
 
