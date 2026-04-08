@@ -210,9 +210,9 @@ func TestPostCommit_ActiveSessionAlwaysCondenses(t *testing.T) {
 
 	// Create a second session with the SAME base commit and worktree (concurrent session).
 	// This session is ACTIVE but has NO checkpoints (StepCount=0, no shadow branch content)
-	// and NO files touched. Read-only ACTIVE sessions (e.g., codex exec from summarize)
-	// should NOT be condensed even though they have recent interaction — they never
-	// modified any files, so there's nothing meaningful to attach to the checkpoint.
+	// and NO files touched. With multiple sessions present, the read-only gate prevents
+	// this session from being condensed — it never modified files, so there's nothing
+	// meaningful to attach to the checkpoint.
 	now := time.Now()
 	activeState := &SessionState{
 		SessionID:           activeSessionID,
@@ -254,7 +254,7 @@ func TestPostCommit_ActiveSessionAlwaysCondenses(t *testing.T) {
 		"IDLE session StepCount should be reset after condensation")
 
 	// Shadow branch should be preserved because the ACTIVE session was NOT condensed
-	// (it had no files touched) and still references this branch
+	// (it had no files touched, and totalSessionCount > 1 triggered the gate)
 	refName := plumbing.NewBranchReferenceName(shadowBranch)
 	_, err = repo.Reference(refName, true)
 	assert.NoError(t, err,

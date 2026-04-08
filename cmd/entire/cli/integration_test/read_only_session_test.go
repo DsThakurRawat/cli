@@ -256,6 +256,143 @@ func TestReadOnlySession_ActiveDuringCommit_NotCondensed(t *testing.T) {
 	}
 }
 
+// TestReadOnlySession_ActiveAcrossMultipleCommits verifies that a read-only ACTIVE
+// session survives multiple commits without being condensed or causing errors.
+//
+// After the first commit, updateBaseCommitIfChanged advances the session's BaseCommit
+// to the new HEAD. On the second commit, the session should again be skipped (still no
+// files touched). This test ensures the BaseCommit advancement is correct and the
+// session doesn't accumulate into subsequent checkpoints.
+func TestReadOnlySession_ActiveAcrossMultipleCommits(t *testing.T) {
+	t.Parallel()
+
+	env := NewFeatureBranchEnv(t)
+
+	// ========================================
+	// Phase 1: Start a read-only ACTIVE session
+	// ========================================
+	t.Log("Phase 1: Start read-only session, leave it ACTIVE")
+
+	readOnlySess := env.NewSession()
+	if err := env.SimulateUserPromptSubmitWithTranscriptPath(readOnlySess.ID, readOnlySess.TranscriptPath); err != nil {
+		t.Fatalf("read-only session user-prompt-submit failed: %v", err)
+	}
+	readOnlySess.TranscriptBuilder.AddUserMessage("Explain the codebase")
+	readOnlySess.TranscriptBuilder.AddAssistantMessage("This is a CLI tool.")
+	if err := readOnlySess.TranscriptBuilder.WriteToFile(readOnlySess.TranscriptPath); err != nil {
+		t.Fatalf("failed to write transcript: %v", err)
+	}
+
+	// Verify ACTIVE with no files
+	roState, err := env.GetSessionState(readOnlySess.ID)
+	if err != nil {
+		t.Fatalf("GetSessionState failed: %v", err)
+	}
+	if roState.Phase != session.PhaseActive {
+		t.Fatalf("Expected ACTIVE, got %s", roState.Phase)
+	}
+	initialBaseCommit := roState.BaseCommit
+
+	// ========================================
+	// Phase 2: First coding session + commit
+	// ========================================
+	t.Log("Phase 2: First coding session and commit")
+
+	sess1 := env.NewSession()
+	if err := env.SimulateUserPromptSubmit(sess1.ID); err != nil {
+		t.Fatalf("session 1 user-prompt-submit failed: %v", err)
+	}
+	env.WriteFile("file1.go", "package main\n\nfunc One() {}\n")
+	sess1.CreateTranscript("Create file1", []FileChange{
+		{Path: "file1.go", Content: "package main\n\nfunc One() {}\n"},
+	})
+	if err := env.SimulateStop(sess1.ID, sess1.TranscriptPath); err != nil {
+		t.Fatalf("session 1 stop failed: %v", err)
+	}
+
+	env.GitCommitWithShadowHooks("Add file1", "file1.go")
+	firstCommitHash := env.GetHeadHash()
+	cpID1 := env.GetCheckpointIDFromCommitMessage(firstCommitHash)
+	if cpID1 == "" {
+		t.Fatal("First commit should have checkpoint trailer")
+	}
+
+	// Verify: read-only session NOT in first checkpoint
+	summary1Content, found := env.ReadFileFromBranch(paths.MetadataBranchName, CheckpointSummaryPath(cpID1))
+	if !found {
+		t.Fatal("First checkpoint summary not found")
+	}
+	var summary1 checkpoint.CheckpointSummary
+	if err := json.Unmarshal([]byte(summary1Content), &summary1); err != nil {
+		t.Fatalf("Failed to parse first checkpoint: %v", err)
+	}
+	if len(summary1.Sessions) != 1 {
+		t.Errorf("First checkpoint should have 1 session, got %d", len(summary1.Sessions))
+	}
+
+	// Verify: read-only session's BaseCommit was advanced
+	roState, err = env.GetSessionState(readOnlySess.ID)
+	if err != nil {
+		t.Fatalf("GetSessionState failed: %v", err)
+	}
+	if roState.BaseCommit == initialBaseCommit {
+		t.Error("Read-only session BaseCommit should have advanced after first commit")
+	}
+	if roState.Phase != session.PhaseActive {
+		t.Errorf("Read-only session should still be ACTIVE, got %s", roState.Phase)
+	}
+
+	// ========================================
+	// Phase 3: Second coding session + commit
+	// ========================================
+	t.Log("Phase 3: Second coding session and commit")
+
+	sess2 := env.NewSession()
+	if err := env.SimulateUserPromptSubmit(sess2.ID); err != nil {
+		t.Fatalf("session 2 user-prompt-submit failed: %v", err)
+	}
+	env.WriteFile("file2.go", "package main\n\nfunc Two() {}\n")
+	sess2.CreateTranscript("Create file2", []FileChange{
+		{Path: "file2.go", Content: "package main\n\nfunc Two() {}\n"},
+	})
+	if err := env.SimulateStop(sess2.ID, sess2.TranscriptPath); err != nil {
+		t.Fatalf("session 2 stop failed: %v", err)
+	}
+
+	env.GitCommitWithShadowHooks("Add file2", "file2.go")
+	secondCommitHash := env.GetHeadHash()
+	cpID2 := env.GetCheckpointIDFromCommitMessage(secondCommitHash)
+	if cpID2 == "" {
+		t.Fatal("Second commit should have checkpoint trailer")
+	}
+
+	// Verify: read-only session NOT in second checkpoint either
+	summary2Content, found := env.ReadFileFromBranch(paths.MetadataBranchName, CheckpointSummaryPath(cpID2))
+	if !found {
+		t.Fatal("Second checkpoint summary not found")
+	}
+	var summary2 checkpoint.CheckpointSummary
+	if err := json.Unmarshal([]byte(summary2Content), &summary2); err != nil {
+		t.Fatalf("Failed to parse second checkpoint: %v", err)
+	}
+	if len(summary2.Sessions) != 1 {
+		t.Errorf("Second checkpoint should have 1 session, got %d", len(summary2.Sessions))
+	}
+
+	// Verify: read-only session still ACTIVE, BaseCommit advanced again
+	roState, err = env.GetSessionState(readOnlySess.ID)
+	if err != nil {
+		t.Fatalf("GetSessionState failed: %v", err)
+	}
+	if roState.Phase != session.PhaseActive {
+		t.Errorf("Read-only session should still be ACTIVE after 2 commits, got %s", roState.Phase)
+	}
+	if roState.BaseCommit != secondCommitHash {
+		t.Errorf("Read-only session BaseCommit should be %s (second commit), got %s",
+			secondCommitHash, roState.BaseCommit)
+	}
+}
+
 // TestMultipleReadOnlySessions_NoneCondensed simulates the summarize scenario
 // where many rapid-fire read-only sessions are created, then a user commits.
 // None of the read-only sessions should appear in the checkpoint.
