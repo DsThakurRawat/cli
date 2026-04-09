@@ -132,7 +132,7 @@ func printSettingsCommitHint(ctx context.Context, target string) {
 		if isSettingsTrackedByGit(ctx) {
 			return
 		}
-		fmt.Fprintln(os.Stderr, "[entire] Note: Commit and push .entire/settings.json for entire.io to discover your remote checkpoint.")
+		fmt.Fprintln(os.Stderr, "[entire] Note: Checkpoints were pushed to a separate checkpoint remote, but .entire/settings.json is not tracked. entire.io may not be able to find this checkpoint until that file is committed and pushed.")
 	})
 }
 

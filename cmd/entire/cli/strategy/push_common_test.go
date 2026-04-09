@@ -947,7 +947,8 @@ func TestPrintSettingsCommitHint(t *testing.T) {
 		}
 		os.Stderr = old
 
-		assert.Contains(t, buf.String(), "Commit and push .entire/settings.json")
+		assert.Contains(t, buf.String(), ".entire/settings.json is not tracked")
+		assert.Contains(t, buf.String(), "entire.io may not be able to find this checkpoint")
 	})
 
 	t.Run("no hint when settings is tracked", func(t *testing.T) {
@@ -1014,7 +1015,7 @@ func TestPrintSettingsCommitHint(t *testing.T) {
 		}
 		os.Stderr = old
 
-		count := bytes.Count(buf.Bytes(), []byte("Commit and push"))
+		count := bytes.Count(buf.Bytes(), []byte(".entire/settings.json is not tracked"))
 		assert.Equal(t, 1, count, "hint should print exactly once, got %d", count)
 	})
 }
