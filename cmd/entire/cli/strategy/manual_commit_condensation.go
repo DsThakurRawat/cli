@@ -296,7 +296,7 @@ func (s *ManualCommitStrategy) CondenseSession(ctx context.Context, repo *git.Re
 	writeCommittedV2Span.End()
 	writeV2Duration := time.Since(writeV2Start)
 
-	logging.Info(logCtx, "condense timings",
+	logging.Debug(logCtx, "condense timings",
 		slog.String("session_id", state.SessionID),
 		slog.String("checkpoint_id", checkpointID.String()),
 		slog.Int64("extract_session_data_ms", extractDuration.Milliseconds()),

@@ -2665,7 +2665,7 @@ func (s *ManualCommitStrategy) carryForwardToNewShadowBranch(
 		slog.String("session_id", state.SessionID),
 		slog.Int("remaining_files", len(remainingFiles)),
 	)
-	logging.Info(logCtx, "carry-forward timings",
+	logging.Debug(logCtx, "carry-forward timings",
 		slog.String("session_id", state.SessionID),
 		slog.Int64("write_carry_forward_shadow_ms", duration.Milliseconds()),
 		slog.Int("remaining_files", len(remainingFiles)),

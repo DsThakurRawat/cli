@@ -707,7 +707,7 @@ func (s *GitStore) writeTranscript(ctx context.Context, opts WriteCommittedOptio
 	}
 	contentHashSpan.End()
 
-	logging.Info(logCtx, "write transcript timings",
+	logging.Debug(logCtx, "write transcript timings",
 		slog.String("session_id", opts.SessionID),
 		slog.String("checkpoint_id", opts.CheckpointID.String()),
 		slog.String("agent", string(opts.Agent)),
