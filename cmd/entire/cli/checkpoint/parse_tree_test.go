@@ -84,6 +84,25 @@ func flattenTreeHelper(t *testing.T, repo *git.Repository, treeHash plumbing.Has
 	return result
 }
 
+// assertNoEmptyEntryNames recursively verifies that a tree contains no empty entry names.
+func assertNoEmptyEntryNames(t *testing.T, repo *git.Repository, treeHash plumbing.Hash, prefix string) {
+	t.Helper()
+
+	tree := mustTreeObject(t, repo, treeHash)
+	for _, entry := range tree.Entries {
+		fullPath := entry.Name
+		if prefix != "" {
+			fullPath = prefix + "/" + entry.Name
+		}
+		if entry.Name == "" {
+			t.Fatalf("tree %s contains empty entry name at %q", treeHash, fullPath)
+		}
+		if entry.Mode == filemode.Dir {
+			assertNoEmptyEntryNames(t, repo, entry.Hash, fullPath)
+		}
+	}
+}
+
 func TestSplitFirstSegment(t *testing.T) {
 	t.Parallel()
 
@@ -134,6 +153,131 @@ func TestStoreTree_RoundTrip(t *testing.T) {
 	}
 	if tree.Entries[0].Hash != blobHash {
 		t.Errorf("hash mismatch: got %s, want %s", tree.Entries[0].Hash, blobHash)
+	}
+}
+
+func TestApplyTreeChanges_SkipsInvalidPaths(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		path        string
+		wantPresent string
+	}{
+		{
+			name:        "leading slash windows path",
+			path:        "/C:/Users/r/Vaults/Flowsign/.entire/metadata/test-session/full.jsonl",
+			wantPresent: "valid.txt",
+		},
+		{
+			name:        "drive letter windows path",
+			path:        "C:/Users/r/Vaults/Flowsign/.entire/metadata/test-session/full.jsonl",
+			wantPresent: "valid.txt",
+		},
+		{
+			name:        "empty segment",
+			path:        "dir//file.txt",
+			wantPresent: "valid.txt",
+		},
+		{
+			name:        "dot segment",
+			path:        "./dir/file.txt",
+			wantPresent: "valid.txt",
+		},
+		{
+			name:        "dot dot segment",
+			path:        "../dir/file.txt",
+			wantPresent: "valid.txt",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			repo := mustInitBareRepo(t)
+			validBlob := storeBlob(t, repo, "valid")
+			invalidBlob := storeBlob(t, repo, "invalid")
+
+			treeHash, err := ApplyTreeChanges(repo, plumbing.ZeroHash, []TreeChange{
+				{
+					Path: "valid.txt",
+					Entry: &object.TreeEntry{
+						Mode: filemode.Regular,
+						Hash: validBlob,
+					},
+				},
+				{
+					Path: tt.path,
+					Entry: &object.TreeEntry{
+						Mode: filemode.Regular,
+						Hash: invalidBlob,
+					},
+				},
+			})
+			if err != nil {
+				t.Fatalf("ApplyTreeChanges() error = %v", err)
+			}
+
+			assertNoEmptyEntryNames(t, repo, treeHash, "")
+			files := flattenTreeHelper(t, repo, treeHash, "")
+			if len(files) != 1 {
+				t.Fatalf("expected 1 valid file, got %d: %v", len(files), files)
+			}
+			if files[tt.wantPresent] != validBlob {
+				t.Fatalf("expected valid file %q to be preserved", tt.wantPresent)
+			}
+		})
+	}
+}
+
+func TestBuildTreeFromEntries_SkipsInvalidPaths(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		path string
+	}{
+		{name: "leading slash windows path", path: "/C:/repo/file.txt"},
+		{name: "drive letter windows path", path: "C:/repo/file.txt"},
+		{name: "empty segment", path: "dir//file.txt"},
+		{name: "dot segment", path: "./file.txt"},
+		{name: "dot dot segment", path: "../file.txt"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			repo := mustInitBareRepo(t)
+			validBlob := storeBlob(t, repo, "valid")
+			invalidBlob := storeBlob(t, repo, "invalid")
+
+			treeHash, err := BuildTreeFromEntries(repo, map[string]object.TreeEntry{
+				"valid.txt": {
+					Name: "valid.txt",
+					Mode: filemode.Regular,
+					Hash: validBlob,
+				},
+				tt.path: {
+					Name: tt.path,
+					Mode: filemode.Regular,
+					Hash: invalidBlob,
+				},
+			})
+			if err != nil {
+				t.Fatalf("BuildTreeFromEntries() error = %v", err)
+			}
+
+			assertNoEmptyEntryNames(t, repo, treeHash, "")
+			files := flattenTreeHelper(t, repo, treeHash, "")
+			if len(files) != 1 {
+				t.Fatalf("expected 1 valid file, got %d: %v", len(files), files)
+			}
+			if files["valid.txt"] != validBlob {
+				t.Fatal("expected valid.txt to be preserved")
+			}
+		})
 	}
 }
 
