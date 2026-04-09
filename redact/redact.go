@@ -28,6 +28,26 @@ const entropyThreshold = 4.5
 // RedactedPlaceholder is the replacement text used for redacted secrets.
 const RedactedPlaceholder = "REDACTED"
 
+// RedactedBytes represents transcript data that has been through secret
+// redaction. Consumers that require pre-redacted input (e.g., compact.Compact,
+// checkpoint stores) accept this type to enforce the contract at compile time.
+//
+// Produced by JSONLBytes (primary constructor) or AlreadyRedacted (escape hatch).
+type RedactedBytes []byte
+
+// Bytes returns the underlying byte slice.
+func (r RedactedBytes) Bytes() []byte {
+	return []byte(r)
+}
+
+// AlreadyRedacted wraps data that is known to have been redacted by a prior
+// operation. Use this ONLY for trusted sources — e.g., transcripts read back
+// from storage (which were redacted on write) or synthetic test data.
+// This is NOT a way to bypass redaction for fresh transcripts.
+func AlreadyRedacted(data []byte) RedactedBytes {
+	return RedactedBytes(data)
+}
+
 var (
 	gitleaksDetector     *detect.Detector
 	gitleaksDetectorOnce sync.Once

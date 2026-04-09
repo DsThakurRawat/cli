@@ -57,6 +57,24 @@ func TestJSONLBytes_WithSecret(t *testing.T) {
 	}
 }
 
+func TestRedactedBytes_Bytes(t *testing.T) {
+	t.Parallel()
+	input := []byte(`{"type":"text","content":"hello"}`)
+	rb := AlreadyRedacted(input)
+	if !bytes.Equal(rb.Bytes(), input) {
+		t.Errorf("Bytes() = %q, want %q", rb.Bytes(), input)
+	}
+}
+
+func TestAlreadyRedacted(t *testing.T) {
+	t.Parallel()
+	input := []byte(`some data`)
+	rb := AlreadyRedacted(input)
+	if !bytes.Equal([]byte(rb), input) {
+		t.Errorf("AlreadyRedacted() = %q, want %q", rb, input)
+	}
+}
+
 func TestJSONLContent_TopLevelArray(t *testing.T) {
 	// Top-level JSON arrays are valid JSONL and should be redacted.
 	input := `["` + highEntropySecret + `","normal text"]`
