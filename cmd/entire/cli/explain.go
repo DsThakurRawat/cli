@@ -483,16 +483,19 @@ func generateCheckpointSummary(ctx context.Context, w, _ io.Writer, v1Store *che
 		v2Err = v2Store.UpdateSummary(ctx, checkpointID, summary)
 	}
 
-	if v1Err != nil && v2Err != nil {
-		return fmt.Errorf("failed to save summary: v1: %w, v2: %w", v1Err, v2Err)
-	}
-	if v1Err != nil {
+	switch {
+	case v1Err != nil && (v2Store == nil || v2Err != nil):
+		// No store succeeded — hard error.
+		if v2Err != nil {
+			return fmt.Errorf("failed to save summary: v1: %w, v2: %w", v1Err, v2Err)
+		}
+		return fmt.Errorf("failed to save summary: %w", v1Err)
+	case v1Err != nil:
 		logging.Debug(ctx, "v1 UpdateSummary failed (v2 succeeded)",
 			slog.String("checkpoint_id", checkpointID.String()),
 			slog.String("error", v1Err.Error()),
 		)
-	}
-	if v2Err != nil {
+	case v2Err != nil:
 		logging.Debug(ctx, "v2 UpdateSummary failed (v1 succeeded)",
 			slog.String("checkpoint_id", checkpointID.String()),
 			slog.String("error", v2Err.Error()),
