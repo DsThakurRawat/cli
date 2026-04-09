@@ -12,14 +12,11 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
-
-      - name: Fetch PR base SHA
-        run: git fetch --no-tags --prune --depth=1 origin "${{ github.event.pull_request.base.sha }}"
 
       - name: Check for oversized binary files
         env:
-          GITHUB_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           MAX_BINARY_SIZE_BYTES: "1048576"
-        run: bash scripts/check-pr-binaries.sh
+        run: bash scripts/check-pr-binaries.sh "${BASE_SHA}" "${HEAD_SHA}"
