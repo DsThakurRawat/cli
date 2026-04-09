@@ -487,3 +487,77 @@ func TestMultipleReadOnlySessions_NoneCondensed(t *testing.T) {
 		}
 	}
 }
+
+// TestAllReadOnlySessions_NoCheckpointCreated verifies that when ALL sessions are
+// read-only (no session has shadow branch content), no checkpoint trailer is added
+// and no condensation occurs. PrepareCommitMsg's filterSessionsWithNewContent
+// filters out sessions that never called SaveStep, so no trailer is written.
+// This documents the full end-to-end behavior: read-only sessions produce no
+// checkpoints regardless of whether other coding sessions exist.
+func TestAllReadOnlySessions_NoCheckpointCreated(t *testing.T) {
+	t.Parallel()
+
+	env := NewFeatureBranchEnv(t)
+
+	// ========================================
+	// Phase 1: Start a read-only ACTIVE session
+	// ========================================
+	t.Log("Phase 1: Start read-only session, leave it ACTIVE")
+
+	readOnlySess := env.NewSession()
+
+	if err := env.SimulateUserPromptSubmitWithTranscriptPath(readOnlySess.ID, readOnlySess.TranscriptPath); err != nil {
+		t.Fatalf("read-only session user-prompt-submit failed: %v", err)
+	}
+
+	// Write a transcript with NO file changes
+	readOnlySess.TranscriptBuilder.AddUserMessage("Explain the architecture of this project")
+	readOnlySess.TranscriptBuilder.AddAssistantMessage("This project uses a layered architecture with commands, strategies, and checkpoints.")
+	if err := readOnlySess.TranscriptBuilder.WriteToFile(readOnlySess.TranscriptPath); err != nil {
+		t.Fatalf("failed to write read-only transcript: %v", err)
+	}
+
+	// Verify ACTIVE with no files
+	roState, err := env.GetSessionState(readOnlySess.ID)
+	if err != nil {
+		t.Fatalf("GetSessionState failed: %v", err)
+	}
+	if roState.Phase != session.PhaseActive {
+		t.Fatalf("Expected ACTIVE, got %s", roState.Phase)
+	}
+	if len(roState.FilesTouched) != 0 {
+		t.Fatalf("Should have empty FilesTouched, got %v", roState.FilesTouched)
+	}
+
+	// ========================================
+	// Phase 2: User manually creates and commits a file (no coding session)
+	// ========================================
+	t.Log("Phase 2: User manually commits a file — no other session claims it")
+
+	env.WriteFile("manual.txt", "manually created file\n")
+	env.GitCommitWithShadowHooks("Add manual file", "manual.txt")
+
+	// ========================================
+	// Phase 3: Verify no checkpoint trailer was added
+	// ========================================
+	t.Log("Phase 3: Verify no checkpoint was created (read-only session has no content to condense)")
+
+	commitHash := env.GetHeadHash()
+	cpID := env.GetCheckpointIDFromCommitMessage(commitHash)
+	if cpID != "" {
+		t.Errorf("Commit should NOT have an Entire-Checkpoint trailer when only read-only sessions exist, got %q", cpID)
+	}
+
+	// Verify the read-only session state is unchanged
+	roStateAfter, err := env.GetSessionState(readOnlySess.ID)
+	if err != nil {
+		t.Fatalf("GetSessionState after commit failed: %v", err)
+	}
+	if roStateAfter.Phase != session.PhaseActive {
+		t.Errorf("Read-only session should still be ACTIVE, got %s", roStateAfter.Phase)
+	}
+	if roStateAfter.StepCount != roState.StepCount {
+		t.Errorf("Read-only session StepCount should be unchanged, was %d now %d",
+			roState.StepCount, roStateAfter.StepCount)
+	}
+}

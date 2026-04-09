@@ -719,6 +719,9 @@ func (h *postCommitActionHandler) shouldCondenseWithOverlapCheck(isActive bool, 
 	// session has no recent interaction and falls through to the overlap check.
 	if isActive && isRecentInteraction(lastInteraction) {
 		if h.sessionsWithCommittedFiles > 0 && len(h.filesTouchedBefore) == 0 {
+			logging.Debug(h.ctx, "post-commit: skipping read-only ACTIVE session (no tracked files, other sessions claim committed files)",
+				slog.Int("sessions_with_committed_files", h.sessionsWithCommittedFiles),
+			)
 			return false
 		}
 		return true
@@ -920,6 +923,9 @@ func (s *ManualCommitStrategy) PostCommit(ctx context.Context) error { //nolint:
 	allAgentFiles := make(map[string]struct{})
 	sessionsWithCommittedFiles := 0
 	for _, state := range sessions {
+		if state.FullyCondensed && state.Phase == session.PhaseEnded {
+			continue
+		}
 		for _, f := range state.FilesTouched {
 			allAgentFiles[f] = struct{}{}
 			if _, ok := committedFileSet[f]; ok {

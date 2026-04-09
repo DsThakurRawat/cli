@@ -176,12 +176,11 @@ func TestPostCommit_RebaseDuringActive_SkipsTransition(t *testing.T) {
 		"shadow branch should be preserved during rebase")
 }
 
-// TestPostCommit_ActiveSessionAlwaysCondenses verifies that an ACTIVE session
-// is always condensed on GitCommit, even when it has no checkpoints or tracked files.
-// This is because PrepareCommitMsg already validated the trailer, so PostCommit
-// trusts that decision rather than re-validating via transcript analysis (which is
-// unreliable when subagents are still running).
-func TestPostCommit_ActiveSessionAlwaysCondenses(t *testing.T) {
+// TestPostCommit_ReadOnlyActiveSessionNotCondensed verifies that an ACTIVE session
+// with no tracked files is NOT condensed when another session claims the committed
+// files. This prevents read-only sessions (e.g., codex exec from summarize) from
+// being condensed into checkpoints they didn't contribute to.
+func TestPostCommit_ReadOnlyActiveSessionNotCondensed(t *testing.T) {
 	dir := setupGitRepo(t)
 	t.Chdir(dir)
 
