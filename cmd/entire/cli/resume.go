@@ -769,7 +769,7 @@ func checkRemoteMetadata(ctx context.Context, w, errW io.Writer, checkpointID id
 	} else {
 		fmt.Fprintf(errW, "Checkpoint '%s' found in commit but the entire/checkpoints/v1 branch is not available locally or on the remote.\n", checkpointID)
 		fmt.Fprintf(errW, "This can happen if the metadata branch was not pushed. Try:\n")
-		fmt.Fprintf(errW, "  git fetch --no-tags --filter=blob:none origin entire/checkpoints/v1:entire/checkpoints/v1\n")
+		fmt.Fprintf(errW, "  git fetch origin entire/checkpoints/v1:entire/checkpoints/v1\n")
 	}
 	return nil
 }
