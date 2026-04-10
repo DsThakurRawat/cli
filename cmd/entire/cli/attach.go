@@ -20,8 +20,8 @@ import (
 	"github.com/entireio/cli/cmd/entire/cli/strategy"
 	"github.com/entireio/cli/cmd/entire/cli/trailers"
 	"github.com/entireio/cli/cmd/entire/cli/validation"
-	"github.com/entireio/cli/perf"
 	"github.com/entireio/cli/cmd/entire/cli/versioninfo"
+	"github.com/entireio/cli/perf"
 	"github.com/entireio/cli/redact"
 
 	"github.com/charmbracelet/huh"
