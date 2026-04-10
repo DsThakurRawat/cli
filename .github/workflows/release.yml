@@ -14,16 +14,17 @@ on:
 permissions:
   contents: write
 
+env:
+  RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.version || github.ref_name }}
+
 jobs:
   release:
     runs-on: ubuntu-latest
-    env:
-      RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.version || github.ref_name }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
           fetch-depth: 0
-          ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.version || github.ref }}
+          ref: ${{ env.RELEASE_TAG }}
 
       - uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4
 
@@ -119,7 +120,7 @@ jobs:
                   "type": "section",
                   "text": {
                     "type": "mrkdwn",
-                    "text": ":red_circle: *Release Failed* for `${{ github.event_name == 'workflow_dispatch' && github.event.inputs.version || github.ref_name }}`\n\n<${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|View run details>"
+                    "text": ":red_circle: *Release Failed* for `${{ env.RELEASE_TAG }}`\n\n<${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|View run details>"
                   }
                 },
                 {
@@ -127,7 +128,7 @@ jobs:
                   "elements": [
                     {
                       "type": "mrkdwn",
-                      "text": "Tag: `${{ github.event_name == 'workflow_dispatch' && github.event.inputs.version || github.ref_name }}` by ${{ github.actor }}"
+                      "text": "Tag: `${{ env.RELEASE_TAG }}` by ${{ github.actor }}"
                     }
                   ]
                 }
