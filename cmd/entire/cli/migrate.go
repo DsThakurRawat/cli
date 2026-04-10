@@ -25,6 +25,7 @@ import (
 
 func newMigrateCmd() *cobra.Command {
 	var checkpointsFlag string
+	var forceFlag bool
 
 	cmd := &cobra.Command{
 		Use:    "migrate",
@@ -53,11 +54,12 @@ func newMigrateCmd() *cobra.Command {
 			} else {
 				defer logging.Close()
 			}
-			return runMigrateCheckpointsV2(ctx, cmd)
+			return runMigrateCheckpointsV2(ctx, cmd, forceFlag)
 		},
 	}
 
 	cmd.Flags().StringVar(&checkpointsFlag, "checkpoints", "", "Target checkpoint format version (e.g., \"v2\")")
+	cmd.Flags().BoolVar(&forceFlag, "force", false, "Force re-migration of all checkpoints, overwriting existing v2 data")
 
 	return cmd
 }
@@ -68,7 +70,7 @@ type migrateResult struct {
 	failed   int
 }
 
-func runMigrateCheckpointsV2(ctx context.Context, cmd *cobra.Command) error {
+func runMigrateCheckpointsV2(ctx context.Context, cmd *cobra.Command, force bool) error {
 	repo, err := strategy.OpenRepository(ctx)
 	if err != nil {
 		cmd.SilenceUsage = true
@@ -80,7 +82,7 @@ func runMigrateCheckpointsV2(ctx context.Context, cmd *cobra.Command) error {
 	v2Store := checkpoint.NewV2GitStore(repo, migrateRemoteName)
 	out := cmd.OutOrStdout()
 
-	result, err := migrateCheckpointsV2(ctx, repo, v1Store, v2Store, out)
+	result, err := migrateCheckpointsV2(ctx, repo, v1Store, v2Store, out, force)
 	if err != nil {
 		return err
 	}
@@ -103,7 +105,7 @@ var (
 
 const migrateRemoteName = "origin"
 
-func migrateCheckpointsV2(ctx context.Context, repo *git.Repository, v1Store *checkpoint.GitStore, v2Store *checkpoint.V2GitStore, out io.Writer) (*migrateResult, error) {
+func migrateCheckpointsV2(ctx context.Context, repo *git.Repository, v1Store *checkpoint.GitStore, v2Store *checkpoint.V2GitStore, out io.Writer, force bool) (*migrateResult, error) {
 	v1List, err := v1Store.ListCommitted(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list v1 checkpoints: %w", err)
@@ -114,14 +116,18 @@ func migrateCheckpointsV2(ctx context.Context, repo *git.Repository, v1Store *ch
 		return &migrateResult{}, nil
 	}
 
-	fmt.Fprintln(out, "Migrating v1 checkpoints to v2...")
+	if force {
+		fmt.Fprintln(out, "Force-migrating v1 checkpoints to v2 (overwriting existing)...")
+	} else {
+		fmt.Fprintln(out, "Migrating v1 checkpoints to v2...")
+	}
 	total := len(v1List)
 	result := &migrateResult{}
 
 	for i, info := range v1List {
 		prefix := fmt.Sprintf("  [%d/%d] Migrating checkpoint %s...", i+1, total, info.CheckpointID)
 
-		if migrateErr := migrateOneCheckpoint(ctx, repo, v1Store, v2Store, info, out, prefix); migrateErr != nil {
+		if migrateErr := migrateOneCheckpoint(ctx, repo, v1Store, v2Store, info, out, prefix, force); migrateErr != nil {
 			switch {
 			case errors.Is(migrateErr, errAlreadyMigrated):
 				fmt.Fprintf(out, "%s skipped (already in v2)\n", prefix)
@@ -146,14 +152,14 @@ func migrateCheckpointsV2(ctx context.Context, repo *git.Repository, v1Store *ch
 	return result, nil
 }
 
-func migrateOneCheckpoint(ctx context.Context, repo *git.Repository, v1Store *checkpoint.GitStore, v2Store *checkpoint.V2GitStore, info checkpoint.CommittedInfo, out io.Writer, prefix string) error {
+func migrateOneCheckpoint(ctx context.Context, repo *git.Repository, v1Store *checkpoint.GitStore, v2Store *checkpoint.V2GitStore, info checkpoint.CommittedInfo, out io.Writer, prefix string, force bool) error {
 	existing, err := v2Store.ReadCommitted(ctx, info.CheckpointID)
 	if err != nil {
 		return fmt.Errorf("failed to check v2 for checkpoint %s: %w", info.CheckpointID, err)
 	}
 
-	// Already in v2 — check if any aspect of sessions are missing and backfill
-	if existing != nil {
+	// Already in v2 — when not forcing, check if any aspect of sessions are missing and backfill
+	if existing != nil && !force {
 		repaired, repairErr := repairPartialV2Checkpoint(ctx, repo, v1Store, v2Store, info, existing)
 		if repairErr != nil {
 			return repairErr
