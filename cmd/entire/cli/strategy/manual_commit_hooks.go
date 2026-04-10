@@ -2665,13 +2665,15 @@ func (s *ManualCommitStrategy) carryForwardToNewShadowBranch(
 	remainingFiles []string,
 ) {
 	logCtx := logging.WithComponent(ctx, "checkpoint")
+	start := time.Now()
 	store := checkpoint.NewGitStore(repo)
 
 	// Don't include metadata directory in carry-forward. The carry-forward branch
 	// only needs to preserve file content for comparison - not the transcript.
 	// Including the transcript would cause sessionHasNewContent to always return true
 	// because CheckpointTranscriptStart is reset to 0 for carry-forward.
-	result, err := store.WriteTemporary(ctx, checkpoint.WriteTemporaryOptions{
+	writeCtx, carryForwardWriteSpan := perf.Start(ctx, "write_carry_forward_shadow")
+	result, err := store.WriteTemporary(writeCtx, checkpoint.WriteTemporaryOptions{
 		SessionID:         state.SessionID,
 		BaseCommit:        state.BaseCommit,
 		WorktreeID:        state.WorktreeID,
@@ -2682,12 +2684,16 @@ func (s *ManualCommitStrategy) carryForwardToNewShadowBranch(
 		IsFirstCheckpoint: false,
 	})
 	if err != nil {
+		carryForwardWriteSpan.RecordError(err)
+		carryForwardWriteSpan.End()
 		logging.Warn(logCtx, "post-commit: carry-forward failed",
 			slog.String("session_id", state.SessionID),
 			slog.String("error", err.Error()),
 		)
 		return
 	}
+	carryForwardWriteSpan.End()
+	duration := time.Since(start)
 	if result.Skipped {
 		logging.Debug(logCtx, "post-commit: carry-forward skipped (no changes)",
 			slog.String("session_id", state.SessionID),
@@ -2714,6 +2720,11 @@ func (s *ManualCommitStrategy) carryForwardToNewShadowBranch(
 
 	logging.Info(logCtx, "post-commit: carried forward remaining files",
 		slog.String("session_id", state.SessionID),
+		slog.Int("remaining_files", len(remainingFiles)),
+	)
+	logging.Debug(logCtx, "carry-forward timings",
+		slog.String("session_id", state.SessionID),
+		slog.Int64("write_carry_forward_shadow_ms", duration.Milliseconds()),
 		slog.Int("remaining_files", len(remainingFiles)),
 	)
 }
