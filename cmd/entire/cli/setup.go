@@ -510,12 +510,19 @@ Use --remove to remove a specific agent non-interactively:
 				return setupAgentHooksNonInteractive(ctx, cmd.OutOrStdout(), ag, opts)
 			}
 
-			// Settings-only mode: update strategy options without agent selection
-			if hasStrategyFlags(cmd) && settings.IsSetUpAny(ctx) {
-				return updateStrategyOptions(ctx, cmd.OutOrStdout(), opts)
-			}
-			if hasSummaryProviderFlags(cmd) && settings.IsSetUpAny(ctx) {
-				return updateSummaryGenerationSettings(ctx, cmd.OutOrStdout(), summarizeProvider, summarizeModel, opts)
+			// Settings-only mode: update strategy options / summary provider without agent selection
+			if settings.IsSetUpAny(ctx) && (hasStrategyFlags(cmd) || hasSummaryProviderFlags(cmd)) {
+				if hasStrategyFlags(cmd) {
+					if err := updateStrategyOptions(ctx, cmd.OutOrStdout(), opts); err != nil {
+						return err
+					}
+				}
+				if hasSummaryProviderFlags(cmd) {
+					if err := updateSummaryGenerationSettings(ctx, cmd.OutOrStdout(), summarizeProvider, summarizeModel, opts); err != nil {
+						return err
+					}
+				}
+				return nil
 			}
 
 			// If already set up, show agents and let user add more

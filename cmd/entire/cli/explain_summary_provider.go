@@ -8,6 +8,7 @@ import (
 
 	"github.com/entireio/cli/cmd/entire/cli/agent"
 	"github.com/entireio/cli/cmd/entire/cli/agent/types"
+	"github.com/entireio/cli/cmd/entire/cli/logging"
 	"github.com/entireio/cli/cmd/entire/cli/paths"
 	"github.com/entireio/cli/cmd/entire/cli/settings"
 	"github.com/entireio/cli/cmd/entire/cli/summarize"
@@ -49,6 +50,7 @@ func resolveCheckpointSummaryProvider(ctx context.Context, w io.Writer) (*checkp
 
 	switch len(candidates) {
 	case 0:
+		logging.Info(ctx, "no summary-capable agents installed, falling back to Claude Code")
 		return buildCheckpointSummaryProvider(agent.AgentNameClaudeCode, "")
 	case 1:
 		provider, err := buildCheckpointSummaryProvider(candidates[0].Name, "")
@@ -56,11 +58,13 @@ func resolveCheckpointSummaryProvider(ctx context.Context, w io.Writer) (*checkp
 			return nil, err
 		}
 		if saveErr := persistSummaryProviderSelection(ctx, provider.Name, provider.Model); saveErr != nil {
-			return nil, saveErr
+			logging.Warn(ctx, "failed to save summary provider selection, continuing without persistence",
+				"error", saveErr.Error())
 		}
 		return provider, nil
 	default:
 		if !canPromptInteractively() {
+			logging.Info(ctx, "non-interactive mode with multiple summary providers, falling back to Claude Code")
 			return buildCheckpointSummaryProvider(agent.AgentNameClaudeCode, "")
 		}
 
@@ -74,7 +78,8 @@ func resolveCheckpointSummaryProvider(ctx context.Context, w io.Writer) (*checkp
 			return nil, err
 		}
 		if saveErr := persistSummaryProviderSelection(ctx, provider.Name, provider.Model); saveErr != nil {
-			return nil, saveErr
+			logging.Warn(ctx, "failed to save summary provider selection, continuing without persistence",
+				"error", saveErr.Error())
 		}
 		fmt.Fprintf(w, "Using %s for summary generation.\n", provider.DisplayName)
 		return provider, nil
