@@ -356,9 +356,12 @@ func TestMigrateCheckpointsV2_UsesComputedCompactTranscriptStart(t *testing.T) {
 
 	v1Content, err := v1Store.ReadSessionContent(ctx, cpID, 0)
 	require.NoError(t, err)
-	compacted := tryCompactTranscript(ctx, v1Content.Transcript, v1Content.Metadata)
-	require.NotNil(t, compacted)
-	expectedOffset := computeCompactOffset(v1Content.Transcript, compacted, v1Content.Metadata)
+	fullCompacted := tryCompactTranscript(ctx, v1Content.Transcript, v1Content.Metadata)
+	require.NotNil(t, fullCompacted)
+	scopedCompacted := tryCompactTranscriptScoped(ctx, v1Content.Transcript, v1Content.Metadata)
+	require.NotNil(t, scopedCompacted)
+	require.Greater(t, bytes.Count(fullCompacted, []byte{'\n'}), bytes.Count(scopedCompacted, []byte{'\n'}))
+	expectedOffset := computeCompactOffset(v1Content.Transcript, fullCompacted, v1Content.Metadata)
 	require.Positive(t, expectedOffset, "expected non-zero compact transcript start")
 
 	var stdout bytes.Buffer
@@ -381,6 +384,10 @@ func TestMigrateCheckpointsV2_UsesComputedCompactTranscriptStart(t *testing.T) {
 	var metadata checkpoint.CommittedMetadata
 	require.NoError(t, json.Unmarshal([]byte(metadataContent), &metadata))
 	assert.Equal(t, expectedOffset, metadata.CheckpointTranscriptStart)
+
+	storedCompact, err := v2Store.ReadSessionCompactTranscript(ctx, cpID, 0)
+	require.NoError(t, err)
+	assert.Equal(t, fullCompacted, storedCompact, "migration should persist cumulative compact transcript")
 }
 
 func TestMigrateCheckpointsV2_RepairsMissingFullTranscriptBeforeBackfill(t *testing.T) {

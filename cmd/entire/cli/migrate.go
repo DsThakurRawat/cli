@@ -414,6 +414,14 @@ func buildMigrateWriteOpts(content *checkpoint.SessionContent, info checkpoint.C
 }
 
 func tryCompactTranscript(ctx context.Context, transcript []byte, m checkpoint.CommittedMetadata) []byte {
+	return compactTranscriptForStartLine(ctx, transcript, m, 0)
+}
+
+func tryCompactTranscriptScoped(ctx context.Context, transcript []byte, m checkpoint.CommittedMetadata) []byte {
+	return compactTranscriptForStartLine(ctx, transcript, m, m.GetTranscriptStart())
+}
+
+func compactTranscriptForStartLine(ctx context.Context, transcript []byte, m checkpoint.CommittedMetadata, startLine int) []byte {
 	if len(transcript) == 0 {
 		return nil
 	}
@@ -427,7 +435,7 @@ func tryCompactTranscript(ctx context.Context, transcript []byte, m checkpoint.C
 	compacted, err := compact.Compact(transcript, compact.MetadataFields{
 		Agent:      string(m.Agent),
 		CLIVersion: versioninfo.Version,
-		StartLine:  m.GetTranscriptStart(),
+		StartLine:  startLine,
 	})
 	if err != nil {
 		logging.Warn(ctx, "compact transcript generation failed during migration",
@@ -451,22 +459,26 @@ func tryCompactTranscript(ctx context.Context, transcript []byte, m checkpoint.C
 // computeCompactOffset determines the transcript.jsonl line offset for a checkpoint
 // by comparing a full compact (startLine=0) against the scoped compact. The difference
 // is the number of compact lines before this checkpoint's data.
-func computeCompactOffset(fullTranscript, scopedCompact []byte, m checkpoint.CommittedMetadata) int {
+func computeCompactOffset(fullTranscript, fullCompact []byte, m checkpoint.CommittedMetadata) int {
 	startLine := m.GetTranscriptStart()
 	if startLine == 0 || len(fullTranscript) == 0 || m.Agent == "" {
 		return 0
 	}
 
-	fullCompacted, err := compact.Compact(fullTranscript, compact.MetadataFields{
-		Agent:      string(m.Agent),
-		CLIVersion: versioninfo.Version,
-		StartLine:  0,
-	})
-	if err != nil || len(fullCompacted) == 0 {
+	if len(fullCompact) == 0 {
 		return 0
 	}
 
-	fullLines := bytes.Count(fullCompacted, []byte{'\n'})
+	scopedCompact, err := compact.Compact(fullTranscript, compact.MetadataFields{
+		Agent:      string(m.Agent),
+		CLIVersion: versioninfo.Version,
+		StartLine:  startLine,
+	})
+	if err != nil || len(scopedCompact) == 0 {
+		return 0
+	}
+
+	fullLines := bytes.Count(fullCompact, []byte{'\n'})
 	scopedLines := bytes.Count(scopedCompact, []byte{'\n'})
 	offset := fullLines - scopedLines
 	if offset < 0 {
