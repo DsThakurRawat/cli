@@ -249,8 +249,13 @@ func (s *ManualCommitStrategy) CondenseSession(ctx context.Context, repo *git.Re
 			)
 			redactedForCompact = nil
 		}
-		writeOpts.CompactTranscript = compactTranscriptForV2(ctx, ag, redactedForCompact, state.CheckpointTranscriptStart)
-		writeOpts.CompactTranscriptStart = computeCompactTranscriptStart(ctx, ag, state, redactedForCompact, writeOpts.CompactTranscript)
+		// Generate scoped compact (only new content) for line counting and offset calculation.
+		scopedCompact := compactTranscriptForV2(ctx, ag, redactedForCompact, state.CheckpointTranscriptStart)
+		// Generate full compact (cumulative) for storage — v2 /main replaces
+		// the session's transcript.jsonl on each write, so we must include all
+		// prior content, not just the new portion.
+		writeOpts.CompactTranscript = compactTranscriptForV2(ctx, ag, redactedForCompact, 0)
+		writeOpts.CompactTranscriptStart = computeCompactTranscriptStart(ctx, ag, state, redactedForCompact, scopedCompact)
 	}
 
 	// Write checkpoint metadata to v1 branch
@@ -260,9 +265,12 @@ func (s *ManualCommitStrategy) CondenseSession(ctx context.Context, repo *git.Re
 
 	writeCommittedV2IfEnabled(ctx, repo, writeOpts)
 
+	// Count scoped (new-only) compact lines, not full compact lines,
+	// so state.CompactTranscriptStart accumulates correctly.
 	compactLines := 0
 	if writeOpts.CompactTranscript != nil {
-		compactLines = countCompactLines(writeOpts.CompactTranscript)
+		fullLines := countCompactLines(writeOpts.CompactTranscript)
+		compactLines = fullLines - writeOpts.CompactTranscriptStart
 	}
 
 	return &CondenseResult{
