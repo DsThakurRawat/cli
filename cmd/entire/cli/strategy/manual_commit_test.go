@@ -4271,6 +4271,7 @@ func TestCondenseSession_V2Disabled_NoV2Refs(t *testing.T) {
 	result, err := s.CondenseSession(context.Background(), repo, checkpointID, state, nil)
 	require.NoError(t, err)
 	require.NotNil(t, result)
+	require.Equal(t, 0, result.CompactTranscriptLines, "v2-disabled condensation should not report compact transcript line deltas")
 
 	// v1 should exist
 	_, err = repo.Reference(plumbing.NewBranchReferenceName(paths.MetadataBranchName), true)
