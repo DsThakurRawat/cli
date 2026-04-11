@@ -659,14 +659,14 @@ func (s *GitStore) writeTranscript(ctx context.Context, opts WriteCommittedOptio
 
 	// Chunk the transcript if it's too large
 	chunkStart := time.Now()
-	chunkCtx, chunkSpan := perf.Start(ctx, "chunk_transcript")
+	chunkCtx, chunkTranscriptSpan := perf.Start(ctx, "chunk_transcript")
 	chunks, err := agent.ChunkTranscript(chunkCtx, transcriptBytes, opts.Agent)
 	if err != nil {
-		chunkSpan.RecordError(err)
-		chunkSpan.End()
+		chunkTranscriptSpan.RecordError(err)
+		chunkTranscriptSpan.End()
 		return fmt.Errorf("failed to chunk transcript: %w", err)
 	}
-	chunkSpan.End()
+	chunkTranscriptSpan.End()
 	chunkDuration := time.Since(chunkStart)
 
 	// Write chunk files
