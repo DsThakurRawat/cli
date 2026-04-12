@@ -121,9 +121,6 @@ func (c *CursorAgent) InstallHooks(ctx context.Context, localDev bool, force boo
 	}
 
 	sessionStartCmd := cmdPrefix + HookNameSessionStart
-	if !localDev {
-		sessionStartCmd = agent.WrapProductionSessionStartHookCommand(sessionStartCmd, agent.WarningFormatSingleLine)
-	}
 	sessionEndCmd := cmdPrefix + HookNameSessionEnd
 	beforeSubmitPromptCmd := cmdPrefix + HookNameBeforeSubmitPrompt
 	stopCmd := cmdPrefix + HookNameStop
@@ -131,6 +128,7 @@ func (c *CursorAgent) InstallHooks(ctx context.Context, localDev bool, force boo
 	subagentStartCmd := cmdPrefix + HookNameSubagentStart
 	subagentEndCmd := cmdPrefix + HookNameSubagentStop
 	if !localDev {
+		sessionStartCmd = agent.WrapProductionSilentHookCommand(sessionStartCmd)
 		sessionEndCmd = agent.WrapProductionSilentHookCommand(sessionEndCmd)
 		beforeSubmitPromptCmd = agent.WrapProductionSilentHookCommand(beforeSubmitPromptCmd)
 		stopCmd = agent.WrapProductionSilentHookCommand(stopCmd)

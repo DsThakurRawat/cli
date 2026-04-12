@@ -56,7 +56,7 @@ func TestInstallHooks_FreshInstall(t *testing.T) {
 
 	// Verify commands
 	assertEntryCommand(t, hooksFile.Hooks.Stop, agent.WrapProductionSilentHookCommand("entire hooks cursor stop"))
-	assertEntryCommand(t, hooksFile.Hooks.SessionStart, agent.WrapProductionSessionStartHookCommand("entire hooks cursor session-start", agent.WarningFormatSingleLine))
+	assertEntryCommand(t, hooksFile.Hooks.SessionStart, agent.WrapProductionSilentHookCommand("entire hooks cursor session-start"))
 	assertEntryCommand(t, hooksFile.Hooks.BeforeSubmitPrompt, agent.WrapProductionSilentHookCommand("entire hooks cursor before-submit-prompt"))
 	assertEntryCommand(t, hooksFile.Hooks.PreCompact, agent.WrapProductionSilentHookCommand("entire hooks cursor pre-compact"))
 	assertEntryCommand(t, hooksFile.Hooks.SubagentStart, agent.WrapProductionSilentHookCommand("entire hooks cursor subagent-start"))
