@@ -441,11 +441,11 @@ func readTranscriptFromObjectTree(tree *object.Tree, agentType types.AgentType) 
 	var hasBaseFile bool
 
 	for _, entry := range tree.Entries {
-		if entry.Name == paths.TranscriptFileName {
+		if entry.Name == paths.V2RawTranscriptFileName {
 			hasBaseFile = true
 		}
-		if strings.HasPrefix(entry.Name, paths.TranscriptFileName+".") {
-			idx := agent.ParseChunkIndex(entry.Name, paths.TranscriptFileName)
+		if strings.HasPrefix(entry.Name, paths.V2RawTranscriptFileName+".") {
+			idx := agent.ParseChunkIndex(entry.Name, paths.V2RawTranscriptFileName)
 			if idx > 0 {
 				chunkFiles = append(chunkFiles, entry.Name)
 			}
@@ -454,9 +454,9 @@ func readTranscriptFromObjectTree(tree *object.Tree, agentType types.AgentType) 
 
 	// If chunk files exist, reassemble all chunks (base file is chunk 0)
 	if len(chunkFiles) > 0 {
-		chunkFiles = agent.SortChunkFiles(chunkFiles, paths.TranscriptFileName)
+		chunkFiles = agent.SortChunkFiles(chunkFiles, paths.V2RawTranscriptFileName)
 		if hasBaseFile {
-			chunkFiles = append([]string{paths.TranscriptFileName}, chunkFiles...)
+			chunkFiles = append([]string{paths.V2RawTranscriptFileName}, chunkFiles...)
 		}
 
 		var chunks [][]byte
@@ -483,7 +483,7 @@ func readTranscriptFromObjectTree(tree *object.Tree, agentType types.AgentType) 
 
 	// No chunk files — read base file directly (non-chunked transcript)
 	if hasBaseFile {
-		file, err := tree.File(paths.TranscriptFileName)
+		file, err := tree.File(paths.V2RawTranscriptFileName)
 		if err == nil {
 			content, contentErr := file.Contents()
 			if contentErr == nil {

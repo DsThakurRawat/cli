@@ -416,8 +416,8 @@ func (s *V2GitStore) writeContentHash(redactedTranscript []byte, sessionPath str
 	if err != nil {
 		return err
 	}
-	entries[sessionPath+paths.ContentHashFileName] = object.TreeEntry{
-		Name: sessionPath + paths.ContentHashFileName,
+	entries[sessionPath+paths.V2RawTranscriptHashFileName] = object.TreeEntry{
+		Name: sessionPath + paths.V2RawTranscriptHashFileName,
 		Mode: filemode.Regular,
 		Hash: hashBlob,
 	}
@@ -549,7 +549,7 @@ func (s *V2GitStore) writeTranscriptBlobs(ctx context.Context, transcript redact
 	}
 
 	for i, chunk := range chunks {
-		chunkPath := sessionPath + agent.ChunkFileName(paths.TranscriptFileName, i)
+		chunkPath := sessionPath + agent.ChunkFileName(paths.V2RawTranscriptFileName, i)
 		blobHash, err := CreateBlobFromContent(s.repo, chunk)
 		if err != nil {
 			return nil, err

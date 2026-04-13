@@ -215,13 +215,13 @@ func TestV2ReadSessionContent_ChunkedTranscript(t *testing.T) {
 	require.NoError(t, err)
 
 	entries := map[string]object.TreeEntry{
-		sessionPath + paths.TranscriptFileName: {
-			Name: sessionPath + paths.TranscriptFileName,
+		sessionPath + paths.V2RawTranscriptFileName: {
+			Name: sessionPath + paths.V2RawTranscriptFileName,
 			Mode: filemode.Regular,
 			Hash: blob0,
 		},
-		sessionPath + paths.TranscriptFileName + ".001": {
-			Name: sessionPath + paths.TranscriptFileName + ".001",
+		sessionPath + paths.V2RawTranscriptFileName + ".001": {
+			Name: sessionPath + paths.V2RawTranscriptFileName + ".001",
 			Mode: filemode.Regular,
 			Hash: blob1,
 		},
