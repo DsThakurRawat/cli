@@ -1,6 +1,7 @@
 package factoryaidroid
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -289,7 +290,7 @@ func (f *FactoryAIDroidAgent) parseCompaction(stdin io.Reader) (*agent.Event, er
 }
 
 func parseHookToolResponseAgentID(raw json.RawMessage) string {
-	if len(raw) == 0 || string(raw) == "null" {
+	if trimmed := bytes.TrimSpace(raw); len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
 		return ""
 	}
 
