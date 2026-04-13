@@ -5,7 +5,10 @@ if [ "$#" -eq 0 ]; then
   set -- mise run test:ci
 fi
 
-export ENTIRE_DEVCONTAINER_KEYRING_PASSWORD="${ENTIRE_DEVCONTAINER_KEYRING_PASSWORD:-entire-devcontainer}"
+if [ -z "${ENTIRE_DEVCONTAINER_KEYRING_PASSWORD:-}" ]; then
+  ENTIRE_DEVCONTAINER_KEYRING_PASSWORD="$(openssl rand -hex 16)"
+fi
+export ENTIRE_DEVCONTAINER_KEYRING_PASSWORD
 
 exec dbus-run-session -- bash -lc '
   set -euo pipefail

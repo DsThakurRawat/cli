@@ -475,7 +475,7 @@ devcontainer exec --workspace-folder . bash -lc '.devcontainer/run-with-keyring.
 
 The container's `postCreateCommand` runs `mise trust --yes && mise install`, so Go, `golangci-lint`, `gotestsum`, `shellcheck`, and the canary E2E helper binaries are ready after creation. Use `.devcontainer/run-with-keyring.sh <command>` for commands that touch the Linux keyring, including `mise run test:ci`.
 
-If you need keyring-dependent commands to work reliably in the devcontainer, set `ENTIRE_DEVCONTAINER_KEYRING_PASSWORD` in the environment before invoking `.devcontainer/run-with-keyring.sh`. The helper uses that value to unlock/configure the keyring non-interactively. If `ENTIRE_DEVCONTAINER_KEYRING_PASSWORD` is unset, the helper will not have a password to provide, so commands that need the keyring may prompt, fail to unlock it, or otherwise be unreliable in non-interactive runs.
+If `ENTIRE_DEVCONTAINER_KEYRING_PASSWORD` is set in the environment, `.devcontainer/run-with-keyring.sh` uses that value to unlock the keyring non-interactively. If it is unset, the script generates a random password for the session automatically.
 ### Common Tasks
 
 ```
