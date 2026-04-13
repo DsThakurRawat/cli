@@ -114,9 +114,9 @@ func fetchAndMergeRef(ctx context.Context, target string, refName plumbing.Refer
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
 
-	fetchTarget, err := ResolveFilteredFetchTarget(ctx, target)
+	fetchTarget, err := ResolveFetchTarget(ctx, target)
 	if err != nil {
-		return fmt.Errorf("resolve filtered fetch target: %w", err)
+		return fmt.Errorf("resolve fetch target: %w", err)
 	}
 
 	// Fetch to a temp ref
@@ -127,7 +127,8 @@ func fetchAndMergeRef(ctx context.Context, target string, refName plumbing.Refer
 	// Use --filter=blob:none for a partial fetch that downloads only commits
 	// and trees, skipping blobs. The merge only needs the tree structure to
 	// combine entries; blobs are already local or fetched on demand.
-	fetchCmd := CheckpointGitCommand(ctx, fetchTarget, "fetch", "--no-tags", "--filter=blob:none", fetchTarget, refSpec)
+	fetchArgs := AppendFetchFilterArgs(ctx, []string{"fetch", "--no-tags", fetchTarget, refSpec})
+	fetchCmd := CheckpointGitCommand(ctx, fetchTarget, fetchArgs...)
 	fetchCmd.Env = append(fetchCmd.Env, "GIT_TERMINAL_PROMPT=0")
 	if output, err := fetchCmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("fetch failed: %s", output)
@@ -254,7 +255,8 @@ func handleRotationConflict(ctx context.Context, target, fetchTarget string, rep
 	// Fetch the latest archived generation
 	archiveTmpRef := plumbing.ReferenceName("refs/entire-fetch-tmp/archive-" + latestArchive)
 	archiveRefSpec := fmt.Sprintf("+%s:%s", archiveRefName, archiveTmpRef)
-	fetchCmd := CheckpointGitCommand(ctx, fetchTarget, "fetch", "--no-tags", "--filter=blob:none", fetchTarget, archiveRefSpec)
+	fetchArgs := AppendFetchFilterArgs(ctx, []string{"fetch", "--no-tags", fetchTarget, archiveRefSpec})
+	fetchCmd := CheckpointGitCommand(ctx, fetchTarget, fetchArgs...)
 	fetchCmd.Env = append(fetchCmd.Env, "GIT_TERMINAL_PROMPT=0")
 	if output, fetchErr := fetchCmd.CombinedOutput(); fetchErr != nil {
 		return fmt.Errorf("fetch archived generation failed: %s", output)

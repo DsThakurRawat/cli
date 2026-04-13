@@ -320,6 +320,9 @@ var gitConfigGuardTransportPromisorRemoteRE = regexp.MustCompile(
 
 func normalizeGitConfigForGuard(content string) string {
 	content = gitConfigGuardRepositoryFormatVersionRE.ReplaceAllString(content, `${1}repositoryformatversion = <normalized>`)
+	// Deliberately ignore only the full promisor+partialclonefilter pair that
+	// git writes for transport-keyed remotes during filtered fetches. If git ever
+	// writes a partial section, the guard should still fail loudly.
 	content = gitConfigGuardTransportPromisorRemoteRE.ReplaceAllString(content, "")
 	return content
 }
@@ -373,7 +376,13 @@ func (env *TestEnv) initEntireInternal(strategyOptions map[string]any) {
 		"enabled":   true,
 		"local_dev": true, // Note: git-triggered hooks won't work (path is relative); tests call hooks via getTestBinary() instead
 	}
-	if strategyOptions != nil {
+	if strategyOptions == nil {
+		strategyOptions = make(map[string]any)
+	}
+	if _, exists := strategyOptions["filtered_fetches"]; !exists {
+		strategyOptions["filtered_fetches"] = true
+	}
+	if len(strategyOptions) > 0 {
 		settings["strategy_options"] = strategyOptions
 	}
 	data, err := jsonutil.MarshalIndentWithNewline(settings, "", "  ")

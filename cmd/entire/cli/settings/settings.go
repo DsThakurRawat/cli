@@ -432,14 +432,16 @@ func IsPushV2RefsEnabled(ctx context.Context) bool {
 	return s.IsPushV2RefsEnabled()
 }
 
-// IsFilteredFetchesUseURLEnabled checks if filtered fetches should resolve
-// remote names to URLs before invoking git fetch. Returns false by default.
-func IsFilteredFetchesUseURLEnabled(ctx context.Context) bool {
+// IsFilteredFetchesEnabled checks if filtered fetches should be used.
+// When enabled, filtered fetches always resolve remote names to URLs first so
+// git does not persist promisor settings onto named remotes in local config.
+// Returns false by default.
+func IsFilteredFetchesEnabled(ctx context.Context) bool {
 	s, err := Load(ctx)
 	if err != nil {
 		return false
 	}
-	return s.IsFilteredFetchesUseURLEnabled()
+	return s.IsFilteredFetchesEnabled()
 }
 
 // IsSummarizeEnabled checks if auto-summarize is enabled in settings.
@@ -534,14 +536,14 @@ func (s *EntireSettings) IsPushV2RefsEnabled() bool {
 	return ok && val
 }
 
-// IsFilteredFetchesUseURLEnabled checks if filtered fetches should use a
-// resolved remote URL instead of a remote name. This is a temporary rollout
-// guard for the URL-based filtered fetch behavior.
-func (s *EntireSettings) IsFilteredFetchesUseURLEnabled() bool {
+// IsFilteredFetchesEnabled checks if fetches should use --filter=blob:none.
+// When enabled, filtered fetches always use resolved URLs rather than remote
+// names to avoid persisting promisor settings onto named remotes.
+func (s *EntireSettings) IsFilteredFetchesEnabled() bool {
 	if s.StrategyOptions == nil {
 		return false
 	}
-	val, ok := s.StrategyOptions["filtered_fetches_use_url"].(bool)
+	val, ok := s.StrategyOptions["filtered_fetches"].(bool)
 	return ok && val
 }
 

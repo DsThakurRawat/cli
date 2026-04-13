@@ -187,9 +187,9 @@ func fetchAndRebaseSessionsCommon(ctx context.Context, target, branchName string
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
 
-	fetchTarget, err := ResolveFilteredFetchTarget(ctx, target)
+	fetchTarget, err := ResolveFetchTarget(ctx, target)
 	if err != nil {
-		return fmt.Errorf("resolve filtered fetch target: %w", err)
+		return fmt.Errorf("resolve fetch target: %w", err)
 	}
 
 	// Determine fetch refspec. When the resolved fetch target is a URL, use a
@@ -197,7 +197,8 @@ func fetchAndRebaseSessionsCommon(ctx context.Context, target, branchName string
 	// ref.
 	var fetchedRefName plumbing.ReferenceName
 	var refSpec string
-	if isURL(fetchTarget) {
+	usedTempRef := isURL(fetchTarget)
+	if usedTempRef {
 		tmpRef := "refs/entire-fetch-tmp/" + branchName
 		refSpec = fmt.Sprintf("+refs/heads/%s:%s", branchName, tmpRef)
 		fetchedRefName = plumbing.ReferenceName(tmpRef)
@@ -210,7 +211,8 @@ func fetchAndRebaseSessionsCommon(ctx context.Context, target, branchName string
 	// Use --filter=blob:none for a partial fetch that downloads only commits
 	// and trees, skipping blobs. The merge only needs the tree structure to
 	// combine entries; blobs are already local or fetched on demand.
-	fetchCmd := CheckpointGitCommand(ctx, fetchTarget, "fetch", "--no-tags", "--filter=blob:none", fetchTarget, refSpec)
+	fetchArgs := AppendFetchFilterArgs(ctx, []string{"fetch", "--no-tags", fetchTarget, refSpec})
+	fetchCmd := CheckpointGitCommand(ctx, fetchTarget, fetchArgs...)
 	if output, err := fetchCmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("fetch failed: %s", output)
 	}
@@ -263,7 +265,7 @@ func fetchAndRebaseSessionsCommon(ctx context.Context, target, branchName string
 		if err := repo.Storer.SetReference(ref); err != nil {
 			return fmt.Errorf("failed to fast-forward branch ref: %w", err)
 		}
-		if isURL(target) {
+		if usedTempRef {
 			_ = repo.Storer.RemoveReference(fetchedRefName) //nolint:errcheck // cleanup is best-effort
 		}
 		return nil
@@ -284,7 +286,7 @@ func fetchAndRebaseSessionsCommon(ctx context.Context, target, branchName string
 		if err := repo.Storer.SetReference(ref); err != nil {
 			return fmt.Errorf("failed to update branch ref: %w", err)
 		}
-		if isURL(target) {
+		if usedTempRef {
 			_ = repo.Storer.RemoveReference(fetchedRefName) //nolint:errcheck // cleanup is best-effort
 		}
 		return nil
@@ -302,7 +304,7 @@ func fetchAndRebaseSessionsCommon(ctx context.Context, target, branchName string
 	}
 
 	// Clean up temp ref if we used one (best-effort, not critical if it fails)
-	if isURL(target) {
+	if usedTempRef {
 		_ = repo.Storer.RemoveReference(fetchedRefName) //nolint:errcheck // cleanup is best-effort
 	}
 

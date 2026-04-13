@@ -131,12 +131,21 @@ func resolveTargetProtocol(ctx context.Context, target string) string {
 	return info.protocol
 }
 
-// ResolveFilteredFetchTarget returns the git fetch target to use for filtered
-// fetches. When the rollout flag is enabled, configured remotes are resolved to
-// their URL so git does not persist promisor settings onto the remote name.
-func ResolveFilteredFetchTarget(ctx context.Context, target string) (string, error) {
-	if isURL(target) || !settings.IsFilteredFetchesUseURLEnabled(ctx) {
+// ResolveFetchTarget returns the git fetch target to use. When filtered
+// fetches are enabled, configured remotes are resolved to their URL so git does
+// not persist promisor settings onto the remote name.
+func ResolveFetchTarget(ctx context.Context, target string) (string, error) {
+	if isURL(target) || !settings.IsFilteredFetchesEnabled(ctx) {
 		return target, nil
 	}
 	return getRemoteURL(ctx, target)
+}
+
+// AppendFetchFilterArgs appends the partial-clone filter arguments when the
+// filtered fetch rollout is enabled.
+func AppendFetchFilterArgs(ctx context.Context, args []string) []string {
+	if !settings.IsFilteredFetchesEnabled(ctx) {
+		return args
+	}
+	return append(args, "--filter=blob:none")
 }

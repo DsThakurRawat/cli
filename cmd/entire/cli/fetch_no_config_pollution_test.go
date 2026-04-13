@@ -39,7 +39,8 @@ func TestFetchDoesNotPolluteOriginConfig(t *testing.T) {
 	testutil.GitCommit(t, localDir, "init")
 	runGit(t, localDir, "remote", "add", "origin", bareDir)
 	runGit(t, localDir, "branch", paths.MetadataBranchName)
-	runGit(t, localDir, "push", "origin", "HEAD:refs/heads/main", paths.MetadataBranchName)
+	runGit(t, localDir, "update-ref", paths.V2MainRefName, "HEAD")
+	runGit(t, localDir, "push", "origin", "HEAD:refs/heads/main", paths.MetadataBranchName, paths.V2MainRefName)
 
 	// Clone fresh so local has no metadata branch yet — this is the scenario
 	// the fetch helpers in git_operations.go are designed for.
@@ -52,7 +53,7 @@ func TestFetchDoesNotPolluteOriginConfig(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(clonedDir, ".entire"), 0o755); err != nil {
 		t.Fatalf("failed to create .entire directory: %v", err)
 	}
-	settingsJSON := `{"enabled": true, "strategy_options": {"filtered_fetches_use_url": true}}`
+	settingsJSON := `{"enabled": true, "strategy_options": {"filtered_fetches": true}}`
 	if err := os.WriteFile(filepath.Join(clonedDir, ".entire", "settings.json"), []byte(settingsJSON), 0o644); err != nil {
 		t.Fatalf("failed to write settings.json: %v", err)
 	}
@@ -65,6 +66,8 @@ func TestFetchDoesNotPolluteOriginConfig(t *testing.T) {
 	}{
 		{"FetchMetadataBranch", FetchMetadataBranch},
 		{"FetchMetadataTreeOnly", FetchMetadataTreeOnly},
+		{"FetchV2MainTreeOnly", FetchV2MainTreeOnly},
+		{"FetchV2MainRef", FetchV2MainRef},
 	}
 
 	for _, tc := range cases {

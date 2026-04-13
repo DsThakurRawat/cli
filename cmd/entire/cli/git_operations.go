@@ -18,6 +18,26 @@ import (
 	"github.com/go-git/go-git/v6/plumbing"
 )
 
+func formatFilteredFetchError(prefix, fetchTarget string, output []byte, fetchErr error) error {
+	redactedTarget := fetchTarget
+	if isFetchTargetURL(fetchTarget) {
+		redactedTarget = strategy.RedactURL(fetchTarget)
+	}
+
+	msg := strings.TrimSpace(string(output))
+	if isFetchTargetURL(fetchTarget) {
+		msg = strings.TrimSpace(strings.ReplaceAll(msg, fetchTarget, redactedTarget))
+	}
+	if msg != "" {
+		return fmt.Errorf("%s from %s: %s: %w", prefix, redactedTarget, msg, fetchErr)
+	}
+	return fmt.Errorf("%s from %s: %w", prefix, redactedTarget, fetchErr)
+}
+
+func isFetchTargetURL(target string) bool {
+	return strings.Contains(target, "://") || strings.Contains(target, "@")
+}
+
 // openRepository opens the git repository with linked worktree support enabled.
 // This is a convenience wrapper around strategy.OpenRepository() for use in the CLI package.
 func openRepository(ctx context.Context) (*git.Repository, error) {
@@ -383,19 +403,20 @@ func FetchMetadataBranch(ctx context.Context) error {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
 
-	fetchTarget, err := strategy.ResolveFilteredFetchTarget(ctx, "origin")
+	fetchTarget, err := strategy.ResolveFetchTarget(ctx, "origin")
 	if err != nil {
-		return fmt.Errorf("failed to resolve filtered fetch target: %w", err)
+		return fmt.Errorf("failed to resolve fetch target: %w", err)
 	}
 
 	refSpec := fmt.Sprintf("+refs/heads/%s:refs/remotes/origin/%s", branchName, branchName)
 
-	fetchCmd := strategy.CheckpointGitCommand(ctx, fetchTarget, "fetch", "--no-tags", "--filter=blob:none", fetchTarget, refSpec)
+	fetchArgs := strategy.AppendFetchFilterArgs(ctx, []string{"fetch", "--no-tags", fetchTarget, refSpec})
+	fetchCmd := strategy.CheckpointGitCommand(ctx, fetchTarget, fetchArgs...)
 	if output, fetchErr := fetchCmd.CombinedOutput(); fetchErr != nil {
 		if ctx.Err() == context.DeadlineExceeded {
 			return errors.New("fetch timed out after 2 minutes")
 		}
-		return fmt.Errorf("failed to fetch %s from origin: %s: %w", branchName, strings.TrimSpace(string(output)), fetchErr)
+		return formatFilteredFetchError("failed to fetch "+branchName, fetchTarget, output, fetchErr)
 	}
 
 	repo, err := openRepository(ctx)
@@ -430,19 +451,20 @@ func FetchMetadataTreeOnly(ctx context.Context) error {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
 
-	fetchTarget, err := strategy.ResolveFilteredFetchTarget(ctx, "origin")
+	fetchTarget, err := strategy.ResolveFetchTarget(ctx, "origin")
 	if err != nil {
-		return fmt.Errorf("failed to resolve filtered fetch target: %w", err)
+		return fmt.Errorf("failed to resolve fetch target: %w", err)
 	}
 
 	refSpec := fmt.Sprintf("+refs/heads/%s:refs/remotes/origin/%s", branchName, branchName)
 
-	fetchCmd := strategy.CheckpointGitCommand(ctx, fetchTarget, "fetch", "--no-tags", "--depth=1", "--filter=blob:none", fetchTarget, refSpec)
+	fetchArgs := strategy.AppendFetchFilterArgs(ctx, []string{"fetch", "--no-tags", "--depth=1", fetchTarget, refSpec})
+	fetchCmd := strategy.CheckpointGitCommand(ctx, fetchTarget, fetchArgs...)
 	if output, fetchErr := fetchCmd.CombinedOutput(); fetchErr != nil {
 		if ctx.Err() == context.DeadlineExceeded {
 			return errors.New("treeless fetch timed out after 2 minutes")
 		}
-		return fmt.Errorf("failed to treeless-fetch %s from origin: %s: %w", branchName, strings.TrimSpace(string(output)), fetchErr)
+		return formatFilteredFetchError("failed to treeless-fetch "+branchName, fetchTarget, output, fetchErr)
 	}
 
 	repo, err := openRepository(ctx)
@@ -473,19 +495,20 @@ func FetchV2MainTreeOnly(ctx context.Context) error {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
 
-	fetchTarget, err := strategy.ResolveFilteredFetchTarget(ctx, "origin")
+	fetchTarget, err := strategy.ResolveFetchTarget(ctx, "origin")
 	if err != nil {
-		return fmt.Errorf("failed to resolve filtered fetch target: %w", err)
+		return fmt.Errorf("failed to resolve fetch target: %w", err)
 	}
 
 	refSpec := fmt.Sprintf("+%s:%s", paths.V2MainRefName, paths.V2MainRefName)
 
-	fetchCmd := strategy.CheckpointGitCommand(ctx, fetchTarget, "fetch", "--no-tags", "--depth=1", "--filter=blob:none", fetchTarget, refSpec)
+	fetchArgs := strategy.AppendFetchFilterArgs(ctx, []string{"fetch", "--no-tags", "--depth=1", fetchTarget, refSpec})
+	fetchCmd := strategy.CheckpointGitCommand(ctx, fetchTarget, fetchArgs...)
 	if output, fetchErr := fetchCmd.CombinedOutput(); fetchErr != nil {
 		if ctx.Err() == context.DeadlineExceeded {
 			return errors.New("v2 treeless fetch timed out after 2 minutes")
 		}
-		return fmt.Errorf("failed to treeless-fetch v2 /main from origin: %s: %w", strings.TrimSpace(string(output)), fetchErr)
+		return formatFilteredFetchError("failed to treeless-fetch v2 /main", fetchTarget, output, fetchErr)
 	}
 
 	return nil
@@ -499,19 +522,20 @@ func FetchV2MainRef(ctx context.Context) error {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
 
-	fetchTarget, err := strategy.ResolveFilteredFetchTarget(ctx, "origin")
+	fetchTarget, err := strategy.ResolveFetchTarget(ctx, "origin")
 	if err != nil {
-		return fmt.Errorf("failed to resolve filtered fetch target: %w", err)
+		return fmt.Errorf("failed to resolve fetch target: %w", err)
 	}
 
 	refSpec := fmt.Sprintf("+%s:%s", paths.V2MainRefName, paths.V2MainRefName)
 
-	fetchCmd := strategy.CheckpointGitCommand(ctx, fetchTarget, "fetch", "--no-tags", "--filter=blob:none", fetchTarget, refSpec)
+	fetchArgs := strategy.AppendFetchFilterArgs(ctx, []string{"fetch", "--no-tags", fetchTarget, refSpec})
+	fetchCmd := strategy.CheckpointGitCommand(ctx, fetchTarget, fetchArgs...)
 	if output, fetchErr := fetchCmd.CombinedOutput(); fetchErr != nil {
 		if ctx.Err() == context.DeadlineExceeded {
 			return errors.New("v2 fetch timed out after 2 minutes")
 		}
-		return fmt.Errorf("failed to fetch v2 /main from origin: %s: %w", strings.TrimSpace(string(output)), fetchErr)
+		return formatFilteredFetchError("failed to fetch v2 /main", fetchTarget, output, fetchErr)
 	}
 
 	return nil

@@ -597,33 +597,33 @@ func TestIsPushV2RefsEnabled_RequiresBothFlags(t *testing.T) {
 	}
 }
 
-func TestIsFilteredFetchesUseURLEnabled_DefaultsFalse(t *testing.T) {
+func TestIsFilteredFetchesEnabled_DefaultsFalse(t *testing.T) {
 	t.Parallel()
 	s := &EntireSettings{Enabled: true}
-	if s.IsFilteredFetchesUseURLEnabled() {
-		t.Error("expected IsFilteredFetchesUseURLEnabled to default to false")
+	if s.IsFilteredFetchesEnabled() {
+		t.Error("expected IsFilteredFetchesEnabled to default to false")
 	}
 }
 
-func TestIsFilteredFetchesUseURLEnabled_True(t *testing.T) {
+func TestIsFilteredFetchesEnabled_True(t *testing.T) {
 	t.Parallel()
 	s := &EntireSettings{
 		Enabled:         true,
-		StrategyOptions: map[string]any{"filtered_fetches_use_url": true},
+		StrategyOptions: map[string]any{"filtered_fetches": true},
 	}
-	if !s.IsFilteredFetchesUseURLEnabled() {
-		t.Error("expected IsFilteredFetchesUseURLEnabled to be true")
+	if !s.IsFilteredFetchesEnabled() {
+		t.Error("expected IsFilteredFetchesEnabled to be true")
 	}
 }
 
-func TestIsFilteredFetchesUseURLEnabled_WrongType(t *testing.T) {
+func TestIsFilteredFetchesEnabled_WrongType(t *testing.T) {
 	t.Parallel()
 	s := &EntireSettings{
 		Enabled:         true,
-		StrategyOptions: map[string]any{"filtered_fetches_use_url": "yes"},
+		StrategyOptions: map[string]any{"filtered_fetches": "yes"},
 	}
-	if s.IsFilteredFetchesUseURLEnabled() {
-		t.Error("expected IsFilteredFetchesUseURLEnabled to be false for non-bool value")
+	if s.IsFilteredFetchesEnabled() {
+		t.Error("expected IsFilteredFetchesEnabled to be false for non-bool value")
 	}
 }
 

@@ -88,7 +88,7 @@ func TestResolveTargetProtocol_SSHRemoteName(t *testing.T) {
 }
 
 // Not parallel: uses t.Chdir()
-func TestResolveFilteredFetchTarget(t *testing.T) {
+func TestResolveFetchTarget(t *testing.T) {
 	ctx := context.Background()
 
 	tmpDir := t.TempDir()
@@ -105,7 +105,7 @@ func TestResolveFilteredFetchTarget(t *testing.T) {
 	t.Chdir(tmpDir)
 
 	t.Run("disabled returns remote name", func(t *testing.T) {
-		target, err := ResolveFilteredFetchTarget(ctx, "origin")
+		target, err := ResolveFetchTarget(ctx, "origin")
 		require.NoError(t, err)
 		assert.Equal(t, "origin", target)
 	})
@@ -115,16 +115,16 @@ func TestResolveFilteredFetchTarget(t *testing.T) {
 			t,
 			tmpDir,
 			".entire/settings.json",
-			`{"enabled": true, "strategy_options": {"filtered_fetches_use_url": true}}`,
+			`{"enabled": true, "strategy_options": {"filtered_fetches": true}}`,
 		)
 
-		target, err := ResolveFilteredFetchTarget(ctx, "origin")
+		target, err := ResolveFetchTarget(ctx, "origin")
 		require.NoError(t, err)
 		assert.Equal(t, "https://github.com/org/repo.git", target)
 	})
 
 	t.Run("URL target stays unchanged", func(t *testing.T) {
-		target, err := ResolveFilteredFetchTarget(ctx, "https://github.com/org/repo.git")
+		target, err := ResolveFetchTarget(ctx, "https://github.com/org/repo.git")
 		require.NoError(t, err)
 		assert.Equal(t, "https://github.com/org/repo.git", target)
 	})
