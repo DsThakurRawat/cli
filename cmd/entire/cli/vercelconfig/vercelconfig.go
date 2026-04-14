@@ -64,14 +64,13 @@ func ResetSettingsCache() {
 	cachedSettingsMu.Unlock()
 }
 
-// Load reads an existing Vercel config file if present.
-func Load(path string, exists bool) (map[string]any, bool, error) {
-	if !exists {
-		return make(map[string]any), false, nil
-	}
-
+// Load reads a Vercel config file if present.
+func Load(path string) (map[string]any, bool, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
+		if os.IsNotExist(err) {
+			return make(map[string]any), false, nil
+		}
 		return nil, false, fmt.Errorf("read %s: %w", FileName, err)
 	}
 
