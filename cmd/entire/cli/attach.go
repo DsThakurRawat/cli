@@ -173,7 +173,7 @@ func runAttach(ctx context.Context, w io.Writer, sessionID string, agentName typ
 		return fmt.Errorf("failed to write checkpoint: %w", err)
 	}
 	if settings.IsCheckpointsV2Enabled(logCtx) {
-		writeAttachCheckpointV2(logCtx, repo, store, writeOpts, isExistingCheckpoint)
+		writeAttachCheckpointV2(logCtx, repo, writeOpts)
 	}
 
 	// Create or update session state.
@@ -200,70 +200,14 @@ func runAttach(ctx context.Context, w io.Writer, sessionID string, agentName typ
 // writeAttachCheckpointV2 mirrors attach-created checkpoints into the v2 refs.
 // The caller is responsible for checking whether checkpoints_v2 is enabled.
 // v2 failures are logged and do not fail attach.
-func writeAttachCheckpointV2(ctx context.Context, repo *git.Repository, v1Store *cpkg.GitStore, opts cpkg.WriteCommittedOptions, isExistingCheckpoint bool) {
+func writeAttachCheckpointV2(ctx context.Context, repo *git.Repository, opts cpkg.WriteCommittedOptions) {
 	v2Store := cpkg.NewV2GitStore(repo, strategy.ResolveCheckpointURL(ctx, "origin"))
-	var err error
-	if isExistingCheckpoint {
-		err = backfillAttachCheckpointToV2(ctx, repo, v1Store, v2Store, opts.CheckpointID, opts.AuthorName, opts.AuthorEmail)
-	} else {
-		err = v2Store.WriteCommitted(ctx, opts)
-	}
-	if err != nil {
+	if err := v2Store.WriteCommitted(ctx, opts); err != nil {
 		logging.Warn(ctx, "attach v2 dual-write failed",
 			"checkpoint_id", opts.CheckpointID.String(),
 			"error", err,
 		)
 	}
-}
-
-// backfillAttachCheckpointToV2 rewrites the full checkpoint from v1 into v2.
-// This avoids creating a partial v2 shadow when attach adds a session to a
-// legacy v1-only checkpoint.
-func backfillAttachCheckpointToV2(ctx context.Context, repo *git.Repository, v1Store *cpkg.GitStore, v2Store *cpkg.V2GitStore, checkpointID id.CheckpointID, authorName, authorEmail string) error {
-	summary, err := v1Store.ReadCommitted(ctx, checkpointID)
-	if err != nil {
-		return fmt.Errorf("read v1 checkpoint: %w", err)
-	}
-	if summary == nil {
-		return fmt.Errorf("v1 checkpoint %s has no summary", checkpointID)
-	}
-
-	info := cpkg.CommittedInfo{CheckpointID: checkpointID}
-	shouldCopyTaskMetadata := false
-
-	for sessionIdx := range len(summary.Sessions) {
-		content, readErr := v1Store.ReadSessionContent(ctx, checkpointID, sessionIdx)
-		if readErr != nil {
-			return fmt.Errorf("read v1 session %d: %w", sessionIdx, readErr)
-		}
-		if content.Metadata.IsTask {
-			shouldCopyTaskMetadata = true
-		}
-
-		writeOpts := buildMigrateWriteOpts(content, info)
-		writeOpts.AuthorName = authorName
-		writeOpts.AuthorEmail = authorEmail
-
-		if compacted := tryCompactTranscript(ctx, content.Transcript, content.Metadata); compacted != nil {
-			writeOpts.CompactTranscript = compacted
-			writeOpts.CompactTranscriptStart = computeCompactOffset(ctx, content.Transcript, compacted, content.Metadata)
-		}
-
-		if writeErr := v2Store.WriteCommitted(ctx, writeOpts); writeErr != nil {
-			return fmt.Errorf("write v2 session %d: %w", sessionIdx, writeErr)
-		}
-	}
-
-	if shouldCopyTaskMetadata {
-		if taskErr := copyTaskMetadataToV2(repo, v1Store, v2Store, checkpointID, summary); taskErr != nil {
-			logging.Warn(ctx, "attach v2 task metadata copy failed",
-				"checkpoint_id", checkpointID.String(),
-				"error", taskErr,
-			)
-		}
-	}
-
-	return nil
 }
 
 // getHeadCommit returns the HEAD commit object.

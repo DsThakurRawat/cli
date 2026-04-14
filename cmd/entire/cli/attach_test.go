@@ -16,7 +16,6 @@ import (
 	_ "github.com/entireio/cli/cmd/entire/cli/agent/cursor"         // register agent
 	_ "github.com/entireio/cli/cmd/entire/cli/agent/factoryaidroid" // register agent
 	_ "github.com/entireio/cli/cmd/entire/cli/agent/geminicli"      // register agent
-	cpkg "github.com/entireio/cli/cmd/entire/cli/checkpoint"
 	"github.com/entireio/cli/cmd/entire/cli/paths"
 	"github.com/entireio/cli/cmd/entire/cli/session"
 	"github.com/entireio/cli/cmd/entire/cli/testutil"
@@ -225,12 +224,13 @@ func TestAttach_V2DualWriteEnabled(t *testing.T) {
 	}
 }
 
-func TestAttach_V2BackfillsExistingV1OnlyCheckpoint(t *testing.T) {
+func TestAttach_V2ExistingCheckpointAppendsWithoutBackfill(t *testing.T) {
 	setupAttachTestRepo(t)
 
 	repoDir := mustGetwd(t)
+	setAttachCheckpointsV2Enabled(t, repoDir)
 
-	session1ID := "test-attach-v1-only-session"
+	session1ID := "test-attach-v2-existing-session-1"
 	setupClaudeTranscript(t, session1ID, `{"type":"user","message":{"role":"user","content":"first prompt"},"uuid":"uuid-1"}
 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"first answer"}]},"uuid":"uuid-2"}
 `)
@@ -244,16 +244,17 @@ func TestAttach_V2BackfillsExistingV1OnlyCheckpoint(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := repo.Reference(plumbing.ReferenceName(paths.V2MainRefName), true); err == nil {
-		t.Fatalf("did not expect %s before checkpoints_v2 is enabled", paths.V2MainRefName)
+
+	mainRefBefore, err := repo.Reference(plumbing.ReferenceName(paths.V2MainRefName), true)
+	if err != nil {
+		t.Fatalf("failed to read %s after first attach: %v", paths.V2MainRefName, err)
 	}
-	if _, err := repo.Reference(plumbing.ReferenceName(paths.V2FullCurrentRefName), true); err == nil {
-		t.Fatalf("did not expect %s before checkpoints_v2 is enabled", paths.V2FullCurrentRefName)
+	fullRefBefore, err := repo.Reference(plumbing.ReferenceName(paths.V2FullCurrentRefName), true)
+	if err != nil {
+		t.Fatalf("failed to read %s after first attach: %v", paths.V2FullCurrentRefName, err)
 	}
 
-	setAttachCheckpointsV2Enabled(t, repoDir)
-
-	session2ID := "test-attach-v2-backfill-session"
+	session2ID := "test-attach-v2-existing-session-2"
 	setupClaudeTranscript(t, session2ID, `{"type":"user","message":{"role":"user","content":"second prompt"},"uuid":"uuid-3"}
 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"second answer"}]},"uuid":"uuid-4"}
 `)
@@ -263,47 +264,35 @@ func TestAttach_V2BackfillsExistingV1OnlyCheckpoint(t *testing.T) {
 		t.Fatalf("second attach failed: %v", err)
 	}
 
-	stateStore, err := session.NewStateStore(context.Background())
+	mainRefAfter, err := repo.Reference(plumbing.ReferenceName(paths.V2MainRefName), true)
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("failed to read %s after second attach: %v", paths.V2MainRefName, err)
 	}
-	state1, err := stateStore.Load(context.Background(), session1ID)
+	fullRefAfter, err := repo.Reference(plumbing.ReferenceName(paths.V2FullCurrentRefName), true)
 	if err != nil {
-		t.Fatal(err)
-	}
-	state2, err := stateStore.Load(context.Background(), session2ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if state1 == nil || state2 == nil {
-		t.Fatal("expected both session states to exist")
-	}
-	if state1.LastCheckpointID != state2.LastCheckpointID {
-		t.Fatalf("expected both sessions to share a checkpoint, got %s and %s", state1.LastCheckpointID, state2.LastCheckpointID)
+		t.Fatalf("failed to read %s after second attach: %v", paths.V2FullCurrentRefName, err)
 	}
 
-	v2Store := cpkg.NewV2GitStore(repo, "origin")
-	summary, err := v2Store.ReadCommitted(context.Background(), state2.LastCheckpointID)
+	mainCommitAfter, err := repo.CommitObject(mainRefAfter.Hash())
 	if err != nil {
-		t.Fatalf("expected checkpoint in v2 after backfill: %v", err)
+		t.Fatalf("failed to read v2 main commit: %v", err)
 	}
-	if got := len(summary.Sessions); got != 2 {
-		t.Fatalf("len(summary.Sessions) = %d, want 2", got)
+	if got, want := len(mainCommitAfter.ParentHashes), 1; got != want {
+		t.Fatalf("len(mainCommitAfter.ParentHashes) = %d, want %d", got, want)
+	}
+	if got := mainCommitAfter.ParentHashes[0]; got != mainRefBefore.Hash() {
+		t.Fatalf("v2 main ref advanced by more than one commit: parent=%s previous=%s", got, mainRefBefore.Hash())
 	}
 
-	content0, err := v2Store.ReadSessionContent(context.Background(), state2.LastCheckpointID, 0)
+	fullCommitAfter, err := repo.CommitObject(fullRefAfter.Hash())
 	if err != nil {
-		t.Fatalf("failed reading v2 session 0: %v", err)
+		t.Fatalf("failed to read v2 full/current commit: %v", err)
 	}
-	content1, err := v2Store.ReadSessionContent(context.Background(), state2.LastCheckpointID, 1)
-	if err != nil {
-		t.Fatalf("failed reading v2 session 1: %v", err)
+	if got, want := len(fullCommitAfter.ParentHashes), 1; got != want {
+		t.Fatalf("len(fullCommitAfter.ParentHashes) = %d, want %d", got, want)
 	}
-
-	foundSession1 := content0.Metadata.SessionID == session1ID || content1.Metadata.SessionID == session1ID
-	foundSession2 := content0.Metadata.SessionID == session2ID || content1.Metadata.SessionID == session2ID
-	if !foundSession1 || !foundSession2 {
-		t.Fatalf("expected both session IDs in v2, got %q and %q", content0.Metadata.SessionID, content1.Metadata.SessionID)
+	if got := fullCommitAfter.ParentHashes[0]; got != fullRefBefore.Hash() {
+		t.Fatalf("v2 full/current ref advanced by more than one commit: parent=%s previous=%s", got, fullRefBefore.Hash())
 	}
 }
 
