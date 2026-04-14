@@ -197,7 +197,8 @@ func ReconcileDisconnectedMetadataBranch(
 }
 
 // v2DoctorTmpRef is the temporary ref used by doctor to fetch and compare the remote v2 /main.
-const v2DoctorTmpRef = "refs/entire/tmp/doctor-v2-main"
+// Uses the refs/entire-fetch-tmp/ namespace consistent with checkpoint_remote.go.
+const v2DoctorTmpRef = "refs/entire-fetch-tmp/doctor-v2-main"
 
 // IsV2MainDisconnected checks whether the local v2 /main ref and the remote
 // v2 /main ref exist but share no common ancestor. Uses git ls-remote to
