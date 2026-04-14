@@ -505,9 +505,16 @@ func checkV2GenerationHealth(cmd *cobra.Command, repo *git.Repository) error {
 			continue
 		}
 
-		if gen.OldestCheckpointAt.IsZero() || gen.NewestCheckpointAt.IsZero() {
+		hasOldest := !gen.OldestCheckpointAt.IsZero()
+		hasNewest := !gen.NewestCheckpointAt.IsZero()
+
+		switch {
+		case !hasOldest && !hasNewest:
+			// ReadGeneration returns zero-value when the file is absent
 			warnings = append(warnings, fmt.Sprintf("generation %s: WARNING — missing generation.json", genName))
-		} else if gen.OldestCheckpointAt.After(gen.NewestCheckpointAt) {
+		case hasOldest != hasNewest:
+			warnings = append(warnings, fmt.Sprintf("generation %s: WARNING — incomplete generation.json (partial timestamps)", genName))
+		case gen.OldestCheckpointAt.After(gen.NewestCheckpointAt):
 			warnings = append(warnings, fmt.Sprintf("generation %s: WARNING — invalid timestamps (oldest > newest)", genName))
 		}
 
