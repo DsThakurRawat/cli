@@ -74,9 +74,8 @@ func doPushBranch(ctx context.Context, target, branchName string) error {
 	stop := startProgressDots(os.Stderr)
 
 	// Try pushing first
-	if err := tryPushSessionsCommon(ctx, target, branchName); err == nil {
-		stop(" done")
-		printSettingsCommitHint(ctx, target)
+	if result, err := tryPushSessionsCommon(ctx, target, branchName); err == nil {
+		finishPush(ctx, stop, result, target)
 		return nil
 	}
 	stop("")
@@ -97,13 +96,12 @@ func doPushBranch(ctx context.Context, target, branchName string) error {
 	fmt.Fprintf(os.Stderr, "[entire] Pushing %s to %s...", branchName, displayTarget)
 	stop = startProgressDots(os.Stderr)
 
-	if err := tryPushSessionsCommon(ctx, target, branchName); err != nil {
+	if result, err := tryPushSessionsCommon(ctx, target, branchName); err != nil {
 		stop("")
 		fmt.Fprintf(os.Stderr, "[entire] Warning: failed to push %s after sync: %v\n", branchName, err)
 		printCheckpointRemoteHint(target)
 	} else {
-		stop(" done")
-		printSettingsCommitHint(ctx, target)
+		finishPush(ctx, stop, result, target)
 	}
 
 	return nil
@@ -159,24 +157,61 @@ func isCheckpointRemoteCommitted(ctx context.Context) bool {
 	return committed.GetCheckpointRemote() != nil
 }
 
+// pushResult describes what happened during a push attempt.
+type pushResult struct {
+	// upToDate is true when the remote already had all commits (nothing transferred).
+	upToDate bool
+}
+
+// parsePushResult checks git push --porcelain output for ref status flags.
+// In porcelain mode, each ref gets a tab-delimited status line:
+//
+//	<flag>\t<from>:<to>\t<summary>
+//
+// where flag '=' means the ref was already up-to-date. This is locale-independent,
+// unlike the human-readable "Everything up-to-date" message.
+func parsePushResult(output string) pushResult {
+	for _, line := range strings.Split(output, "\n") {
+		if strings.HasPrefix(line, "=\t") {
+			return pushResult{upToDate: true}
+		}
+	}
+	return pushResult{upToDate: false}
+}
+
+// finishPush stops the progress dots and prints "already up-to-date" or "done"
+// depending on the push result. Only prints the settings commit hint when new
+// content was actually pushed.
+func finishPush(ctx context.Context, stop func(string), result pushResult, target string) {
+	if result.upToDate {
+		stop(" already up-to-date")
+	} else {
+		stop(" done")
+		printSettingsCommitHint(ctx, target)
+	}
+}
+
 // tryPushSessionsCommon attempts to push the sessions branch.
-func tryPushSessionsCommon(ctx context.Context, remote, branchName string) error {
+func tryPushSessionsCommon(ctx context.Context, remote, branchName string) (pushResult, error) {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
 
-	// Use --no-verify to prevent recursive hook calls
-	cmd := CheckpointGitCommand(ctx, remote, "push", "--no-verify", remote, branchName)
+	// Use --no-verify to prevent recursive hook calls.
+	// Use --porcelain for machine-readable, locale-independent output.
+	cmd := CheckpointGitCommand(ctx, remote, "push", "--no-verify", "--porcelain", remote, branchName)
 
 	output, err := cmd.CombinedOutput()
+	outputStr := string(output)
 	if err != nil {
 		// Check if it's a non-fast-forward error (we can try to recover)
-		if strings.Contains(string(output), "non-fast-forward") ||
-			strings.Contains(string(output), "rejected") {
-			return errors.New("non-fast-forward")
+		if strings.Contains(outputStr, "non-fast-forward") ||
+			strings.Contains(outputStr, "rejected") {
+			return pushResult{}, errors.New("non-fast-forward")
 		}
-		return fmt.Errorf("push failed: %s", output)
+		return pushResult{}, fmt.Errorf("push failed: %s", outputStr)
 	}
-	return nil
+
+	return parsePushResult(outputStr), nil
 }
 
 // fetchAndRebaseSessionsCommon fetches remote sessions and rebases local commits
@@ -187,11 +222,18 @@ func fetchAndRebaseSessionsCommon(ctx context.Context, target, branchName string
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
 
-	// Determine fetch refspec. When target is a URL, use a temp ref;
-	// when it's a remote name, use the standard remote-tracking ref.
+	fetchTarget, err := ResolveFetchTarget(ctx, target)
+	if err != nil {
+		return fmt.Errorf("resolve fetch target: %w", err)
+	}
+
+	// Determine fetch refspec. When the resolved fetch target is a URL, use a
+	// temp ref; when it's still a remote name, use the standard remote-tracking
+	// ref.
 	var fetchedRefName plumbing.ReferenceName
 	var refSpec string
-	if isURL(target) {
+	usedTempRef := isURL(fetchTarget)
+	if usedTempRef {
 		tmpRef := "refs/entire-fetch-tmp/" + branchName
 		refSpec = fmt.Sprintf("+refs/heads/%s:%s", branchName, tmpRef)
 		fetchedRefName = plumbing.ReferenceName(tmpRef)
@@ -204,7 +246,8 @@ func fetchAndRebaseSessionsCommon(ctx context.Context, target, branchName string
 	// Use --filter=blob:none for a partial fetch that downloads only commits
 	// and trees, skipping blobs. The merge only needs the tree structure to
 	// combine entries; blobs are already local or fetched on demand.
-	fetchCmd := CheckpointGitCommand(ctx, target, "fetch", "--no-tags", "--filter=blob:none", target, refSpec)
+	fetchArgs := AppendFetchFilterArgs(ctx, []string{"fetch", "--no-tags", fetchTarget, refSpec})
+	fetchCmd := CheckpointGitCommand(ctx, fetchTarget, fetchArgs...)
 	if output, err := fetchCmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("fetch failed: %s", output)
 	}
@@ -257,7 +300,7 @@ func fetchAndRebaseSessionsCommon(ctx context.Context, target, branchName string
 		if err := repo.Storer.SetReference(ref); err != nil {
 			return fmt.Errorf("failed to fast-forward branch ref: %w", err)
 		}
-		if isURL(target) {
+		if usedTempRef {
 			_ = repo.Storer.RemoveReference(fetchedRefName) //nolint:errcheck // cleanup is best-effort
 		}
 		return nil
@@ -278,7 +321,7 @@ func fetchAndRebaseSessionsCommon(ctx context.Context, target, branchName string
 		if err := repo.Storer.SetReference(ref); err != nil {
 			return fmt.Errorf("failed to update branch ref: %w", err)
 		}
-		if isURL(target) {
+		if usedTempRef {
 			_ = repo.Storer.RemoveReference(fetchedRefName) //nolint:errcheck // cleanup is best-effort
 		}
 		return nil
@@ -296,7 +339,7 @@ func fetchAndRebaseSessionsCommon(ctx context.Context, target, branchName string
 	}
 
 	// Clean up temp ref if we used one (best-effort, not critical if it fails)
-	if isURL(target) {
+	if usedTempRef {
 		_ = repo.Storer.RemoveReference(fetchedRefName) //nolint:errcheck // cleanup is best-effort
 	}
 

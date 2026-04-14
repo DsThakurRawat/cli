@@ -145,12 +145,18 @@ mise run fmt && mise run lint
 **CI will fail if you skip these steps:**
 
 ```bash
+mise run check
+```
+
+Equivalent expanded form:
+
+```bash
 mise run fmt      # Format code (CI enforces gofmt)
 mise run lint     # Lint check (CI enforces golangci-lint)
 mise run test:ci  # Run all tests (unit + integration)
 ```
 
-Or combined: `mise run fmt && mise run lint && mise run test:ci`
+`mise run check` runs the three commands above.
 
 **Common CI failures from skipping this:**
 

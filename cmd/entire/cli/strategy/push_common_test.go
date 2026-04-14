@@ -826,6 +826,109 @@ func TestFetchAndRebase_URLTarget_ReconcilesFetchedTempRef(t *testing.T) {
 	assert.ErrorIs(t, err, plumbing.ErrReferenceNotFound, "temporary fetched ref should be cleaned up")
 }
 
+// TestFetchAndRebase_FlaggedOriginTarget_UsesTempRef verifies that enabling
+// filtered_fetches for a normal remote-name target follows the temp-ref
+// path and still cleans up after rebasing.
+//
+// Not parallel: uses t.Chdir() (required for OpenRepository).
+func TestFetchAndRebase_FlaggedOriginTarget_UsesTempRef(t *testing.T) {
+	ctx := context.Background()
+	branchName := paths.MetadataBranchName
+
+	bareDir := t.TempDir()
+	setupDir := t.TempDir()
+	gitRun := func(dir string, args ...string) {
+		t.Helper()
+		cmd := exec.CommandContext(ctx, "git", args...)
+		cmd.Dir = dir
+		cmd.Env = testutil.GitIsolatedEnv()
+		out, err := cmd.CombinedOutput()
+		require.NoError(t, err, "git %v in %s failed: %s", args, dir, out)
+	}
+
+	gitRun(bareDir, "init", "--bare", "-b", "main")
+	gitRun(setupDir, "clone", bareDir, ".")
+	gitRun(setupDir, "config", "user.email", "test@test.com")
+	gitRun(setupDir, "config", "user.name", "Test User")
+	gitRun(setupDir, "config", "commit.gpgsign", "false")
+	require.NoError(t, os.WriteFile(filepath.Join(setupDir, "README.md"), []byte("# Test"), 0o644))
+	gitRun(setupDir, "add", ".")
+	gitRun(setupDir, "commit", "-m", "init")
+	gitRun(setupDir, "push", "origin", "main")
+
+	gitRun(setupDir, "checkout", "--orphan", branchName)
+	gitRun(setupDir, "rm", "-rf", ".")
+	baseDir := filepath.Join(setupDir, "aa", "aaaaaaaaaa")
+	require.NoError(t, os.MkdirAll(baseDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(baseDir, "metadata.json"),
+		[]byte(`{"checkpoint_id":"aaaaaaaaaaaa"}`), 0o644))
+	gitRun(setupDir, "add", ".")
+	gitRun(setupDir, "commit", "-m", "Checkpoint: aaaaaaaaaaaa")
+	gitRun(setupDir, "push", "origin", branchName)
+	gitRun(setupDir, "checkout", "main")
+
+	cloneDir := filepath.Join(t.TempDir(), "clone")
+	require.NoError(t, os.MkdirAll(cloneDir, 0o755))
+	gitRun(cloneDir, "clone", bareDir, ".")
+	gitRun(cloneDir, "config", "user.email", "test@test.com")
+	gitRun(cloneDir, "config", "user.name", "Test User")
+	gitRun(cloneDir, "config", "commit.gpgsign", "false")
+	gitRun(cloneDir, "branch", branchName, "origin/"+branchName)
+	require.NoError(t, os.MkdirAll(filepath.Join(cloneDir, ".entire"), 0o755))
+	require.NoError(t, os.WriteFile(
+		filepath.Join(cloneDir, ".entire", "settings.json"),
+		[]byte(`{"enabled": true, "strategy_options": {"filtered_fetches": true}}`),
+		0o644,
+	))
+
+	gitRun(cloneDir, "checkout", "--orphan", "temp-orphan")
+	gitRun(cloneDir, "rm", "-rf", ".")
+	localDir := filepath.Join(cloneDir, "cc", "cccccccccc")
+	require.NoError(t, os.MkdirAll(localDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(localDir, "metadata.json"),
+		[]byte(`{"checkpoint_id":"cccccccccccc"}`), 0o644))
+	gitRun(cloneDir, "add", ".")
+	gitRun(cloneDir, "commit", "-m", "Checkpoint: cccccccccccc")
+	gitRun(cloneDir, "branch", "-f", branchName, "temp-orphan")
+	gitRun(cloneDir, "checkout", "main")
+
+	repo, err := git.PlainOpen(cloneDir)
+	require.NoError(t, err)
+	localRefBeforeFetch, err := repo.Reference(plumbing.NewBranchReferenceName(branchName), true)
+	require.NoError(t, err)
+	staleOriginRef := plumbing.NewHashReference(
+		plumbing.NewRemoteReferenceName("origin", branchName),
+		localRefBeforeFetch.Hash(),
+	)
+	require.NoError(t, repo.Storer.SetReference(staleOriginRef))
+
+	t.Chdir(cloneDir)
+
+	err = fetchAndRebaseSessionsCommon(ctx, "origin", branchName)
+	require.NoError(t, err)
+
+	repo, err = git.PlainOpen(cloneDir)
+	require.NoError(t, err)
+
+	localRef, err := repo.Reference(plumbing.NewBranchReferenceName(branchName), true)
+	require.NoError(t, err)
+
+	tipCommit, err := repo.CommitObject(localRef.Hash())
+	require.NoError(t, err)
+	require.Len(t, tipCommit.ParentHashes, 1)
+
+	tree, err := tipCommit.Tree()
+	require.NoError(t, err)
+
+	entries := make(map[string]object.TreeEntry)
+	require.NoError(t, checkpoint.FlattenTree(repo, tree, "", entries))
+	assert.Contains(t, entries, "aa/aaaaaaaaaa/metadata.json", "remote checkpoint should be preserved")
+	assert.Contains(t, entries, "cc/cccccccccc/metadata.json", "local checkpoint should be preserved")
+
+	_, err = repo.Reference(plumbing.ReferenceName("refs/entire-fetch-tmp/"+branchName), true)
+	assert.ErrorIs(t, err, plumbing.ErrReferenceNotFound, "temporary fetched ref should be cleaned up")
+}
+
 // TestIsCheckpointRemoteCommitted verifies that the discoverability check reads
 // the committed content of .entire/settings.json at HEAD, not just tracking status.
 // Not parallel: uses t.Chdir().
@@ -1098,4 +1201,105 @@ func TestPrintSettingsCommitHint(t *testing.T) {
 		count := bytes.Count(buf.Bytes(), []byte("does not contain checkpoint_remote"))
 		assert.Equal(t, 1, count, "hint should print exactly once, got %d", count)
 	})
+}
+
+// captureStderr redirects os.Stderr to a pipe and returns a function that restores
+// stderr and returns the captured output. Must be called on the main goroutine
+// (not parallel-safe). Uses t.Cleanup as a safety net to restore stderr and close
+// pipe file descriptors if the test fails or panics before the returned function
+// is called.
+func captureStderr(t *testing.T) func() string {
+	t.Helper()
+	old := os.Stderr
+	r, w, err := os.Pipe()
+	require.NoError(t, err)
+	os.Stderr = w
+
+	// Safety net: restore stderr and close pipe ends on test failure/panic.
+	// In the normal path the returned function handles cleanup first;
+	// duplicate Close calls return an error that we intentionally ignore.
+	t.Cleanup(func() {
+		os.Stderr = old
+		_ = w.Close()
+		_ = r.Close()
+	})
+
+	return func() string {
+		_ = w.Close()
+		var buf bytes.Buffer
+		_, readErr := buf.ReadFrom(r)
+		require.NoError(t, readErr)
+		_ = r.Close()
+		os.Stderr = old
+		return buf.String()
+	}
+}
+
+// setupBareRemoteWithCheckpointBranch creates a work repo with a checkpoint branch
+// and a bare remote that already has the branch pushed. Returns (workDir, bareDir).
+// Caller must t.Chdir(workDir) before calling push functions.
+func setupBareRemoteWithCheckpointBranch(t *testing.T) (string, string) {
+	t.Helper()
+	ctx := context.Background()
+
+	workDir := setupRepoWithCheckpointBranch(t)
+
+	bareDir := t.TempDir()
+	initCmd := exec.CommandContext(ctx, "git", "init", "--bare")
+	initCmd.Dir = bareDir
+	initCmd.Env = testutil.GitIsolatedEnv()
+	out, err := initCmd.CombinedOutput()
+	require.NoError(t, err, "git init --bare failed: %s", out)
+
+	// Push the checkpoint branch to the bare remote
+	pushCmd := exec.CommandContext(ctx, "git", "push", bareDir, paths.MetadataBranchName)
+	pushCmd.Dir = workDir
+	pushCmd.Env = testutil.GitIsolatedEnv()
+	out, err = pushCmd.CombinedOutput()
+	require.NoError(t, err, "initial push failed: %s", out)
+
+	return workDir, bareDir
+}
+
+// TestDoPushBranch_AlreadyUpToDate verifies that when the remote already has all
+// commits, the output says "already up-to-date" instead of "done".
+//
+// Not parallel: uses t.Chdir() and os.Stderr redirection.
+func TestDoPushBranch_AlreadyUpToDate(t *testing.T) {
+	workDir, bareDir := setupBareRemoteWithCheckpointBranch(t)
+	t.Chdir(workDir)
+
+	restore := captureStderr(t)
+	err := doPushBranch(context.Background(), bareDir, paths.MetadataBranchName)
+	output := restore()
+
+	require.NoError(t, err)
+	assert.Contains(t, output, "already up-to-date", "should indicate nothing was pushed")
+	assert.NotContains(t, output, " done", "should not say 'done' when nothing was pushed")
+}
+
+// TestDoPushBranch_NewContent_SaysDone verifies that when there are new commits
+// to push, the output says "done".
+//
+// Not parallel: uses t.Chdir() and os.Stderr redirection.
+func TestDoPushBranch_NewContent_SaysDone(t *testing.T) {
+	workDir := setupRepoWithCheckpointBranch(t)
+
+	// Create a bare remote with no checkpoint branch yet
+	bareDir := t.TempDir()
+	initCmd := exec.CommandContext(context.Background(), "git", "init", "--bare")
+	initCmd.Dir = bareDir
+	initCmd.Env = testutil.GitIsolatedEnv()
+	out, err := initCmd.CombinedOutput()
+	require.NoError(t, err, "git init --bare failed: %s", out)
+
+	t.Chdir(workDir)
+
+	restore := captureStderr(t)
+	err = doPushBranch(context.Background(), bareDir, paths.MetadataBranchName)
+	output := restore()
+
+	require.NoError(t, err)
+	assert.Contains(t, output, " done", "should say 'done' when new content was pushed")
+	assert.NotContains(t, output, "already up-to-date", "should not say 'already up-to-date' when content was pushed")
 }
