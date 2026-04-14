@@ -1617,7 +1617,7 @@ func promptVercelDeploymentDisable() (bool, error) {
 		huh.NewGroup(
 			huh.NewConfirm().
 				Title("Disable Vercel deployments for Entire branches?").
-				Description("Prevent preview deployments for `entire/**` branches by writing to the metadata branch vercel.json.").
+				Description(fmt.Sprintf("Prevent preview deployments for `%s` branches by writing to the metadata branch vercel.json.", vercelconfig.BranchPattern)).
 				Affirmative("Yes").
 				Negative("No").
 				Value(&disableDeployments),
