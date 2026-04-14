@@ -474,6 +474,27 @@ func TestCheckV2CheckpointCounts_SkipsWhenRefsMissing(t *testing.T) {
 	assert.Empty(t, stdout.String())
 }
 
+func TestCheckV2CheckpointCounts_ReturnsErrorForCorruptRef(t *testing.T) {
+	t.Parallel()
+	dir := setupGitRepoForPhaseTest(t)
+	repo, err := git.PlainOpen(dir)
+	require.NoError(t, err)
+
+	// /full/current exists and is valid.
+	createV2RefWithCheckpoints(t, repo, paths.V2FullCurrentRefName, 1)
+
+	// /main exists but points to a missing commit object.
+	missingHash := plumbing.NewHash("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+	err = repo.Storer.SetReference(plumbing.NewHashReference(plumbing.ReferenceName(paths.V2MainRefName), missingHash))
+	require.NoError(t, err)
+
+	cmd, _, _ := newTestCmd(t)
+
+	err = checkV2CheckpointCounts(cmd, repo)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to read /main")
+}
+
 // createArchivedGeneration creates an archived generation ref with the given generation.json
 // and checkpoint count. generationNum is the sequence number (e.g., 1 -> "0000000000001").
 func createArchivedGeneration(t *testing.T, repo *git.Repository, generationNum int, gen *checkpoint.GenerationMetadata, checkpointCount int) {

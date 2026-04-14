@@ -561,9 +561,18 @@ func checkV2CheckpointCounts(cmd *cobra.Command, repo *git.Repository) error {
 	_, mainTreeHash, mainErr := v2Store.GetRefState(mainRefName)
 	_, fullTreeHash, fullErr := v2Store.GetRefState(fullRefName)
 
-	// Skip if either ref doesn't exist (already covered by checkV2RefExistence)
-	if mainErr != nil || fullErr != nil {
-		return nil //nolint:nilerr // Intentional: missing ref is not an error here, just means nothing to compare
+	// Skip only when ref is missing (already covered by checkV2RefExistence).
+	if mainErr != nil {
+		if errors.Is(mainErr, plumbing.ErrReferenceNotFound) {
+			return nil
+		}
+		return fmt.Errorf("failed to read /main ref: %w", mainErr)
+	}
+	if fullErr != nil {
+		if errors.Is(fullErr, plumbing.ErrReferenceNotFound) {
+			return nil
+		}
+		return fmt.Errorf("failed to read /full/current ref: %w", fullErr)
 	}
 
 	mainCount, err := v2Store.CountCheckpointsInTree(mainTreeHash)
