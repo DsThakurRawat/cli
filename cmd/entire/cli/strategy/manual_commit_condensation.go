@@ -357,7 +357,7 @@ func filterFilesTouched(sessionData *ExtractedSessionData, committedFiles map[st
 
 // extractOrCreateSessionData tries to extract session data from the shadow branch,
 // live transcript, or creates empty session data as a fallback. The empty case is
-// handled by the transcript resolution fallback and skip gate in CondenseSession.
+// handled by the skip gate in CondenseSession.
 func (s *ManualCommitStrategy) extractOrCreateSessionData(ctx context.Context, repo *git.Repository, ag agent.Agent, shadowHash plumbing.Hash, hasShadowBranch bool, state *SessionState) (*ExtractedSessionData, error) {
 	switch {
 	case hasShadowBranch:
