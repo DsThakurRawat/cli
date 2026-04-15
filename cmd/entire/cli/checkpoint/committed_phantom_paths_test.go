@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/entireio/cli/cmd/entire/cli/checkpoint/id"
+	"github.com/entireio/cli/cmd/entire/cli/testutil"
 	"github.com/entireio/cli/redact"
 
 	"github.com/go-git/go-git/v6"
@@ -19,7 +20,8 @@ func TestWriteCommitted_EmptyTranscript_NoPhantomPaths(t *testing.T) {
 	t.Parallel()
 
 	tempDir := t.TempDir()
-	repo, err := git.PlainInit(tempDir, false)
+	testutil.InitRepo(t, tempDir)
+	repo, err := git.PlainOpen(tempDir)
 	require.NoError(t, err)
 
 	wt, err := repo.Worktree()
@@ -64,7 +66,8 @@ func TestWriteCommitted_WithTranscript_PathsPopulated(t *testing.T) {
 	t.Parallel()
 
 	tempDir := t.TempDir()
-	repo, err := git.PlainInit(tempDir, false)
+	testutil.InitRepo(t, tempDir)
+	repo, err := git.PlainOpen(tempDir)
 	require.NoError(t, err)
 
 	wt, err := repo.Worktree()
