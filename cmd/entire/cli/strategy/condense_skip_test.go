@@ -271,4 +271,3 @@ func getHeadHash(t *testing.T, repo *git.Repository) string {
 	require.NoError(t, err)
 	return head.Hash().String()
 }
-
