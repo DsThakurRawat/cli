@@ -6,7 +6,6 @@ import (
 	"context"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -88,9 +87,6 @@ func waitForTaskRewindPoint(t *testing.T, dir string, timeout time.Duration) ent
 				continue
 			}
 			if point.ToolUseID == "" {
-				continue
-			}
-			if !strings.Contains(point.MetadataDir, "/tasks/") {
 				continue
 			}
 			return point
