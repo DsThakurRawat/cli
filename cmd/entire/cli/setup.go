@@ -1654,7 +1654,7 @@ func maybePromptVercelDeploymentDisable(ctx context.Context, w io.Writer, target
 			return false, fmt.Errorf("save settings: %w", err)
 		}
 
-		fmt.Fprintf(w, "✓ Updated %s to manage Vercel deployment blocking on `%s`\n", configDisplay, vercelconfig.BranchPattern)
+		fmt.Fprintf(w, "✓ Updated %s to block Vercel deploys of Entire metadata branch\n", configDisplay)
 		return true, nil
 	}
 
@@ -1666,8 +1666,8 @@ func promptVercelDeploymentDisable() (bool, error) {
 	form := NewAccessibleForm(
 		huh.NewGroup(
 			huh.NewConfirm().
-				Title("Disable Vercel deployments for Entire branches?").
-				Description(fmt.Sprintf("Prevent preview deployments for `%s` branches by writing to the metadata branch vercel.json.", vercelconfig.BranchPattern)).
+				Title("Disable Vercel deployments for Entire metadata branch?").
+				Description("This automatically creates a vercel.json in the Entire metadata branch.").
 				Affirmative("Yes").
 				Negative("No").
 				Value(&disableDeployments),
