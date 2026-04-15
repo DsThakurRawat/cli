@@ -92,6 +92,20 @@ type SummaryGenerationSettings struct {
 	Model string `json:"model,omitempty"`
 }
 
+// Validate returns an error if the settings combination is semantically invalid.
+// A model without a provider is meaningless: the model hint needs a provider to
+// route to. Configure and merge paths enforce this at the command level, but
+// hand-edited settings files can still land in this state — we catch that here.
+func (s *SummaryGenerationSettings) Validate() error {
+	if s == nil {
+		return nil
+	}
+	if s.Model != "" && s.Provider == "" {
+		return fmt.Errorf("summary_generation.model %q set without summary_generation.provider", s.Model)
+	}
+	return nil
+}
+
 // RedactionSettings configures redaction behavior beyond the default secret detection.
 type RedactionSettings struct {
 	PII *PIISettings `json:"pii,omitempty"`
@@ -197,6 +211,10 @@ func loadFromFile(filePath string) (*EntireSettings, error) {
 	// Validate commit_linking if set
 	if settings.CommitLinking != "" && settings.CommitLinking != CommitLinkingAlways && settings.CommitLinking != CommitLinkingPrompt {
 		return nil, fmt.Errorf("invalid commit_linking value %q: must be %q or %q", settings.CommitLinking, CommitLinkingAlways, CommitLinkingPrompt)
+	}
+
+	if err := settings.SummaryGeneration.Validate(); err != nil {
+		return nil, err
 	}
 
 	return settings, nil

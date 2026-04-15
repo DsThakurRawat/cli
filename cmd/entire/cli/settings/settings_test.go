@@ -491,6 +491,59 @@ func TestLoad_SummaryGenerationField(t *testing.T) {
 	}
 }
 
+func TestLoad_SummaryGenerationModelWithoutProviderRejected(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	entireDir := filepath.Join(tmpDir, ".entire")
+	if err := os.MkdirAll(entireDir, 0o755); err != nil {
+		t.Fatalf("failed to create .entire directory: %v", err)
+	}
+
+	settingsFile := filepath.Join(entireDir, "settings.json")
+	if err := os.WriteFile(settingsFile, []byte(`{"enabled": true, "summary_generation": {"model": "sonnet"}}`), 0o644); err != nil {
+		t.Fatalf("failed to write settings file: %v", err)
+	}
+
+	if err := os.MkdirAll(filepath.Join(tmpDir, ".git"), 0o755); err != nil {
+		t.Fatalf("failed to create .git directory: %v", err)
+	}
+
+	t.Chdir(tmpDir)
+
+	_, err := Load(context.Background())
+	if err == nil {
+		t.Fatal("expected error for summary_generation.model without provider")
+	}
+	if !strings.Contains(err.Error(), "summary_generation.model") || !strings.Contains(err.Error(), "without summary_generation.provider") {
+		t.Fatalf("unexpected error text: %v", err)
+	}
+}
+
+func TestSummaryGenerationSettings_Validate(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		s       *SummaryGenerationSettings
+		wantErr bool
+	}{
+		{name: "nil is valid (nothing configured)", s: nil, wantErr: false},
+		{name: "empty struct is valid (nothing set yet)", s: &SummaryGenerationSettings{}, wantErr: false},
+		{name: "provider only is valid (model inferred by caller)", s: &SummaryGenerationSettings{Provider: "gemini"}, wantErr: false},
+		{name: "provider and model is valid", s: &SummaryGenerationSettings{Provider: "claude-code", Model: "sonnet"}, wantErr: false},
+		{name: "model without provider is invalid", s: &SummaryGenerationSettings{Model: "sonnet"}, wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			err := tt.s.Validate()
+			if (err != nil) != tt.wantErr {
+				t.Errorf("Validate() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
 func TestMergeJSON_SummaryGeneration(t *testing.T) {
 	tmpDir := t.TempDir()
 
