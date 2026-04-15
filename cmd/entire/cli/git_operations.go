@@ -478,8 +478,28 @@ func FetchMetadataTreeOnly(ctx context.Context) error {
 		return fmt.Errorf("branch '%s' not found on origin: %w", branchName, err)
 	}
 
-	// Create or update local branch pointing to the same commit
-	localRef := plumbing.NewHashReference(plumbing.NewBranchReferenceName(branchName), remoteRef.Hash())
+	// Create or fast-forward the local branch so reads via the local ref pick up
+	// newly-fetched data. CRITICAL: never force-rewind an existing local ref —
+	// doing so orphans locally-committed-but-unpushed checkpoint commits (which
+	// can then be garbage-collected). Update only when we can prove the current
+	// local hash is an ancestor of the remote hash.
+	localRefName := plumbing.NewBranchReferenceName(branchName)
+	currentLocal, localErr := repo.Reference(localRefName, true)
+	if localErr == nil && currentLocal.Hash() == remoteRef.Hash() {
+		return nil
+	}
+
+	if localErr == nil {
+		// If remote's commit is reachable by walking back from local, local is
+		// already at or ahead of remote — leaving it alone is the safe choice.
+		// IsAncestorOf walks from local (which has full history), so shallow
+		// fetches don't affect this check.
+		if strategy.IsAncestorOf(ctx, repo, remoteRef.Hash(), currentLocal.Hash()) {
+			return nil
+		}
+	}
+
+	localRef := plumbing.NewHashReference(localRefName, remoteRef.Hash())
 	if err := repo.Storer.SetReference(localRef); err != nil {
 		return fmt.Errorf("failed to create local %s branch: %w", branchName, err)
 	}

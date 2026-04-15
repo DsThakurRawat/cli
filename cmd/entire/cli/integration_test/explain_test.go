@@ -612,6 +612,73 @@ func TestExplain_CheckpointV2FetchesFromRemoteWhenMissingLocally(t *testing.T) {
 	}
 }
 
+// TestExplain_CheckpointFetchDoesNotRewindLocalAheadBranch verifies that running
+// explain --checkpoint with a non-matching prefix does NOT rewind a
+// locally-ahead entire/checkpoints/v1 branch. If the fetch path force-updates
+// the local ref to match origin, locally-committed (but unpushed) checkpoints
+// become orphaned and undiscoverable — potentially subject to GC.
+func TestExplain_CheckpointFetchDoesNotRewindLocalAheadBranch(t *testing.T) {
+	t.Parallel()
+	env := NewFeatureBranchEnv(t)
+	env.SetupBareRemote()
+
+	// Checkpoint A: commit locally, push to origin.
+	sessionA := env.NewSession()
+	transcriptA := sessionA.CreateTranscript("Add module A", []FileChange{
+		{Path: "a.go", Content: "package a"},
+	})
+	require.NoError(t, env.SimulateUserPromptSubmitWithPromptAndTranscriptPath(sessionA.ID, "Add module A", transcriptA))
+	env.WriteFile("a.go", "package a")
+	env.GitAdd("a.go")
+	require.NoError(t, env.SimulateStop(sessionA.ID, transcriptA))
+	env.GitCommitWithShadowHooks("Add module A", "a.go")
+	env.RunPrePush("origin")
+
+	// Checkpoint B: commit locally, DO NOT push. Local entire/checkpoints/v1 is
+	// now ahead of origin by one commit.
+	sessionB := env.NewSession()
+	transcriptB := sessionB.CreateTranscript("Add module B", []FileChange{
+		{Path: "b.go", Content: "package b"},
+	})
+	require.NoError(t, env.SimulateUserPromptSubmitWithPromptAndTranscriptPath(sessionB.ID, "Add module B", transcriptB))
+	env.WriteFile("b.go", "package b")
+	env.GitAdd("b.go")
+	require.NoError(t, env.SimulateStop(sessionB.ID, transcriptB))
+	env.GitCommitWithShadowHooks("Add module B", "b.go")
+
+	checkpointB := env.GetLatestCheckpointID()
+	require.NotEmpty(t, checkpointB, "should have a checkpoint ID for B")
+
+	// Snapshot local metadata branch hash (includes B) so we can verify it
+	// doesn't rewind after the fetch.
+	repo, err := git.PlainOpen(env.RepoDir)
+	require.NoError(t, err)
+	localRefName := plumbing.NewBranchReferenceName(paths.MetadataBranchName)
+	beforeRef, err := repo.Storer.Reference(localRefName)
+	require.NoError(t, err)
+	beforeHash := beforeRef.Hash()
+
+	// Run explain with a checkpoint prefix that doesn't match anything locally,
+	// forcing the "fetch on miss" path. The prefix is 12 zeros: vanishingly
+	// unlikely to collide with a real checkpoint ID.
+	// The command is expected to fail (no such checkpoint) — we're testing the
+	// side effect on the local ref, not the command's success.
+	_, _ = env.RunCLIWithError("explain", "--checkpoint", "000000000000")
+
+	// Re-open repo (go-git caches ref state per handle).
+	repo, err = git.PlainOpen(env.RepoDir)
+	require.NoError(t, err)
+	afterRef, err := repo.Storer.Reference(localRefName)
+	require.NoError(t, err, "local metadata branch should still exist after fetch-on-miss")
+	require.Equal(t, beforeHash, afterRef.Hash(),
+		"local metadata branch must not be rewound by fetch-on-miss; locally-ahead checkpoints would otherwise be orphaned")
+
+	// Independently, checkpoint B must still be discoverable by explain.
+	output := env.RunCLI("explain", "--checkpoint", checkpointB)
+	require.Contains(t, output, "Add module B",
+		"locally-committed checkpoint must remain discoverable after fetch-on-miss")
+}
+
 // TestExplain_BranchListingV2OnlyAfterV1Deleted verifies that the branch listing
 // works when only v2 data exists (v1 metadata branch deleted after dual-write).
 func TestExplain_BranchListingV2OnlyAfterV1Deleted(t *testing.T) {
