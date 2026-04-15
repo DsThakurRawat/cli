@@ -129,33 +129,13 @@ func (s *ManualCommitStrategy) CondenseSession(ctx context.Context, repo *git.Re
 	// Errors are ignored; downstream readers handle missing transcripts gracefully.
 	resolveTranscriptPath(state) //nolint:errcheck,gosec // best-effort; downstream readers handle missing files
 
-	var sessionData *ExtractedSessionData
 	extractStart := time.Now()
 	_, extractSessionDataSpan := perf.Start(ctx, "extract_session_data")
-	if hasShadowBranch {
-		var extractErr error
-		sessionData, extractErr = s.extractSessionData(ctx, repo, ref.Hash(), state.SessionID, state.FilesTouched, state.AgentType, state.TranscriptPath, state.CheckpointTranscriptStart, state.Phase.IsActive())
-		if extractErr != nil {
-			extractSessionDataSpan.RecordError(extractErr)
-			extractSessionDataSpan.End()
-			return nil, fmt.Errorf("failed to extract session data: %w", extractErr)
-		}
-	} else {
-		if state.TranscriptPath == "" {
-			extractSessionDataSpan.RecordError(errors.New("shadow branch not found and no live transcript available"))
-			extractSessionDataSpan.End()
-			return nil, errors.New("shadow branch not found and no live transcript available")
-		}
-		if state.Phase.IsActive() {
-			prepareTranscriptIfNeeded(ctx, ag, state.TranscriptPath)
-		}
-		var extractErr error
-		sessionData, extractErr = s.extractSessionDataFromLiveTranscript(ctx, state)
-		if extractErr != nil {
-			extractSessionDataSpan.RecordError(extractErr)
-			extractSessionDataSpan.End()
-			return nil, fmt.Errorf("failed to extract session data from live transcript: %w", extractErr)
-		}
+	sessionData, extractErr := s.extractOrCreateSessionData(ctx, repo, ag, ref, hasShadowBranch, state)
+	if extractErr != nil {
+		extractSessionDataSpan.RecordError(extractErr)
+		extractSessionDataSpan.End()
+		return nil, extractErr
 	}
 	extractSessionDataSpan.End()
 	extractDuration := time.Since(extractStart)
@@ -169,6 +149,36 @@ func (s *ManualCommitStrategy) CondenseSession(ctx context.Context, repo *git.Re
 	}
 
 	filterFilesTouched(sessionData, committedFiles)
+
+	// Best-effort transcript resolution fallback: if extraction found no transcript,
+	// try to resolve it from the agent's native storage using the session ID.
+	// This covers cases where TranscriptPath was never set (e.g., Codex subagent
+	// hooks don't include transcript_path) but the agent wrote a transcript to its
+	// own storage directory.
+	if len(sessionData.Transcript) == 0 && ag != nil {
+		if resolved := resolveTranscriptFromAgentStorage(ctx, ag, state); len(resolved) > 0 {
+			sessionData.Transcript = resolved
+			sessionData.FullTranscriptLines = countTranscriptItems(state.AgentType, string(resolved))
+			sessionData.TokenUsage = agent.CalculateTokenUsage(ctx, ag, resolved, state.CheckpointTranscriptStart, "")
+		}
+	}
+
+	// Skip gate: if there is no transcript AND no files touched, there is nothing
+	// meaningful to condense. Return early to avoid writing metadata-only stubs.
+	if len(sessionData.Transcript) == 0 && len(sessionData.FilesTouched) == 0 {
+		logging.Info(logCtx, "session skipped: no transcript or files to condense",
+			slog.String("session_id", state.SessionID),
+			slog.String("agent_type", string(state.AgentType)),
+			slog.String("checkpoint_id", checkpointID.String()),
+			slog.Bool("has_shadow_branch", hasShadowBranch),
+			slog.String("transcript_path", state.TranscriptPath),
+		)
+		return &CondenseResult{
+			CheckpointID: checkpointID,
+			SessionID:    state.SessionID,
+			Skipped:      true,
+		}, nil
+	}
 
 	// On failure: drop transcript, continue with metadata (no retry path in hooks).
 	redactedTranscript, redactDuration, err := redactSessionTranscript(ctx, sessionData.Transcript)
@@ -352,6 +362,117 @@ func filterFilesTouched(sessionData *ExtractedSessionData, committedFiles map[st
 		// files captured by this commit.
 		sessionData.FilesTouched = committedFilesExcludingMetadata(committedFiles)
 	}
+}
+
+// extractOrCreateSessionData tries to extract session data from the shadow branch,
+// live transcript, or creates empty session data as a fallback. The empty case is
+// handled by the transcript resolution fallback and skip gate in CondenseSession.
+func (s *ManualCommitStrategy) extractOrCreateSessionData(ctx context.Context, repo *git.Repository, ag agent.Agent, ref *plumbing.Reference, hasShadowBranch bool, state *SessionState) (*ExtractedSessionData, error) {
+	switch {
+	case hasShadowBranch:
+		// Shadow branch exists (from SaveStep commits) — extract transcript and
+		// metadata from the branch tree, preferring the live transcript if fresher.
+		data, err := s.extractSessionData(ctx, repo, ref.Hash(), state.SessionID, state.FilesTouched, state.AgentType, state.TranscriptPath, state.CheckpointTranscriptStart, state.Phase.IsActive())
+		if err != nil {
+			return nil, fmt.Errorf("failed to extract session data: %w", err)
+		}
+		return data, nil
+	case state.TranscriptPath != "":
+		// No shadow branch but a live transcript path is known — read directly
+		// from disk. This handles mid-session commits before SaveStep runs.
+		if state.Phase.IsActive() {
+			prepareTranscriptIfNeeded(ctx, ag, state.TranscriptPath)
+		}
+		data, err := s.extractSessionDataFromLiveTranscript(ctx, state)
+		if err != nil {
+			return nil, fmt.Errorf("failed to extract session data from live transcript: %w", err)
+		}
+		return data, nil
+	default:
+		// No shadow branch and no transcript path — create empty session data.
+		// This happens for sessions where the agent never set TranscriptPath
+		// (e.g., Codex subagent hooks omit it). The fallback resolution and
+		// skip gate in CondenseSession will attempt to locate the transcript
+		// via the agent's storage, or skip condensation if nothing is found.
+		return &ExtractedSessionData{
+			FilesTouched: state.FilesTouched,
+		}, nil
+	}
+}
+
+// resolveTranscriptFromAgentStorage attempts to find and read a session transcript
+// from the agent's native storage when the normal extraction paths found nothing.
+// This covers agents that don't include transcript_path in hook payloads (e.g., Codex
+// running as a subagent). If the transcript is found, state.TranscriptPath is updated
+// so subsequent condensation attempts can use the fast path.
+func resolveTranscriptFromAgentStorage(ctx context.Context, ag agent.Agent, state *SessionState) []byte {
+	logCtx := logging.WithComponent(ctx, "checkpoint")
+
+	repoRoot, err := paths.WorktreeRoot(ctx)
+	if err != nil {
+		logging.Debug(logCtx, "transcript fallback: could not determine repo root",
+			slog.String("session_id", state.SessionID),
+			slog.String("error", err.Error()),
+		)
+		return nil
+	}
+
+	sessionDir, err := ag.GetSessionDir(repoRoot)
+	if err != nil {
+		logging.Debug(logCtx, "transcript fallback: agent GetSessionDir failed",
+			slog.String("session_id", state.SessionID),
+			slog.String("agent_type", string(state.AgentType)),
+			slog.String("error", err.Error()),
+		)
+		return nil
+	}
+
+	resolved := ag.ResolveSessionFile(sessionDir, state.SessionID)
+	if resolved == "" {
+		logging.Debug(logCtx, "transcript fallback: agent ResolveSessionFile returned empty",
+			slog.String("session_id", state.SessionID),
+			slog.String("agent_type", string(state.AgentType)),
+			slog.String("session_dir", sessionDir),
+		)
+		return nil
+	}
+
+	// Some agents (e.g., OpenCode) require an export command to produce the
+	// transcript file on disk. Call PrepareTranscript if the agent supports it.
+	if preparer, ok := agent.AsTranscriptPreparer(ag); ok {
+		if prepErr := preparer.PrepareTranscript(ctx, resolved); prepErr != nil {
+			logging.Debug(logCtx, "transcript fallback: PrepareTranscript failed",
+				slog.String("session_id", state.SessionID),
+				slog.String("agent_type", string(state.AgentType)),
+				slog.String("resolved_path", resolved),
+				slog.String("error", prepErr.Error()),
+			)
+			// Continue — the file may already exist from a previous export
+		}
+	}
+
+	data, readErr := os.ReadFile(resolved) //nolint:gosec // path resolved by agent
+	if readErr != nil || len(data) == 0 {
+		logging.Debug(logCtx, "transcript fallback: could not read resolved transcript",
+			slog.String("session_id", state.SessionID),
+			slog.String("agent_type", string(state.AgentType)),
+			slog.String("resolved_path", resolved),
+			slog.Any("error", readErr),
+		)
+		return nil
+	}
+
+	// Update state so future condensation attempts use the resolved path directly.
+	state.TranscriptPath = resolved
+
+	logging.Info(logCtx, "transcript fallback: resolved transcript from agent storage",
+		slog.String("session_id", state.SessionID),
+		slog.String("agent_type", string(state.AgentType)),
+		slog.String("resolved_path", resolved),
+		slog.Int("transcript_bytes", len(data)),
+	)
+
+	return data
 }
 
 // buildCompactTranscript produces compact (v2) transcript forms when v2

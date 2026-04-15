@@ -1312,6 +1312,14 @@ func (s *ManualCommitStrategy) condenseAndUpdateState(
 		return false
 	}
 
+	if result.Skipped {
+		logging.Debug(logCtx, "condensation skipped, session state unchanged",
+			slog.String("session_id", state.SessionID),
+			slog.String("checkpoint_id", checkpointID.String()),
+		)
+		return false
+	}
+
 	// Track this shadow branch for cleanup
 	shadowBranchesToDelete[shadowBranchName] = struct{}{}
 
