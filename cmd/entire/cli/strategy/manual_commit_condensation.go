@@ -300,7 +300,8 @@ func generateSummary(ctx context.Context, sessionData *ExtractedSessionData, sta
 		return nil
 	}
 
-	summary, err := summarize.GenerateFromTranscript(summarizeCtx, scopedTranscript, sessionData.FilesTouched, state.AgentType, nil)
+	generator := buildSummaryGenerator(summarizeCtx)
+	summary, err := summarize.GenerateFromTranscript(summarizeCtx, scopedTranscript, sessionData.FilesTouched, state.AgentType, generator)
 	if err != nil {
 		logging.Warn(summarizeCtx, "summary generation failed",
 			slog.String("session_id", state.SessionID),
@@ -310,6 +311,43 @@ func generateSummary(ctx context.Context, sessionData *ExtractedSessionData, sta
 	logging.Info(summarizeCtx, "summary generated",
 		slog.String("session_id", state.SessionID))
 	return summary
+}
+
+// buildSummaryGenerator returns a Generator based on the configured summary provider.
+// Returns nil if no provider is configured (GenerateFromTranscript falls back to ClaudeGenerator).
+func buildSummaryGenerator(ctx context.Context) *summarize.TextGeneratorAdapter {
+	s, err := settings.Load(ctx)
+	if err != nil {
+		logging.Debug(ctx, "could not load settings for summary provider", "error", err.Error())
+		return nil
+	}
+	if s.SummaryGeneration == nil || s.SummaryGeneration.Provider == "" {
+		return nil
+	}
+
+	ag, err := agent.Get(types.AgentName(s.SummaryGeneration.Provider))
+	if err != nil {
+		logging.Warn(ctx, "configured summary provider not available, using default",
+			"provider", s.SummaryGeneration.Provider, "error", err.Error())
+		return nil
+	}
+
+	tg, ok := agent.AsTextGenerator(ag)
+	if !ok {
+		logging.Warn(ctx, "configured summary provider does not support text generation, using default",
+			"provider", s.SummaryGeneration.Provider)
+		return nil
+	}
+
+	model := s.SummaryGeneration.Model
+	if types.AgentName(s.SummaryGeneration.Provider) == agent.AgentNameClaudeCode && model == "" {
+		model = summarize.DefaultModel
+	}
+
+	return &summarize.TextGeneratorAdapter{
+		TextGenerator: tg,
+		Model:         model,
+	}
 }
 
 // buildSessionMetrics creates a SessionMetrics from session state if any metrics are available.

@@ -22,7 +22,7 @@ var (
 	saveProjectSummarySettings  = SaveEntireSettings
 	saveLocalSummarySettings    = SaveEntireSettingsLocal
 	getSummaryAgent             = agent.Get
-	listInstalledAgents         = GetAgentsWithHooksInstalled
+	listRegisteredAgents        = agent.List
 )
 
 type checkpointSummaryProvider struct {
@@ -43,10 +43,7 @@ func resolveCheckpointSummaryProvider(ctx context.Context, w io.Writer) (*checkp
 		return buildCheckpointSummaryProvider(types.AgentName(s.SummaryGeneration.Provider), s.SummaryGeneration.Model)
 	}
 
-	candidates, err := listEnabledSummaryProviders(ctx)
-	if err != nil {
-		return nil, err
-	}
+	candidates := listEnabledSummaryProviders(ctx)
 
 	switch len(candidates) {
 	case 0:
@@ -88,15 +85,19 @@ func resolveCheckpointSummaryProvider(ctx context.Context, w io.Writer) (*checkp
 	}
 }
 
-func listEnabledSummaryProviders(ctx context.Context) ([]checkpointSummaryProvider, error) {
-	installed := listInstalledAgents(ctx)
-	providers := make([]checkpointSummaryProvider, 0, len(installed))
-	for _, name := range installed {
+func listEnabledSummaryProviders(ctx context.Context) []checkpointSummaryProvider {
+	registered := listRegisteredAgents()
+	providers := make([]checkpointSummaryProvider, 0, len(registered))
+	for _, name := range registered {
 		ag, err := getSummaryAgent(name)
 		if err != nil {
-			return nil, fmt.Errorf("loading agent %s: %w", name, err)
+			continue
 		}
 		if _, ok := agent.AsTextGenerator(ag); !ok {
+			continue
+		}
+		present, err := ag.DetectPresence(ctx)
+		if err != nil || !present {
 			continue
 		}
 		providers = append(providers, checkpointSummaryProvider{
@@ -104,7 +105,7 @@ func listEnabledSummaryProviders(ctx context.Context) ([]checkpointSummaryProvid
 			DisplayName: string(ag.Type()),
 		})
 	}
-	return providers, nil
+	return providers
 }
 
 func promptForSummaryProvider(providers []checkpointSummaryProvider) (types.AgentName, error) {

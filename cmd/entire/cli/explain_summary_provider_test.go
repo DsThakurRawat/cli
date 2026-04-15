@@ -92,17 +92,17 @@ func TestResolveCheckpointSummaryProvider_SavesSingleInstalledProvider(t *testin
 
 	originalLoad := loadSummarySettings
 	originalGet := getSummaryAgent
-	originalList := listInstalledAgents
+	originalList := listRegisteredAgents
 	t.Cleanup(func() {
 		loadSummarySettings = originalLoad
 		getSummaryAgent = originalGet
-		listInstalledAgents = originalList
+		listRegisteredAgents = originalList
 	})
 
 	loadSummarySettings = func(context.Context) (*settings.EntireSettings, error) {
 		return &settings.EntireSettings{Enabled: true}, nil
 	}
-	listInstalledAgents = func(context.Context) []types.AgentName {
+	listRegisteredAgents = func() []types.AgentName {
 		return []types.AgentName{agent.AgentNameCodex}
 	}
 	getSummaryAgent = func(name types.AgentName) (agent.Agent, error) {
@@ -142,18 +142,18 @@ func TestResolveCheckpointSummaryProvider_NoCandidatesFallsBackToClaude(t *testi
 
 	originalLoad := loadSummarySettings
 	originalGet := getSummaryAgent
-	originalList := listInstalledAgents
+	originalList := listRegisteredAgents
 	t.Cleanup(func() {
 		loadSummarySettings = originalLoad
 		getSummaryAgent = originalGet
-		listInstalledAgents = originalList
+		listRegisteredAgents = originalList
 	})
 
 	loadSummarySettings = func(context.Context) (*settings.EntireSettings, error) {
 		return &settings.EntireSettings{Enabled: true}, nil
 	}
-	listInstalledAgents = func(context.Context) []types.AgentName {
-		return nil // no agents installed
+	listRegisteredAgents = func() []types.AgentName {
+		return nil // no agents registered
 	}
 	getSummaryAgent = func(name types.AgentName) (agent.Agent, error) {
 		return &stubTextAgent{
@@ -181,17 +181,17 @@ func TestResolveCheckpointSummaryProvider_NonInteractiveMultiCandidateFallsBackT
 
 	originalLoad := loadSummarySettings
 	originalGet := getSummaryAgent
-	originalList := listInstalledAgents
+	originalList := listRegisteredAgents
 	t.Cleanup(func() {
 		loadSummarySettings = originalLoad
 		getSummaryAgent = originalGet
-		listInstalledAgents = originalList
+		listRegisteredAgents = originalList
 	})
 
 	loadSummarySettings = func(context.Context) (*settings.EntireSettings, error) {
 		return &settings.EntireSettings{Enabled: true}, nil
 	}
-	listInstalledAgents = func(context.Context) []types.AgentName {
+	listRegisteredAgents = func() []types.AgentName {
 		return []types.AgentName{agent.AgentNameCodex, agent.AgentNameGemini}
 	}
 	getSummaryAgent = func(name types.AgentName) (agent.Agent, error) {
