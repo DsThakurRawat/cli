@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -586,7 +585,7 @@ func TestWriteActiveSessions_EndedSessionsExcluded(t *testing.T) {
 	}
 }
 
-func TestWriteActiveSessions_ReconcilesKnownCheckpointAfterReset(t *testing.T) {
+func TestWriteActiveSessions_ShowsDivergenceWarningWhenBaseCommitStale(t *testing.T) {
 	setupTestRepo(t)
 
 	repoDir, err := os.Getwd()
@@ -594,22 +593,15 @@ func TestWriteActiveSessions_ReconcilesKnownCheckpointAfterReset(t *testing.T) {
 		t.Fatalf("Getwd() error = %v", err)
 	}
 
-	testutil.WriteFile(t, repoDir, "tracked.txt", "checkpoint")
+	// Create two commits: the session tracks the first, HEAD is the second
+	testutil.WriteFile(t, repoDir, "tracked.txt", "base")
 	testutil.GitAdd(t, repoDir, "tracked.txt")
-	testutil.GitCommit(t, repoDir, "checkpoint commit\n\nEntire-Checkpoint: abc123def456")
-	checkpointCommit := testutil.GetHeadHash(t, repoDir)
+	testutil.GitCommit(t, repoDir, "base commit")
+	baseCommit := testutil.GetHeadHash(t, repoDir)
 
-	testutil.WriteFile(t, repoDir, "tracked.txt", "checkpoint\nfollow-up")
+	testutil.WriteFile(t, repoDir, "tracked.txt", "base\nnew")
 	testutil.GitAdd(t, repoDir, "tracked.txt")
-	testutil.GitCommit(t, repoDir, "follow-up commit")
-	followUpCommit := testutil.GetHeadHash(t, repoDir)
-
-	cmd := exec.CommandContext(context.Background(), "git", "reset", "--hard", checkpointCommit)
-	cmd.Dir = repoDir
-	cmd.Env = testutil.GitIsolatedEnv()
-	if output, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("git reset --hard failed: %v\nOutput: %s", err, output)
-	}
+	testutil.GitCommit(t, repoDir, "second commit")
 
 	store, err := session.NewStateStore(context.Background())
 	if err != nil {
@@ -618,12 +610,11 @@ func TestWriteActiveSessions_ReconcilesKnownCheckpointAfterReset(t *testing.T) {
 
 	now := time.Now()
 	state := &session.State{
-		SessionID:             "reset-reconcile-session",
+		SessionID:             "stale-base-session",
 		WorktreePath:          repoDir,
 		StartedAt:             now.Add(-10 * time.Minute),
-		BaseCommit:            followUpCommit,
-		AttributionBaseCommit: followUpCommit,
-		LastCheckpointID:      "abc123def456",
+		BaseCommit:            baseCommit,
+		AttributionBaseCommit: baseCommit,
 	}
 	if err := store.Save(context.Background(), state); err != nil {
 		t.Fatalf("Save() error = %v", err)
@@ -633,23 +624,25 @@ func TestWriteActiveSessions_ReconcilesKnownCheckpointAfterReset(t *testing.T) {
 	sty := newStatusStyles(&buf)
 	writeActiveSessions(context.Background(), &buf, sty)
 
+	output := buf.String()
+	if !strings.Contains(output, "tracking diverged from current HEAD") {
+		t.Fatalf("expected divergence warning when BaseCommit != HEAD, got: %s", output)
+	}
+
+	// Verify session state was NOT mutated (read-only)
 	reloaded, err := store.Load(context.Background(), state.SessionID)
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
-	if reloaded.BaseCommit != checkpointCommit {
-		t.Fatalf("BaseCommit = %q, want %q", reloaded.BaseCommit, checkpointCommit)
+	if reloaded.BaseCommit != baseCommit {
+		t.Fatalf("BaseCommit was mutated: got %q, want %q", reloaded.BaseCommit, baseCommit)
 	}
-	if reloaded.AttributionBaseCommit != checkpointCommit {
-		t.Fatalf("AttributionBaseCommit = %q, want %q", reloaded.AttributionBaseCommit, checkpointCommit)
-	}
-
-	if strings.Contains(buf.String(), "tracking diverged from current HEAD") {
-		t.Fatalf("expected no divergence warning after safe reset reconciliation, got: %s", buf.String())
+	if reloaded.AttributionBaseCommit != baseCommit {
+		t.Fatalf("AttributionBaseCommit was mutated: got %q, want %q", reloaded.AttributionBaseCommit, baseCommit)
 	}
 }
 
-func TestWriteActiveSessions_ReconcilesKnownCheckpointAfterReset_MultiTrailerHead(t *testing.T) {
+func TestWriteActiveSessions_NoWarningWhenReconciled(t *testing.T) {
 	setupTestRepo(t)
 
 	repoDir, err := os.Getwd()
@@ -657,13 +650,9 @@ func TestWriteActiveSessions_ReconcilesKnownCheckpointAfterReset_MultiTrailerHea
 		t.Fatalf("Getwd() error = %v", err)
 	}
 
-	testutil.WriteFile(t, repoDir, "tracked.txt", "checkpoint")
+	testutil.WriteFile(t, repoDir, "tracked.txt", "content")
 	testutil.GitAdd(t, repoDir, "tracked.txt")
-	testutil.GitCommit(t, repoDir, "checkpoint commit")
-
-	testutil.WriteFile(t, repoDir, "tracked.txt", "checkpoint\nfollow-up")
-	testutil.GitAdd(t, repoDir, "tracked.txt")
-	testutil.GitCommit(t, repoDir, "follow-up commit\n\nEntire-Checkpoint: a1b2c3d4e5f6\nEntire-Checkpoint: b1c2d3e4f5a6")
+	testutil.GitCommit(t, repoDir, "initial commit")
 	headCommit := testutil.GetHeadHash(t, repoDir)
 
 	store, err := session.NewStateStore(context.Background())
@@ -673,12 +662,11 @@ func TestWriteActiveSessions_ReconcilesKnownCheckpointAfterReset_MultiTrailerHea
 
 	now := time.Now()
 	state := &session.State{
-		SessionID:             "reset-reconcile-multi-trailer-session",
+		SessionID:             "reconciled-session",
 		WorktreePath:          repoDir,
 		StartedAt:             now.Add(-10 * time.Minute),
-		BaseCommit:            strings.Repeat("a", 40),
-		AttributionBaseCommit: strings.Repeat("a", 40),
-		LastCheckpointID:      "b1c2d3e4f5a6",
+		BaseCommit:            headCommit,
+		AttributionBaseCommit: headCommit,
 	}
 	if err := store.Save(context.Background(), state); err != nil {
 		t.Fatalf("Save() error = %v", err)
@@ -688,23 +676,13 @@ func TestWriteActiveSessions_ReconcilesKnownCheckpointAfterReset_MultiTrailerHea
 	sty := newStatusStyles(&buf)
 	writeActiveSessions(context.Background(), &buf, sty)
 
-	reloaded, err := store.Load(context.Background(), state.SessionID)
-	if err != nil {
-		t.Fatalf("Load() error = %v", err)
-	}
-	if reloaded.BaseCommit != headCommit {
-		t.Fatalf("BaseCommit = %q, want %q", reloaded.BaseCommit, headCommit)
-	}
-	if reloaded.AttributionBaseCommit != headCommit {
-		t.Fatalf("AttributionBaseCommit = %q, want %q", reloaded.AttributionBaseCommit, headCommit)
-	}
-
-	if strings.Contains(buf.String(), "tracking diverged from current HEAD") {
-		t.Fatalf("expected no divergence warning after matching a later HEAD trailer, got: %s", buf.String())
+	output := buf.String()
+	if strings.Contains(output, "diverged") || strings.Contains(output, "attribution") {
+		t.Fatalf("expected no divergence or attribution warning when BaseCommit == HEAD and AttributionBaseCommit == BaseCommit, got: %s", output)
 	}
 }
 
-func TestWriteActiveSessions_WarnsWhenResetDivergesWithoutKnownCheckpoint(t *testing.T) {
+func TestWriteActiveSessions_ShowsSoftWarningWhenAttributionDiverged(t *testing.T) {
 	setupTestRepo(t)
 
 	repoDir, err := os.Getwd()
@@ -712,22 +690,14 @@ func TestWriteActiveSessions_WarnsWhenResetDivergesWithoutKnownCheckpoint(t *tes
 		t.Fatalf("Getwd() error = %v", err)
 	}
 
-	testutil.WriteFile(t, repoDir, "tracked.txt", "base")
+	testutil.WriteFile(t, repoDir, "tracked.txt", "content")
 	testutil.GitAdd(t, repoDir, "tracked.txt")
-	testutil.GitCommit(t, repoDir, "base commit")
-	baseCommit := testutil.GetHeadHash(t, repoDir)
+	testutil.GitCommit(t, repoDir, "initial commit")
+	headCommit := testutil.GetHeadHash(t, repoDir)
 
-	testutil.WriteFile(t, repoDir, "tracked.txt", "base\nfollow-up")
-	testutil.GitAdd(t, repoDir, "tracked.txt")
-	testutil.GitCommit(t, repoDir, "follow-up commit")
-	followUpCommit := testutil.GetHeadHash(t, repoDir)
-
-	cmd := exec.CommandContext(context.Background(), "git", "reset", "--hard", baseCommit)
-	cmd.Dir = repoDir
-	cmd.Env = testutil.GitIsolatedEnv()
-	if output, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("git reset --hard failed: %v\nOutput: %s", err, output)
-	}
+	// Simulate: hooks already reconciled BaseCommit to HEAD, but
+	// AttributionBaseCommit is still pointing at the old commit (stale).
+	oldBaseCommit := strings.Repeat("a", 40)
 
 	store, err := session.NewStateStore(context.Background())
 	if err != nil {
@@ -736,12 +706,11 @@ func TestWriteActiveSessions_WarnsWhenResetDivergesWithoutKnownCheckpoint(t *tes
 
 	now := time.Now()
 	state := &session.State{
-		SessionID:             "reset-warning-session",
+		SessionID:             "attribution-diverged-session",
 		WorktreePath:          repoDir,
 		StartedAt:             now.Add(-10 * time.Minute),
-		BaseCommit:            followUpCommit,
-		AttributionBaseCommit: followUpCommit,
-		LastCheckpointID:      "abc123def456",
+		BaseCommit:            headCommit,
+		AttributionBaseCommit: oldBaseCommit,
 	}
 	if err := store.Save(context.Background(), state); err != nil {
 		t.Fatalf("Save() error = %v", err)
@@ -751,15 +720,21 @@ func TestWriteActiveSessions_WarnsWhenResetDivergesWithoutKnownCheckpoint(t *tes
 	sty := newStatusStyles(&buf)
 	writeActiveSessions(context.Background(), &buf, sty)
 
+	output := buf.String()
+	if !strings.Contains(output, "attribution") {
+		t.Fatalf("expected attribution warning when AttributionBaseCommit != BaseCommit, got: %s", output)
+	}
+
+	// Verify session state was NOT mutated (read-only)
 	reloaded, err := store.Load(context.Background(), state.SessionID)
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
-	if reloaded.BaseCommit != followUpCommit {
-		t.Fatalf("BaseCommit = %q, want unchanged %q", reloaded.BaseCommit, followUpCommit)
+	if reloaded.BaseCommit != headCommit {
+		t.Fatalf("BaseCommit was mutated: got %q, want %q", reloaded.BaseCommit, headCommit)
 	}
-	if !strings.Contains(buf.String(), "tracking diverged from current HEAD after git history movement") {
-		t.Fatalf("expected divergence warning, got: %s", buf.String())
+	if reloaded.AttributionBaseCommit != oldBaseCommit {
+		t.Fatalf("AttributionBaseCommit was mutated: got %q, want %q", reloaded.AttributionBaseCommit, oldBaseCommit)
 	}
 }
 

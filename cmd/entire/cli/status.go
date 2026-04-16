@@ -254,7 +254,7 @@ func writeActiveSessions(ctx context.Context, w io.Writer, sty statusStyles) {
 	repoRoot, head, headErr := currentHeadLinkage(ctx)
 	divergenceWarnings := make(map[string]string)
 	if headErr == nil && repoRoot != "" && head.commitHash != "" {
-		divergenceWarnings = reconcileActiveSessionHeadDivergence(ctx, store, active, repoRoot, head)
+		divergenceWarnings = computeSessionDivergenceWarnings(repoRoot, active, head)
 	}
 
 	// Group by worktree path
@@ -485,30 +485,28 @@ func (h headLinkage) hasCheckpointID(checkpointID string) bool {
 	return false
 }
 
-func reconcileActiveSessionHeadDivergence(
-	ctx context.Context,
-	store *session.StateStore,
-	active []*session.State,
+func computeSessionDivergenceWarnings(
 	repoRoot string,
+	active []*session.State,
 	head headLinkage,
 ) map[string]string {
 	warnings := make(map[string]string)
 	normalizedRepoRoot := normalizeWorktreePath(repoRoot)
 
 	for _, st := range active {
-		if normalizeWorktreePath(st.WorktreePath) != normalizedRepoRoot || st.BaseCommit == "" || st.BaseCommit == head.commitHash {
+		if normalizeWorktreePath(st.WorktreePath) != normalizedRepoRoot {
 			continue
 		}
 
-		if !st.LastCheckpointID.IsEmpty() && head.hasCheckpointID(st.LastCheckpointID.String()) {
-			st.BaseCommit = head.commitHash
-			st.AttributionBaseCommit = head.commitHash
-			if err := store.Save(ctx, st); err != nil {
-				warnings[st.SessionID] = "tracking diverged from current HEAD; failed to refresh local linkage state"
+		if st.BaseCommit == "" || st.BaseCommit == head.commitHash {
+			// BaseCommit matches HEAD — check for attribution divergence
+			if st.AttributionBaseCommit != "" && st.AttributionBaseCommit != st.BaseCommit {
+				warnings[st.SessionID] = "attribution base diverged after history movement; figures may be off until next checkpoint"
 			}
 			continue
 		}
 
+		// BaseCommit != HEAD — hooks haven't reconciled/migrated yet
 		if len(head.checkpointIDs) > 0 {
 			warnings[st.SessionID] = "tracking diverged from current HEAD; HEAD links to checkpoint(s) " + strings.Join(head.checkpointIDs, ", ")
 			continue
