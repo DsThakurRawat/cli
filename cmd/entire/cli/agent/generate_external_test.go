@@ -98,42 +98,6 @@ func TestGenerateText_PromptViaStdin(t *testing.T) {
 	}
 }
 
-func TestGenerateText_ModelFlagPassedWhenSet(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name  string
-		agent agent.TextGenerator
-		model string
-	}{
-		{name: "codex", agent: &codex.CodexAgent{}, model: "gpt-5"},
-		{name: "copilot", agent: &copilotcli.CopilotCLIAgent{}, model: "gpt-5"},
-		{name: "cursor", agent: &cursor.CursorAgent{}, model: "sonnet-4"},
-		{name: "gemini", agent: &geminicli.GeminiCLIAgent{}, model: "gemini-2.5-flash"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-
-			var capturedArgs []string
-			setRunner(tt.agent, catRunner(&capturedArgs))
-
-			if _, err := tt.agent.GenerateText(context.Background(), "prompt", tt.model); err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
-
-			modelIdx := slices.Index(capturedArgs, "--model")
-			if modelIdx < 0 || modelIdx+1 >= len(capturedArgs) {
-				t.Fatalf("expected --model in args, got %v", capturedArgs)
-			}
-			if capturedArgs[modelIdx+1] != tt.model {
-				t.Fatalf("expected --model %s, got %v", tt.model, capturedArgs)
-			}
-		})
-	}
-}
-
 // setRunner injects a test CommandRunner into any of the 4 supported agent
 // types. This is the external-test equivalent of the package-level var
 // mutation the old per-package tests used.

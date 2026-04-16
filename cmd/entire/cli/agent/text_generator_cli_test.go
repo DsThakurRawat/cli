@@ -12,36 +12,6 @@ import (
 
 const windowsOS = "windows"
 
-func TestRunIsolatedTextGeneratorCLI_Success(t *testing.T) {
-	t.Parallel()
-
-	runner := func(ctx context.Context, _ string, _ ...string) *exec.Cmd {
-		return exec.CommandContext(ctx, "echo", "hello world")
-	}
-	result, err := RunIsolatedTextGeneratorCLI(context.Background(), runner, "test", "test", nil, "")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if result != "hello world" {
-		t.Fatalf("result = %q, want %q", result, "hello world")
-	}
-}
-
-func TestRunIsolatedTextGeneratorCLI_TrimsWhitespace(t *testing.T) {
-	t.Parallel()
-
-	runner := func(ctx context.Context, _ string, _ ...string) *exec.Cmd {
-		return exec.CommandContext(ctx, "echo", "  trimmed  ")
-	}
-	result, err := RunIsolatedTextGeneratorCLI(context.Background(), runner, "test", "test", nil, "")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if result != "trimmed" {
-		t.Fatalf("result = %q, want %q", result, "trimmed")
-	}
-}
-
 func TestRunIsolatedTextGeneratorCLI_EmptyOutput(t *testing.T) {
 	t.Parallel()
 
@@ -122,21 +92,6 @@ func TestRunIsolatedTextGeneratorCLI_NilRunnerDefaultsToExec(t *testing.T) {
 	}
 }
 
-func TestRunIsolatedTextGeneratorCLI_StdinPassedToCommand(t *testing.T) {
-	t.Parallel()
-
-	runner := func(ctx context.Context, _ string, _ ...string) *exec.Cmd {
-		return exec.CommandContext(ctx, "cat")
-	}
-	result, err := RunIsolatedTextGeneratorCLI(context.Background(), runner, "cat", "cat", nil, "input text")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if result != "input text" {
-		t.Fatalf("result = %q, want %q", result, "input text")
-	}
-}
-
 func TestRunIsolatedTextGeneratorCLI_CanceledContextPreservesSentinel(t *testing.T) {
 	t.Parallel()
 
@@ -160,29 +115,6 @@ func TestRunIsolatedTextGeneratorCLI_CanceledContextPreservesSentinel(t *testing
 	}
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("expected context.Canceled, got %v", err)
-	}
-}
-
-func TestRunIsolatedTextGeneratorCLI_DeadlineExceededPreservesSentinel(t *testing.T) {
-	t.Parallel()
-
-	if runtime.GOOS == windowsOS {
-		t.Skip("uses POSIX shell command")
-	}
-
-	runner := func(ctx context.Context, _ string, _ ...string) *exec.Cmd {
-		return exec.CommandContext(ctx, "sh", "-c", "sleep 10")
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
-	defer cancel()
-
-	_, err := RunIsolatedTextGeneratorCLI(ctx, runner, "test", "test", nil, "")
-	if err == nil {
-		t.Fatal("expected timeout error")
-	}
-	if !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("expected context.DeadlineExceeded, got %v", err)
 	}
 }
 

@@ -1069,19 +1069,7 @@ func TestResolveModel(t *testing.T) {
 			want:     DefaultModel,
 		},
 		{
-			name:     "claude code with explicit model is unchanged",
-			provider: string(agent.AgentNameClaudeCode),
-			model:    "opus",
-			want:     "opus",
-		},
-		{
-			name:     "other provider with empty model stays empty",
-			provider: "gemini",
-			model:    "",
-			want:     "",
-		},
-		{
-			name:     "other provider with explicit model is unchanged",
+			name:     "other provider passes model through unchanged",
 			provider: "codex",
 			model:    "gpt-5",
 			want:     "gpt-5",

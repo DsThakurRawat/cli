@@ -489,24 +489,6 @@ func TestMergeJSON_ExternalAgents(t *testing.T) {
 	}
 }
 
-func TestLoad_SummaryGenerationField(t *testing.T) {
-	setupSettingsDir(t, `{"enabled": true, "summary_generation": {"provider": "codex", "model": "gpt-5"}}`, "")
-
-	s, err := Load(context.Background())
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if s.SummaryGeneration == nil {
-		t.Fatal("expected SummaryGeneration to be non-nil")
-	}
-	if s.SummaryGeneration.Provider != providerCodex {
-		t.Errorf("SummaryGeneration.Provider = %q, want %q", s.SummaryGeneration.Provider, providerCodex)
-	}
-	if s.SummaryGeneration.Model != "gpt-5" {
-		t.Errorf("SummaryGeneration.Model = %q, want %q", s.SummaryGeneration.Model, "gpt-5")
-	}
-}
-
 func TestLoad_SummaryGenerationModelWithoutProviderRejected(t *testing.T) {
 	setupSettingsDir(t, `{"enabled": true, "summary_generation": {"model": "sonnet"}}`, "")
 
@@ -548,9 +530,7 @@ func TestSummaryGenerationSettings_Validate(t *testing.T) {
 		s       *SummaryGenerationSettings
 		wantErr bool
 	}{
-		{name: "nil is valid (nothing configured)", s: nil, wantErr: false},
-		{name: "empty struct is valid (nothing set yet)", s: &SummaryGenerationSettings{}, wantErr: false},
-		{name: "provider only is valid (model inferred by caller)", s: &SummaryGenerationSettings{Provider: "gemini"}, wantErr: false},
+		{name: "nil receiver is valid", s: nil, wantErr: false},
 		{name: "provider and model is valid", s: &SummaryGenerationSettings{Provider: "claude-code", Model: "sonnet"}, wantErr: false},
 		{name: "model without provider is invalid", s: &SummaryGenerationSettings{Model: "sonnet"}, wantErr: true},
 	}

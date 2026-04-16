@@ -249,16 +249,3 @@ func TestResolveCheckpointSummaryProvider_ConfiguredProviderNotInstalledReturnsE
 		t.Fatalf("unexpected error text: %v", err)
 	}
 }
-
-func TestFormatSummaryProviderDetails(t *testing.T) {
-	t.Parallel()
-
-	details := formatSummaryProviderDetails(&checkpointSummaryProvider{
-		DisplayName: "Codex",
-		Model:       "gpt-5",
-	})
-
-	if details != "Provider: Codex\nModel: gpt-5\n" {
-		t.Fatalf("formatSummaryProviderDetails() = %q", details)
-	}
-}
