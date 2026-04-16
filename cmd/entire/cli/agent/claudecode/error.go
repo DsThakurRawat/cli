@@ -1,6 +1,9 @@
 package claudecode
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 // ClaudeErrorKind classifies a typed Claude CLI error so callers can
 // produce actionable user-facing messages without parsing strings.
@@ -41,3 +44,59 @@ func (e *ClaudeError) Error() string {
 }
 
 func (e *ClaudeError) Unwrap() error { return e.Cause }
+
+const stderrMessageMaxLen = 500
+
+// authStderrPhrases is intentionally small. The primary auth-detection path
+// is the structured envelope (classifyEnvelopeError); these phrases are a
+// best-effort fallback for crashes that exit non-zero before the envelope
+// is produced.
+var authStderrPhrases = []string{
+	"invalid api key",
+	"not logged in",
+}
+
+// classifyEnvelopeError converts a Claude CLI is_error:true envelope into a
+// typed ClaudeError. The result text is treated as user-safe (the CLI
+// produces it for human consumption).
+func classifyEnvelopeError(resultText string, apiStatus *int, exitCode int) *ClaudeError {
+	e := &ClaudeError{
+		Message:  resultText,
+		ExitCode: exitCode,
+	}
+	if apiStatus != nil {
+		e.APIStatus = *apiStatus
+	}
+	switch {
+	case e.APIStatus == 401, e.APIStatus == 403:
+		e.Kind = ClaudeErrorAuth
+	case e.APIStatus == 429:
+		e.Kind = ClaudeErrorRateLimit
+	case e.APIStatus >= 400 && e.APIStatus < 500:
+		e.Kind = ClaudeErrorConfig
+	default:
+		e.Kind = ClaudeErrorUnknown
+	}
+	return e
+}
+
+// classifyStderrError is a fallback classifier used when the subprocess exited
+// non-zero without producing a parseable envelope. It only attempts to
+// recognize a small, stable set of auth phrases; everything else becomes
+// ClaudeErrorUnknown with the (truncated) stderr as the message.
+func classifyStderrError(stderr string, exitCode int) *ClaudeError {
+	msg := strings.TrimSpace(stderr)
+	if len(msg) > stderrMessageMaxLen {
+		msg = msg[:stderrMessageMaxLen]
+	}
+	e := &ClaudeError{Message: msg, ExitCode: exitCode}
+	lower := strings.ToLower(msg)
+	for _, phrase := range authStderrPhrases {
+		if strings.Contains(lower, phrase) {
+			e.Kind = ClaudeErrorAuth
+			return e
+		}
+	}
+	e.Kind = ClaudeErrorUnknown
+	return e
+}
