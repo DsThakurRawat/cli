@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/entireio/cli/cmd/entire/cli/agent"
+	"github.com/entireio/cli/cmd/entire/cli/agent/claudecode"
 	"github.com/entireio/cli/cmd/entire/cli/agent/geminicli"
 	"github.com/entireio/cli/cmd/entire/cli/agent/opencode"
 	"github.com/entireio/cli/cmd/entire/cli/agent/types"
@@ -483,7 +484,7 @@ func generateCheckpointSummary(ctx context.Context, w, errW io.Writer, v1Store *
 
 	summary, err := generateCheckpointAISummary(ctx, scopedTranscript, cpSummary.FilesTouched, content.Metadata.Agent)
 	if err != nil {
-		return fmt.Errorf("failed to generate summary: %w", err)
+		return formatCheckpointSummaryError(err, checkpointSummaryTimeout)
 	}
 
 	// Persist to both stores; at least one must succeed.
@@ -537,6 +538,42 @@ func generateCheckpointAISummary(ctx context.Context, scopedTranscript []byte, f
 	}
 
 	return summary, nil
+}
+
+// formatCheckpointSummaryError maps typed Claude CLI errors and context
+// sentinels to user-facing messages. This is the single point where the
+// final CLI wording is decided.
+func formatCheckpointSummaryError(err error, deadline time.Duration) error {
+	var claudeErr *claudecode.ClaudeError
+	switch {
+	case errors.As(err, &claudeErr):
+		switch claudeErr.Kind { //nolint:exhaustive // ClaudeErrorUnknown handled by default
+		case claudecode.ClaudeErrorAuth:
+			return fmt.Errorf("Claude authentication failed: %s\nRun `claude login` and retry", claudeErr.Message) //nolint:staticcheck // ST1005: capitalized because Claude is a proper noun
+		case claudecode.ClaudeErrorRateLimit:
+			return fmt.Errorf("Claude rejected the summary request due to rate limits or quota: %s\nWait and retry", claudeErr.Message) //nolint:staticcheck // ST1005
+		case claudecode.ClaudeErrorConfig:
+			return fmt.Errorf("Claude rejected the summary request: %s\nCheck your Claude CLI config and selected model", claudeErr.Message) //nolint:staticcheck // ST1005
+		case claudecode.ClaudeErrorCLIMissing:
+			return errors.New("Claude CLI is not installed or not on PATH") //nolint:staticcheck // ST1005
+		default:
+			return fmt.Errorf("Claude failed to generate the summary: %s", claudeErr.Message) //nolint:staticcheck // ST1005
+		}
+	case errors.Is(err, context.DeadlineExceeded):
+		return fmt.Errorf( //nolint:staticcheck // ST1005
+			"Claude did not return a summary within the %s safety deadline. This usually means one of:\n"+
+				"  - sonnet is taking longer than expected on a large transcript\n"+
+				"    Try: set summary_timeout_seconds: 600 in .entire/settings.local.json (or 0 to disable)\n"+
+				"  - the Claude CLI cannot reach Anthropic's API (network, VPN, firewall)\n"+
+				"    Try: run `claude --print \"hi\"` from a shell to confirm the CLI works\n"+
+				"  - Anthropic's API is degraded\n"+
+				"    Check: https://status.anthropic.com",
+			formatSummaryTimeout(deadline))
+	case errors.Is(err, context.Canceled):
+		return errors.New("summary generation canceled")
+	default:
+		return fmt.Errorf("failed to generate summary: %w", err)
+	}
 }
 
 func formatSummaryTimeout(d time.Duration) string {

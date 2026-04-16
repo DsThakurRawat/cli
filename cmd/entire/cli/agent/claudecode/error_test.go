@@ -67,136 +67,76 @@ func TestClaudeError_ErrorsAsIntegration(t *testing.T) {
 	}
 }
 
-// --- Envelope classifier tests ---
-
-func TestClassifyEnvelopeError_Auth401(t *testing.T) {
+func TestClassifyEnvelopeError(t *testing.T) {
 	t.Parallel()
-	status := 401
-	got := classifyEnvelopeError("Authentication required", &status, 0)
-	if got.Kind != ClaudeErrorAuth {
-		t.Errorf("Kind = %v; want %v", got.Kind, ClaudeErrorAuth)
+	intPtr := func(n int) *int { return &n }
+	tests := []struct {
+		name     string
+		result   string
+		status   *int
+		exitCode int
+		wantKind ClaudeErrorKind
+		wantAPI  int
+		wantExit int
+	}{
+		{"Auth401", "Authentication required", intPtr(401), 0, ClaudeErrorAuth, 401, 0},
+		{"Auth403", "forbidden", intPtr(403), 0, ClaudeErrorAuth, 403, 0},
+		{"RateLimit429", "Too many requests", intPtr(429), 0, ClaudeErrorRateLimit, 429, 0},
+		{"Config404", "model not found", intPtr(404), 0, ClaudeErrorConfig, 404, 0},
+		{"Config400", "invalid_request_error", intPtr(400), 0, ClaudeErrorConfig, 400, 0},
+		{"UnknownNoStatus", "something blew up", nil, 0, ClaudeErrorUnknown, 0, 0},
+		{"Unknown5xx", "upstream error", intPtr(503), 0, ClaudeErrorUnknown, 503, 0},
+		{"ExitCodePropagated", "internal error", intPtr(500), 2, ClaudeErrorUnknown, 500, 2},
 	}
-	if got.Message != "Authentication required" {
-		t.Errorf("Message = %q; want envelope text", got.Message)
-	}
-	if got.APIStatus != 401 {
-		t.Errorf("APIStatus = %d; want 401", got.APIStatus)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := classifyEnvelopeError(tc.result, tc.status, tc.exitCode)
+			if got.Kind != tc.wantKind {
+				t.Errorf("Kind = %v; want %v", got.Kind, tc.wantKind)
+			}
+			if got.Message != tc.result {
+				t.Errorf("Message = %q; want %q", got.Message, tc.result)
+			}
+			if got.APIStatus != tc.wantAPI {
+				t.Errorf("APIStatus = %d; want %d", got.APIStatus, tc.wantAPI)
+			}
+			if got.ExitCode != tc.wantExit {
+				t.Errorf("ExitCode = %d; want %d", got.ExitCode, tc.wantExit)
+			}
+		})
 	}
 }
 
-func TestClassifyEnvelopeError_Auth403(t *testing.T) {
+func TestClassifyStderrError(t *testing.T) {
 	t.Parallel()
-	status := 403
-	got := classifyEnvelopeError("forbidden", &status, 0)
-	if got.Kind != ClaudeErrorAuth {
-		t.Errorf("Kind = %v; want %v", got.Kind, ClaudeErrorAuth)
+	tests := []struct {
+		name      string
+		stderr    string
+		exitCode  int
+		wantKind  ClaudeErrorKind
+		wantExit  int
+		maxMsgLen int // 0 means no length check
+	}{
+		{"AuthFromInvalidKey", "error: Invalid API key", 1, ClaudeErrorAuth, 1, 0},
+		{"AuthFromNotLoggedIn", "Please run claude login first; you are not logged in", 1, ClaudeErrorAuth, 1, 0},
+		{"AuthCaseInsensitive", "INVALID API KEY", 1, ClaudeErrorAuth, 1, 0},
+		{"UnknownPreservesMessage", "segfault", 134, ClaudeErrorUnknown, 134, 0},
+		{"TruncatesLongStderr", strings.Repeat("x", 800), 1, ClaudeErrorUnknown, 1, 500},
 	}
-}
-
-func TestClassifyEnvelopeError_RateLimit429(t *testing.T) {
-	t.Parallel()
-	status := 429
-	got := classifyEnvelopeError("Too many requests", &status, 0)
-	if got.Kind != ClaudeErrorRateLimit {
-		t.Errorf("Kind = %v; want %v", got.Kind, ClaudeErrorRateLimit)
-	}
-}
-
-func TestClassifyEnvelopeError_Config404(t *testing.T) {
-	t.Parallel()
-	status := 404
-	got := classifyEnvelopeError("model not found", &status, 0)
-	if got.Kind != ClaudeErrorConfig {
-		t.Errorf("Kind = %v; want %v", got.Kind, ClaudeErrorConfig)
-	}
-}
-
-func TestClassifyEnvelopeError_Config400(t *testing.T) {
-	t.Parallel()
-	status := 400
-	got := classifyEnvelopeError("invalid_request_error", &status, 0)
-	if got.Kind != ClaudeErrorConfig {
-		t.Errorf("Kind = %v; want %v", got.Kind, ClaudeErrorConfig)
-	}
-}
-
-func TestClassifyEnvelopeError_UnknownNoStatus(t *testing.T) {
-	t.Parallel()
-	got := classifyEnvelopeError("something blew up", nil, 0)
-	if got.Kind != ClaudeErrorUnknown {
-		t.Errorf("Kind = %v; want %v", got.Kind, ClaudeErrorUnknown)
-	}
-	if got.Message != "something blew up" {
-		t.Errorf("Message = %q; want envelope text", got.Message)
-	}
-}
-
-func TestClassifyEnvelopeError_Unknown5xx(t *testing.T) {
-	t.Parallel()
-	status := 503
-	got := classifyEnvelopeError("upstream error", &status, 0)
-	if got.Kind != ClaudeErrorUnknown {
-		t.Errorf("Kind = %v; want %v", got.Kind, ClaudeErrorUnknown)
-	}
-}
-
-func TestClassifyEnvelopeError_ExitCodePropagated(t *testing.T) {
-	t.Parallel()
-	status := 500
-	got := classifyEnvelopeError("internal error", &status, 2)
-	if got.ExitCode != 2 {
-		t.Errorf("ExitCode = %d; want 2", got.ExitCode)
-	}
-}
-
-// --- Stderr classifier tests ---
-
-func TestClassifyStderrError_AuthFromInvalidKey(t *testing.T) {
-	t.Parallel()
-	got := classifyStderrError("error: Invalid API key", 1)
-	if got.Kind != ClaudeErrorAuth {
-		t.Errorf("Kind = %v; want %v", got.Kind, ClaudeErrorAuth)
-	}
-	if got.ExitCode != 1 {
-		t.Errorf("ExitCode = %d; want 1", got.ExitCode)
-	}
-}
-
-func TestClassifyStderrError_AuthFromNotLoggedIn(t *testing.T) {
-	t.Parallel()
-	got := classifyStderrError("Please run claude login first; you are not logged in", 1)
-	if got.Kind != ClaudeErrorAuth {
-		t.Errorf("Kind = %v; want %v", got.Kind, ClaudeErrorAuth)
-	}
-}
-
-func TestClassifyStderrError_AuthCaseInsensitive(t *testing.T) {
-	t.Parallel()
-	got := classifyStderrError("INVALID API KEY", 1)
-	if got.Kind != ClaudeErrorAuth {
-		t.Errorf("Kind = %v; want %v for case-insensitive match", got.Kind, ClaudeErrorAuth)
-	}
-}
-
-func TestClassifyStderrError_UnknownPreservesMessage(t *testing.T) {
-	t.Parallel()
-	got := classifyStderrError("segfault", 134)
-	if got.Kind != ClaudeErrorUnknown {
-		t.Errorf("Kind = %v; want %v", got.Kind, ClaudeErrorUnknown)
-	}
-	if got.Message != "segfault" {
-		t.Errorf("Message = %q; want stderr text", got.Message)
-	}
-	if got.ExitCode != 134 {
-		t.Errorf("ExitCode = %d; want 134", got.ExitCode)
-	}
-}
-
-func TestClassifyStderrError_TruncatesLongStderr(t *testing.T) {
-	t.Parallel()
-	long := strings.Repeat("x", 800)
-	got := classifyStderrError(long, 1)
-	if len(got.Message) > 500 {
-		t.Errorf("len(Message) = %d; want <= 500 (truncated)", len(got.Message))
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := classifyStderrError(tc.stderr, tc.exitCode)
+			if got.Kind != tc.wantKind {
+				t.Errorf("Kind = %v; want %v", got.Kind, tc.wantKind)
+			}
+			if got.ExitCode != tc.wantExit {
+				t.Errorf("ExitCode = %d; want %d", got.ExitCode, tc.wantExit)
+			}
+			if tc.maxMsgLen > 0 && len(got.Message) > tc.maxMsgLen {
+				t.Errorf("len(Message) = %d; want <= %d", len(got.Message), tc.maxMsgLen)
+			}
+		})
 	}
 }

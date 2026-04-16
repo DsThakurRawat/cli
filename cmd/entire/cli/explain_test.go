@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"github.com/entireio/cli/cmd/entire/cli/agent"
+	"github.com/entireio/cli/cmd/entire/cli/agent/claudecode"
 	"github.com/entireio/cli/cmd/entire/cli/agent/types"
 	"github.com/entireio/cli/cmd/entire/cli/checkpoint"
 	"github.com/entireio/cli/cmd/entire/cli/checkpoint/id"
@@ -66,6 +68,69 @@ func TestExplainCmd_SearchAllFlag(t *testing.T) {
 
 	if flag.DefValue != "false" {
 		t.Errorf("expected default value 'false', got %q", flag.DefValue)
+	}
+}
+
+func TestFormatCheckpointSummaryError_Auth(t *testing.T) {
+	t.Parallel()
+	err := formatCheckpointSummaryError(&claudecode.ClaudeError{Kind: claudecode.ClaudeErrorAuth, Message: "Invalid API key"}, 0)
+	msg := err.Error()
+	if !strings.Contains(strings.ToLower(msg), "authentication failed") {
+		t.Errorf("missing 'authentication failed' in %q", msg)
+	}
+	if !strings.Contains(msg, "Invalid API key") {
+		t.Errorf("missing envelope message in %q", msg)
+	}
+}
+
+func TestFormatCheckpointSummaryError_RateLimit(t *testing.T) {
+	t.Parallel()
+	err := formatCheckpointSummaryError(&claudecode.ClaudeError{Kind: claudecode.ClaudeErrorRateLimit, Message: "429"}, 0)
+	if !strings.Contains(err.Error(), "rate limit") {
+		t.Errorf("missing rate-limit phrasing: %q", err)
+	}
+}
+
+func TestFormatCheckpointSummaryError_Config(t *testing.T) {
+	t.Parallel()
+	err := formatCheckpointSummaryError(&claudecode.ClaudeError{Kind: claudecode.ClaudeErrorConfig, Message: "model not found"}, 0)
+	if !strings.Contains(err.Error(), "model not found") {
+		t.Errorf("envelope message not surfaced: %q", err)
+	}
+}
+
+func TestFormatCheckpointSummaryError_CLIMissing(t *testing.T) {
+	t.Parallel()
+	err := formatCheckpointSummaryError(&claudecode.ClaudeError{Kind: claudecode.ClaudeErrorCLIMissing}, 0)
+	if !strings.Contains(err.Error(), "not installed") {
+		t.Errorf("missing cli-missing phrasing: %q", err)
+	}
+}
+
+func TestFormatCheckpointSummaryError_DeadlineExceeded(t *testing.T) {
+	t.Parallel()
+	err := formatCheckpointSummaryError(fmt.Errorf("wrapped: %w", context.DeadlineExceeded), 5*time.Minute)
+	msg := err.Error()
+	for _, want := range []string{"5m", "summary_timeout_seconds", "status.anthropic.com"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("missing %q in %q", want, msg)
+		}
+	}
+}
+
+func TestFormatCheckpointSummaryError_Canceled(t *testing.T) {
+	t.Parallel()
+	err := formatCheckpointSummaryError(fmt.Errorf("wrapped: %w", context.Canceled), 0)
+	if !strings.Contains(err.Error(), "canceled") {
+		t.Errorf("missing canceled: %q", err)
+	}
+}
+
+func TestFormatCheckpointSummaryError_Passthrough(t *testing.T) {
+	t.Parallel()
+	err := formatCheckpointSummaryError(errors.New("something else"), 0)
+	if !strings.Contains(err.Error(), "something else") {
+		t.Errorf("original error not preserved: %q", err)
 	}
 }
 

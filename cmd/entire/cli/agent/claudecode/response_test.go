@@ -5,6 +5,27 @@ import (
 	"testing"
 )
 
+func TestParseGenerateTextResponse_IsErrorEnvelope(t *testing.T) {
+	t.Parallel()
+	stdout := `{"type":"result","subtype":"success","is_error":true,"api_error_status":404,"result":"model not found"}`
+	result, env, err := parseGenerateTextResponse([]byte(stdout))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result != "model not found" {
+		t.Errorf("result = %q; want %q", result, "model not found")
+	}
+	if env == nil {
+		t.Fatal("envelope = nil; want non-nil")
+	}
+	if !env.IsError {
+		t.Error("IsError = false; want true")
+	}
+	if env.APIErrorStatus == nil || *env.APIErrorStatus != 404 {
+		t.Errorf("APIErrorStatus = %v; want *404", env.APIErrorStatus)
+	}
+}
+
 func TestParseGenerateTextResponse(t *testing.T) {
 	t.Parallel()
 
@@ -50,7 +71,7 @@ func TestParseGenerateTextResponse(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			got, err := parseGenerateTextResponse([]byte(tt.stdout))
+			got, _, err := parseGenerateTextResponse([]byte(tt.stdout))
 			if tt.wantErr != "" {
 				if err == nil {
 					t.Fatal("expected error")

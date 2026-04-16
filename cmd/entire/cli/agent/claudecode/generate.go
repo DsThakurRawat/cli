@@ -46,23 +46,53 @@ func (c *ClaudeCodeAgent) GenerateText(ctx context.Context, prompt string, model
 		if errors.Is(ctx.Err(), context.Canceled) {
 			return "", context.Canceled
 		}
-		var execErr *exec.Error
-		if errors.As(err, &execErr) {
-			return "", fmt.Errorf("claude CLI not found: %w", err)
+		if isExecNotFound(err) {
+			return "", &ClaudeError{Kind: ClaudeErrorCLIMissing, Cause: err}
 		}
+		// Non-zero exit: try to parse stdout for a structured error envelope,
+		// then fall back to stderr classification.
+		if _, env, parseErr := parseGenerateTextResponse(stdout.Bytes()); parseErr == nil && env != nil && env.IsError {
+			result := ""
+			if env.Result != nil {
+				result = *env.Result
+			}
+			exitCode := 0
+			var exitErr *exec.ExitError
+			if errors.As(err, &exitErr) {
+				exitCode = exitErr.ExitCode()
+			}
+			return "", classifyEnvelopeError(result, env.APIErrorStatus, exitCode)
+		}
+		exitCode := -1
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) {
-			return "", fmt.Errorf("claude CLI failed (exit %d): %s", exitErr.ExitCode(), stderr.String())
+			exitCode = exitErr.ExitCode()
 		}
-		return "", fmt.Errorf("failed to run claude CLI: %w", err)
+		return "", classifyStderrError(stderr.String(), exitCode)
 	}
 
-	result, err := parseGenerateTextResponse(stdout.Bytes())
+	// Exit 0: parse the response and check for is_error (Claude CLI returns
+	// most operational errors as exit 0 with is_error:true in the envelope).
+	result, env, err := parseGenerateTextResponse(stdout.Bytes())
 	if err != nil {
-		return "", fmt.Errorf("failed to parse claude CLI response: %w", err)
+		return "", &ClaudeError{Kind: ClaudeErrorUnknown, Message: fmt.Sprintf("failed to parse claude CLI response: %v", err), Cause: err}
+	}
+	if env != nil && env.IsError {
+		return "", classifyEnvelopeError(result, env.APIErrorStatus, 0)
 	}
 
 	return result, nil
+}
+
+// isExecNotFound returns true if err indicates the subprocess binary could not be found.
+// Covers both PATH-based lookups (*exec.Error / exec.ErrNotFound) and absolute-path
+// failures (*fs.PathError wrapping os.ErrNotExist on macOS/Linux).
+func isExecNotFound(err error) bool {
+	var execErr *exec.Error
+	if errors.As(err, &execErr) {
+		return true
+	}
+	return errors.Is(err, exec.ErrNotFound) || errors.Is(err, os.ErrNotExist)
 }
 
 // stripGitEnv returns a copy of env with all GIT_* variables removed.
