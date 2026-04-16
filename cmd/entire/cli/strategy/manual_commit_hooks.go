@@ -2180,6 +2180,21 @@ func (s *ManualCommitStrategy) InitializeSession(ctx context.Context, sessionID 
 			state.TranscriptPath = transcriptPath
 		}
 
+		// ORDERING: migrateShadowBranchIfNeeded MUST run before clearing
+		// LastCheckpointID and before calculatePromptAttributionAtStart.
+		//
+		// 1. Reconcile reads state.LastCheckpointID — clearing it first would
+		//    prevent the reconcile path from ever firing at turn start.
+		// 2. Attribution reads state.BaseCommit to locate the shadow branch —
+		//    running it before migrate would diff against the stale base in
+		//    the reset-to-checkpoint case.
+
+		// Check if HEAD has moved (user pulled/rebased or committed)
+		// migrateShadowBranchIfNeeded handles renaming the shadow branch and updating state.BaseCommit
+		if _, err := s.migrateShadowBranchIfNeeded(ctx, repo, state); err != nil {
+			return fmt.Errorf("failed to check/migrate shadow branch: %w", err)
+		}
+
 		// Clear checkpoint IDs on every new prompt.
 		// LastCheckpointID is set during PostCommit, cleared at new prompt.
 		// TurnCheckpointIDs tracks mid-turn checkpoints for stop-time finalization.
@@ -2193,12 +2208,6 @@ func (s *ManualCommitStrategy) InitializeSession(ctx context.Context, sessionID 
 		// nil lastCheckpointTree by falling back to baseTree.
 		promptAttr := s.calculatePromptAttributionAtStart(ctx, repo, state)
 		state.PendingPromptAttribution = &promptAttr
-
-		// Check if HEAD has moved (user pulled/rebased or committed)
-		// migrateShadowBranchIfNeeded handles renaming the shadow branch and updating state.BaseCommit
-		if _, err := s.migrateShadowBranchIfNeeded(ctx, repo, state); err != nil {
-			return fmt.Errorf("failed to check/migrate shadow branch: %w", err)
-		}
 
 		if err := s.saveSessionState(ctx, state); err != nil {
 			return fmt.Errorf("failed to update session state: %w", err)
