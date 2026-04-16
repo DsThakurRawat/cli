@@ -7,19 +7,25 @@ import (
 
 	"github.com/entireio/cli/cmd/entire/cli/checkpoint"
 	"github.com/entireio/cli/cmd/entire/cli/logging"
+	"github.com/entireio/cli/cmd/entire/cli/trailers"
 
 	"github.com/go-git/go-git/v6"
 	"github.com/go-git/go-git/v6/plumbing"
 )
 
 // migrateShadowBranchIfNeeded checks if HEAD has changed since the session started
-// and migrates the shadow branch to the new base commit if needed.
+// and either reconciles or migrates the shadow branch accordingly.
 //
-// This handles the scenario where Claude performs a rebase, pull, or other git operation
-// that changes HEAD mid-session (via a tool call), without a new prompt being submitted.
-// Without this migration, checkpoints would be saved to an orphaned shadow branch.
+// Reconcile path: if HEAD carries this session's LastCheckpointID as an
+// Entire-Checkpoint trailer (e.g. after git reset --hard to a condensed commit),
+// both BaseCommit and AttributionBaseCommit are updated to HEAD. The old shadow
+// branch is intentionally left untouched to preserve rewind data.
 //
-// Returns true if migration occurred, false otherwise.
+// Migrate path: for all other HEAD changes (pull, rebase, tool-call commits),
+// the shadow branch is renamed to the new base and only BaseCommit is updated.
+// AttributionBaseCommit stays pinned for correct attribution.
+//
+// Returns true if reconciliation or migration occurred, false otherwise.
 func (s *ManualCommitStrategy) migrateShadowBranchIfNeeded(ctx context.Context, repo *git.Repository, state *SessionState) (bool, error) {
 	if state == nil || state.BaseCommit == "" {
 		return false, nil
@@ -33,6 +39,30 @@ func (s *ManualCommitStrategy) migrateShadowBranchIfNeeded(ctx context.Context, 
 	currentHead := head.Hash().String()
 	if state.BaseCommit == currentHead {
 		return false, nil // No migration needed
+	}
+
+	// Reconcile path: if HEAD sits on a commit carrying this session's
+	// LastCheckpointID as an Entire-Checkpoint trailer, the user has reset
+	// back to the last condensed checkpoint. Update both BaseCommit and
+	// AttributionBaseCommit to HEAD. Deliberately do NOT rename or touch
+	// the old shadow branch — it preserves rewind data from the
+	// discarded segment of history.
+	if !state.LastCheckpointID.IsEmpty() {
+		headCommit, commitErr := repo.CommitObject(head.Hash())
+		if commitErr == nil {
+			for _, cpID := range trailers.ParseAllCheckpoints(headCommit.Message) {
+				if cpID.String() == state.LastCheckpointID.String() {
+					state.BaseCommit = currentHead
+					state.AttributionBaseCommit = currentHead
+					logging.Info(logging.WithComponent(ctx, "migration"), "reconciled session to known checkpoint on HEAD",
+						slog.String("checkpoint_id", state.LastCheckpointID.String()),
+						slog.String("new_base", currentHead[:7]))
+					return true, nil
+				}
+			}
+		}
+		// If CommitObject failed or no trailer matched, fall through to the
+		// existing migrate path below.
 	}
 
 	return s.migrateShadowBranchToBaseCommit(ctx, repo, state, currentHead)
