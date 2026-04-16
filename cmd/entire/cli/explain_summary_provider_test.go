@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/entireio/cli/cmd/entire/cli/agent"
@@ -13,17 +14,20 @@ import (
 )
 
 type stubTextAgent struct {
-	name types.AgentName
-	kind types.AgentType
+	name       types.AgentName
+	kind       types.AgentType
+	notPresent bool
 }
 
-func (s *stubTextAgent) Name() types.AgentName                        { return s.name }
-func (s *stubTextAgent) Type() types.AgentType                        { return s.kind }
-func (s *stubTextAgent) Description() string                          { return "stub" }
-func (s *stubTextAgent) IsPreview() bool                              { return false }
-func (s *stubTextAgent) DetectPresence(context.Context) (bool, error) { return true, nil }
-func (s *stubTextAgent) ProtectedDirs() []string                      { return nil }
-func (s *stubTextAgent) ReadTranscript(string) ([]byte, error)        { return nil, nil }
+func (s *stubTextAgent) Name() types.AgentName { return s.name }
+func (s *stubTextAgent) Type() types.AgentType { return s.kind }
+func (s *stubTextAgent) Description() string   { return "stub" }
+func (s *stubTextAgent) IsPreview() bool       { return false }
+func (s *stubTextAgent) DetectPresence(context.Context) (bool, error) {
+	return !s.notPresent, nil
+}
+func (s *stubTextAgent) ProtectedDirs() []string               { return nil }
+func (s *stubTextAgent) ReadTranscript(string) ([]byte, error) { return nil, nil }
 func (s *stubTextAgent) ChunkTranscript(context.Context, []byte, int) ([][]byte, error) {
 	return nil, nil
 }
@@ -133,7 +137,7 @@ func TestResolveCheckpointSummaryProvider_SavesSingleInstalledProvider(t *testin
 	}
 }
 
-func TestResolveCheckpointSummaryProvider_NoCandidatesFallsBackToClaude(t *testing.T) {
+func TestResolveCheckpointSummaryProvider_NoCandidatesReturnsError(t *testing.T) {
 	// Cannot use t.Parallel() because we use t.Chdir and package-level var stubs
 	ctx := context.Background()
 	tmpDir := t.TempDir()
@@ -156,22 +160,19 @@ func TestResolveCheckpointSummaryProvider_NoCandidatesFallsBackToClaude(t *testi
 		return nil // no agents registered
 	}
 	getSummaryAgent = func(name types.AgentName) (agent.Agent, error) {
-		return &stubTextAgent{
-			name: name,
-			kind: agent.AgentTypeClaudeCode,
-		}, nil
+		return &stubTextAgent{name: name, kind: agent.AgentTypeClaudeCode}, nil
 	}
 
-	provider, err := resolveCheckpointSummaryProvider(ctx, &bytes.Buffer{})
-	if err != nil {
-		t.Fatalf("resolveCheckpointSummaryProvider() error = %v", err)
+	_, err := resolveCheckpointSummaryProvider(ctx, &bytes.Buffer{})
+	if err == nil {
+		t.Fatal("expected error when no summary-capable CLI is installed")
 	}
-	if provider.Name != agent.AgentNameClaudeCode {
-		t.Fatalf("provider.Name = %q, want %q (Claude Code fallback)", provider.Name, agent.AgentNameClaudeCode)
+	if !strings.Contains(err.Error(), "no summary-capable agent CLI is installed") {
+		t.Fatalf("unexpected error text: %v", err)
 	}
 }
 
-func TestResolveCheckpointSummaryProvider_NonInteractiveMultiCandidateFallsBackToClaude(t *testing.T) {
+func TestResolveCheckpointSummaryProvider_NonInteractiveMultiCandidatePicksFirst(t *testing.T) {
 	// Cannot use t.Parallel() because we use t.Chdir, t.Setenv, and package-level var stubs
 	ctx := context.Background()
 	tmpDir := t.TempDir()
@@ -192,21 +193,60 @@ func TestResolveCheckpointSummaryProvider_NonInteractiveMultiCandidateFallsBackT
 		return &settings.EntireSettings{Enabled: true}, nil
 	}
 	listRegisteredAgents = func() []types.AgentName {
+		// Deliberately omit Claude Code: the old behavior forced Claude
+		// here even when not installed, which is the bug we're guarding
+		// against.
 		return []types.AgentName{agent.AgentNameCodex, agent.AgentNameGemini}
 	}
 	getSummaryAgent = func(name types.AgentName) (agent.Agent, error) {
-		return &stubTextAgent{
-			name: name,
-			kind: agent.AgentTypeCodex,
-		}, nil
+		return &stubTextAgent{name: name, kind: agent.AgentTypeCodex}, nil
 	}
 
 	provider, err := resolveCheckpointSummaryProvider(ctx, &bytes.Buffer{})
 	if err != nil {
 		t.Fatalf("resolveCheckpointSummaryProvider() error = %v", err)
 	}
-	if provider.Name != agent.AgentNameClaudeCode {
-		t.Fatalf("provider.Name = %q, want %q (Claude Code fallback in non-interactive)", provider.Name, agent.AgentNameClaudeCode)
+	if provider.Name != agent.AgentNameCodex {
+		t.Fatalf("provider.Name = %q, want %q (first detected candidate, not Claude)", provider.Name, agent.AgentNameCodex)
+	}
+}
+
+func TestResolveCheckpointSummaryProvider_ConfiguredProviderNotInstalledReturnsError(t *testing.T) {
+	// Cannot use t.Parallel() because we use t.Chdir and package-level var stubs
+	ctx := context.Background()
+	tmpDir := t.TempDir()
+	testutil.InitRepo(t, tmpDir)
+	t.Chdir(tmpDir)
+
+	originalLoad := loadSummarySettings
+	originalGet := getSummaryAgent
+	t.Cleanup(func() {
+		loadSummarySettings = originalLoad
+		getSummaryAgent = originalGet
+	})
+
+	loadSummarySettings = func(context.Context) (*settings.EntireSettings, error) {
+		return &settings.EntireSettings{
+			Enabled: true,
+			SummaryGeneration: &settings.SummaryGenerationSettings{
+				Provider: string(agent.AgentNameCodex),
+			},
+		}, nil
+	}
+	getSummaryAgent = func(name types.AgentName) (agent.Agent, error) {
+		return &stubTextAgent{
+			name:       name,
+			kind:       agent.AgentTypeCodex,
+			notPresent: true,
+		}, nil
+	}
+
+	_, err := resolveCheckpointSummaryProvider(ctx, &bytes.Buffer{})
+	if err == nil {
+		t.Fatal("expected error when configured provider's CLI is not installed")
+	}
+	if !strings.Contains(err.Error(), "not installed on this machine") {
+		t.Fatalf("unexpected error text: %v", err)
 	}
 }
 

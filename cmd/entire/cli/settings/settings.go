@@ -310,10 +310,21 @@ func mergeJSON(settings *EntireSettings, data []byte) error {
 			return fmt.Errorf("parsing summary_generation field: %w", err)
 		}
 
+		_, modelInOverride := summaryFields["model"]
+
 		if providerRaw, ok := summaryFields["provider"]; ok {
 			var provider string
 			if err := json.Unmarshal(providerRaw, &provider); err != nil {
 				return fmt.Errorf("parsing summary_generation.provider field: %w", err)
+			}
+			// If the override switches providers without also setting a
+			// model, the base's model was tuned to the old provider and
+			// would likely cause a runtime failure when handed to the new
+			// one (e.g. codex rejecting "sonnet"). Clear it so the new
+			// provider falls back to its own default. The configure CLI
+			// path enforces the same rule — keep the merge path consistent.
+			if provider != settings.SummaryGeneration.Provider && !modelInOverride {
+				settings.SummaryGeneration.Model = ""
 			}
 			settings.SummaryGeneration.Provider = provider
 		}

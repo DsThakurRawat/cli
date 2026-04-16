@@ -8,6 +8,11 @@ import (
 	"testing"
 )
 
+const (
+	baseSettingsClaudeSonnet = `{"enabled": true, "summary_generation": {"provider": "claude-code", "model": "sonnet"}}`
+	providerCodex            = "codex"
+)
+
 func TestLoad_RejectsUnknownKeys(t *testing.T) {
 	// Create a temporary directory
 	tmpDir := t.TempDir()
@@ -483,8 +488,8 @@ func TestLoad_SummaryGenerationField(t *testing.T) {
 	if s.SummaryGeneration == nil {
 		t.Fatal("expected SummaryGeneration to be non-nil")
 	}
-	if s.SummaryGeneration.Provider != "codex" {
-		t.Errorf("SummaryGeneration.Provider = %q, want %q", s.SummaryGeneration.Provider, "codex")
+	if s.SummaryGeneration.Provider != providerCodex {
+		t.Errorf("SummaryGeneration.Provider = %q, want %q", s.SummaryGeneration.Provider, providerCodex)
 	}
 	if s.SummaryGeneration.Model != "gpt-5" {
 		t.Errorf("SummaryGeneration.Model = %q, want %q", s.SummaryGeneration.Model, "gpt-5")
@@ -544,7 +549,12 @@ func TestSummaryGenerationSettings_Validate(t *testing.T) {
 	}
 }
 
-func TestMergeJSON_SummaryGeneration(t *testing.T) {
+// TestMergeJSON_SummaryGeneration_ProviderSwitchClearsStaleModel verifies that
+// switching providers via a local override clears a model from the base that
+// was tuned to the old provider. Without this, local `{"provider":"codex"}`
+// on base `{"provider":"claude-code","model":"sonnet"}` would produce
+// `provider=codex, model=sonnet`, which codex would reject at CLI time.
+func TestMergeJSON_SummaryGeneration_ProviderSwitchClearsStaleModel(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	entireDir := filepath.Join(tmpDir, ".entire")
@@ -553,7 +563,7 @@ func TestMergeJSON_SummaryGeneration(t *testing.T) {
 	}
 
 	settingsFile := filepath.Join(entireDir, "settings.json")
-	base := `{"enabled": true, "summary_generation": {"provider": "claude-code", "model": "sonnet"}}`
+	base := baseSettingsClaudeSonnet
 	if err := os.WriteFile(settingsFile, []byte(base), 0o644); err != nil {
 		t.Fatalf("failed to write settings file: %v", err)
 	}
@@ -577,11 +587,88 @@ func TestMergeJSON_SummaryGeneration(t *testing.T) {
 	if s.SummaryGeneration == nil {
 		t.Fatal("expected SummaryGeneration to be non-nil")
 	}
-	if s.SummaryGeneration.Provider != "codex" {
-		t.Errorf("SummaryGeneration.Provider = %q, want %q", s.SummaryGeneration.Provider, "codex")
+	if s.SummaryGeneration.Provider != providerCodex {
+		t.Errorf("SummaryGeneration.Provider = %q, want %q", s.SummaryGeneration.Provider, providerCodex)
 	}
-	if s.SummaryGeneration.Model != "sonnet" {
-		t.Errorf("SummaryGeneration.Model = %q, want %q", s.SummaryGeneration.Model, "sonnet")
+	if s.SummaryGeneration.Model != "" {
+		t.Errorf("SummaryGeneration.Model = %q, want \"\" (stale Claude model should be cleared on provider switch)", s.SummaryGeneration.Model)
+	}
+}
+
+// TestMergeJSON_SummaryGeneration_ProviderSwitchWithExplicitModelPreserved
+// checks the complementary case: if the override sets BOTH provider and model,
+// we preserve the explicit model rather than clearing it.
+func TestMergeJSON_SummaryGeneration_ProviderSwitchWithExplicitModelPreserved(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	entireDir := filepath.Join(tmpDir, ".entire")
+	if err := os.MkdirAll(entireDir, 0o755); err != nil {
+		t.Fatalf("failed to create .entire directory: %v", err)
+	}
+
+	settingsFile := filepath.Join(entireDir, "settings.json")
+	base := baseSettingsClaudeSonnet
+	if err := os.WriteFile(settingsFile, []byte(base), 0o644); err != nil {
+		t.Fatalf("failed to write settings file: %v", err)
+	}
+
+	localFile := filepath.Join(entireDir, "settings.local.json")
+	local := `{"summary_generation": {"provider": "codex", "model": "gpt-5"}}`
+	if err := os.WriteFile(localFile, []byte(local), 0o644); err != nil {
+		t.Fatalf("failed to write local settings file: %v", err)
+	}
+
+	if err := os.MkdirAll(filepath.Join(tmpDir, ".git"), 0o755); err != nil {
+		t.Fatalf("failed to create .git directory: %v", err)
+	}
+
+	t.Chdir(tmpDir)
+
+	s, err := Load(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if s.SummaryGeneration.Provider != "codex" || s.SummaryGeneration.Model != "gpt-5" {
+		t.Errorf("Provider/Model = %q/%q, want codex/gpt-5", s.SummaryGeneration.Provider, s.SummaryGeneration.Model)
+	}
+}
+
+// TestMergeJSON_SummaryGeneration_SameProviderPreservesModel confirms we only
+// clear the model on provider *change*, not on any provider override. A local
+// override that pins the provider to the same value as the base must not
+// clobber the base's model.
+func TestMergeJSON_SummaryGeneration_SameProviderPreservesModel(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	entireDir := filepath.Join(tmpDir, ".entire")
+	if err := os.MkdirAll(entireDir, 0o755); err != nil {
+		t.Fatalf("failed to create .entire directory: %v", err)
+	}
+
+	settingsFile := filepath.Join(entireDir, "settings.json")
+	base := baseSettingsClaudeSonnet
+	if err := os.WriteFile(settingsFile, []byte(base), 0o644); err != nil {
+		t.Fatalf("failed to write settings file: %v", err)
+	}
+
+	localFile := filepath.Join(entireDir, "settings.local.json")
+	local := `{"summary_generation": {"provider": "claude-code"}}`
+	if err := os.WriteFile(localFile, []byte(local), 0o644); err != nil {
+		t.Fatalf("failed to write local settings file: %v", err)
+	}
+
+	if err := os.MkdirAll(filepath.Join(tmpDir, ".git"), 0o755); err != nil {
+		t.Fatalf("failed to create .git directory: %v", err)
+	}
+
+	t.Chdir(tmpDir)
+
+	s, err := Load(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if s.SummaryGeneration.Provider != "claude-code" || s.SummaryGeneration.Model != "sonnet" {
+		t.Errorf("Provider/Model = %q/%q, want claude-code/sonnet", s.SummaryGeneration.Provider, s.SummaryGeneration.Model)
 	}
 }
 

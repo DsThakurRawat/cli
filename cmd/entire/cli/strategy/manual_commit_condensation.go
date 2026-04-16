@@ -448,6 +448,22 @@ func buildSummaryGenerator(ctx context.Context) summarize.Generator { //nolint:i
 		return nil
 	}
 
+	// Fall back silently (with a Warn log) when the configured CLI isn't
+	// installed: auto-summarize runs in the post-commit hook, so a hard
+	// error would block the commit. The on-demand explain --generate path
+	// surfaces the same situation as an explicit error instead.
+	present, err := ag.DetectPresence(ctx)
+	if err != nil {
+		logging.Warn(ctx, "detecting presence of configured summary provider failed, using default",
+			"provider", s.SummaryGeneration.Provider, "error", err.Error())
+		return nil
+	}
+	if !present {
+		logging.Warn(ctx, "configured summary provider CLI is not installed, using default",
+			"provider", s.SummaryGeneration.Provider)
+		return nil
+	}
+
 	tg, ok := agent.AsTextGenerator(ag)
 	if !ok {
 		logging.Warn(ctx, "configured summary provider does not support text generation, using default",

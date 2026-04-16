@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -41,30 +42,37 @@ func resolveCheckpointSummaryProvider(ctx context.Context, w io.Writer) (*checkp
 	}
 
 	if s.SummaryGeneration != nil && s.SummaryGeneration.Provider != "" {
-		return buildCheckpointSummaryProvider(types.AgentName(s.SummaryGeneration.Provider), s.SummaryGeneration.Model)
+		providerName := types.AgentName(s.SummaryGeneration.Provider)
+		// Verify the CLI is actually installed before handing it to the
+		// generation pipeline. Without this the user hits a confusing
+		// shell-out failure at summary time instead of a clear "not
+		// installed" error at resolution time — and settings files shared
+		// across machines (repo-level settings.json) cannot assume every
+		// machine has the same CLIs installed.
+		if err := ensureSummaryProviderPresent(ctx, providerName); err != nil {
+			return nil, err
+		}
+		return buildCheckpointSummaryProvider(providerName, s.SummaryGeneration.Model)
 	}
 
 	candidates := listEnabledSummaryProviders(ctx)
 
 	switch len(candidates) {
 	case 0:
-		logging.Info(ctx, "no summary-capable agents installed, falling back to Claude Code")
-		return buildCheckpointSummaryProvider(agent.AgentNameClaudeCode, "")
+		// Previously silently fell back to Claude Code even when Claude
+		// itself wasn't installed, producing a later confusing CLI error.
+		// Fail loudly with actionable guidance instead.
+		return nil, errors.New("no summary-capable agent CLI is installed on this machine; install one of claude, codex, gemini, cursor, or copilot, or set summary_generation.provider in settings")
 	case 1:
-		provider, err := buildCheckpointSummaryProvider(candidates[0].Name, "")
-		if err != nil {
-			return nil, err
-		}
-		if saveErr := persistSummaryProviderSelection(ctx, provider.Name, provider.Model); saveErr != nil {
-			logging.Warn(ctx, "failed to save summary provider selection, continuing without persistence",
-				"error", saveErr.Error())
-			fmt.Fprintf(w, "Warning: could not save provider selection: %v\nUse `entire configure --summarize-provider %s` to set it manually.\n", saveErr, provider.Name)
-		}
-		return provider, nil
+		return autoSelectSummaryProvider(ctx, w, candidates[0].Name, "non-interactive auto-select: single installed provider")
 	default:
 		if !interactive.CanPromptInteractively() {
-			logging.Info(ctx, "non-interactive mode with multiple summary providers, falling back to Claude Code")
-			return buildCheckpointSummaryProvider(agent.AgentNameClaudeCode, "")
+			// Prior behavior forced Claude here, even when Claude was not
+			// among the installed candidates — leading to a runtime failure
+			// on headless boxes. Pick the first detected candidate
+			// deterministically (registry order); that ensures we select
+			// something that's actually installed.
+			return autoSelectSummaryProvider(ctx, w, candidates[0].Name, "non-interactive auto-select: first detected of multiple")
 		}
 
 		selected, err := promptForSummaryProvider(candidates)
@@ -84,6 +92,24 @@ func resolveCheckpointSummaryProvider(ctx context.Context, w io.Writer) (*checkp
 		fmt.Fprintf(w, "Using %s for summary generation.\n", provider.DisplayName)
 		return provider, nil
 	}
+}
+
+// autoSelectSummaryProvider builds a provider for an auto-selected candidate
+// (single-installed or non-interactive-first-of-many) and persists the choice
+// so subsequent runs don't re-decide. Persistence failure is surfaced as a
+// warning — not an error — because the selection is still usable in-process.
+func autoSelectSummaryProvider(ctx context.Context, w io.Writer, name types.AgentName, reason string) (*checkpointSummaryProvider, error) {
+	logging.Info(ctx, reason, "provider", string(name))
+	provider, err := buildCheckpointSummaryProvider(name, "")
+	if err != nil {
+		return nil, err
+	}
+	if saveErr := persistSummaryProviderSelection(ctx, provider.Name, provider.Model); saveErr != nil {
+		logging.Warn(ctx, "failed to save summary provider selection, continuing without persistence",
+			"error", saveErr.Error())
+		fmt.Fprintf(w, "Warning: could not save provider selection: %v\nUse `entire configure --summarize-provider %s` to set it manually.\n", saveErr, provider.Name)
+	}
+	return provider, nil
 }
 
 func listEnabledSummaryProviders(ctx context.Context) []checkpointSummaryProvider {
@@ -167,6 +193,25 @@ func buildCheckpointSummaryProvider(name types.AgentName, model string) (*checkp
 			Model:         effectiveModel,
 		},
 	}, nil
+}
+
+// ensureSummaryProviderPresent returns an error if the named summary provider
+// is registered but its CLI binary is not installed on this machine. Used to
+// reject configured providers early (at resolve time) rather than deferring
+// the failure to an opaque shell-out error during generation.
+func ensureSummaryProviderPresent(ctx context.Context, name types.AgentName) error {
+	ag, err := getSummaryAgent(name)
+	if err != nil {
+		return fmt.Errorf("loading summary provider %s: %w", name, err)
+	}
+	present, err := ag.DetectPresence(ctx)
+	if err != nil {
+		return fmt.Errorf("checking availability of summary provider %s: %w", name, err)
+	}
+	if !present {
+		return fmt.Errorf("summary provider %q is configured but its CLI is not installed on this machine; install it or update summary_generation.provider in settings", name)
+	}
+	return nil
 }
 
 func validateSummaryProvider(provider string) error {
