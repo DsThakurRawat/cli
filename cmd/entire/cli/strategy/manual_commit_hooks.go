@@ -462,24 +462,7 @@ func (s *ManualCommitStrategy) PrepareCommitMsg(ctx context.Context, commitMsgFi
 	}
 	findSessionsSpan.End()
 
-	// Surface divergence warning (show-once per divergence event).
-	// When the migrate path advanced BaseCommit without reconciliation,
-	// AttributionBaseCommit stays stale. Warn the user once via stderr
-	// (visible in their terminal, not in the agent's context).
-	for _, sess := range sessions {
-		if sess.AttributionBaseCommit != "" &&
-			sess.AttributionBaseCommit != sess.BaseCommit &&
-			!sess.DivergenceNoticeShown {
-			fmt.Fprintln(os.Stderr, "entire: session attribution diverged after recent history movement; figures may be off until next checkpoint")
-			sess.DivergenceNoticeShown = true
-			if err := s.saveSessionState(ctx, sess); err != nil {
-				logging.Warn(logCtx, "failed to save divergence notice flag",
-					slog.String("session_id", sess.SessionID),
-					slog.String("error", err.Error()))
-			}
-			break // One warning is enough even with multiple sessions
-		}
-	}
+	s.warnIfAttributionDiverged(ctx, sessions)
 
 	// Fast path: skip content detection for mid-turn agent commits.
 	if s.tryAgentCommitFastPath(ctx, commitMsgFile, sessions, source) {
@@ -2021,6 +2004,29 @@ func (s *ManualCommitStrategy) extractModifiedFilesFromLiveTranscript(ctx contex
 //     some agents like Gemini subagents commit mid-turn from processes that
 //     have /dev/tty but can't respond to prompts, and content detection fails
 //     since the shadow branch doesn't exist yet).
+//
+// warnIfAttributionDiverged prints a show-once stderr warning when a session's
+// AttributionBaseCommit has diverged from BaseCommit (set by the migrate path
+// after history movement like git reset). The warning is visible in the user's
+// terminal during prepare-commit-msg, not in the agent's context.
+func (s *ManualCommitStrategy) warnIfAttributionDiverged(ctx context.Context, sessions []*SessionState) {
+	logCtx := logging.WithComponent(ctx, "checkpoint")
+	for _, sess := range sessions {
+		if sess.AttributionBaseCommit != "" &&
+			sess.AttributionBaseCommit != sess.BaseCommit &&
+			!sess.DivergenceNoticeShown {
+			fmt.Fprintln(os.Stderr, "entire: session attribution diverged after recent history movement; figures may be off until next checkpoint")
+			sess.DivergenceNoticeShown = true
+			if err := s.saveSessionState(ctx, sess); err != nil {
+				logging.Warn(logCtx, "failed to save divergence notice flag",
+					slog.String("session_id", sess.SessionID),
+					slog.String("error", err.Error()))
+			}
+			break // One warning is enough even with multiple sessions
+		}
+	}
+}
+
 func (s *ManualCommitStrategy) tryAgentCommitFastPath(ctx context.Context, commitMsgFile string, sessions []*SessionState, source string) bool {
 	noTTY := !hasTTY()
 	skipContentDetection := noTTY
