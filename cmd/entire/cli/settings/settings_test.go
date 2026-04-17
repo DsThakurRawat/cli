@@ -862,9 +862,9 @@ func TestGetFullTranscriptGenerationRetentionDays(t *testing.T) {
 		want int
 	}{
 		{
-			name: "defaults to fourteen when missing",
+			name: "defaults to sixty when missing",
 			opts: nil,
-			want: 14,
+			want: 60,
 		},
 		{
 			name: "returns configured integer",
@@ -879,22 +879,22 @@ func TestGetFullTranscriptGenerationRetentionDays(t *testing.T) {
 		{
 			name: "returns default for wrong type",
 			opts: map[string]any{"full_transcript_generation_retention_days": "30"},
-			want: 14,
+			want: 60,
 		},
 		{
 			name: "returns default for zero",
 			opts: map[string]any{"full_transcript_generation_retention_days": 0},
-			want: 14,
+			want: 60,
 		},
 		{
 			name: "returns default for negative",
 			opts: map[string]any{"full_transcript_generation_retention_days": -5},
-			want: 14,
+			want: 60,
 		},
 		{
 			name: "returns default for non integral float",
 			opts: map[string]any{"full_transcript_generation_retention_days": 1.5},
-			want: 14,
+			want: 60,
 		},
 	}
 

@@ -155,7 +155,7 @@ func TestCleanLongDescription_IncludesV2CleanupWhenEnabled(t *testing.T) {
 	writeCleanSettingsFile(t, repoRoot, `{"enabled": true, "strategy_options": {"checkpoints_v2": true}}`)
 
 	description := cleanLongDescription(context.Background())
-	if !strings.Contains(description, "Archived v2 full transcripts older than the 14-day retention window") {
+	if !strings.Contains(description, "Archived v2 full transcripts older than the 60-day retention window") {
 		t.Fatalf("expected v2 cleanup help text when enabled, got: %s", description)
 	}
 }

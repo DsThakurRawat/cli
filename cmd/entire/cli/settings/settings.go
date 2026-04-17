@@ -24,7 +24,7 @@ const (
 	EntireSettingsLocalFile = ".entire/settings.local.json"
 	// defaultGenerationRetentionDays is the default retention window for archived
 	// checkpoints v2 raw-transcript generations when no override is configured.
-	defaultGenerationRetentionDays = 14
+	defaultGenerationRetentionDays = 60
 )
 
 // Commit linking mode constants.
