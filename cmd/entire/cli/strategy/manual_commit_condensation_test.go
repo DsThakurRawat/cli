@@ -3,11 +3,15 @@ package strategy
 import (
 	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/entireio/cli/cmd/entire/cli/agent"
 	"github.com/entireio/cli/cmd/entire/cli/agent/types"
+	cpkg "github.com/entireio/cli/cmd/entire/cli/checkpoint"
+	"github.com/entireio/cli/redact"
 	"github.com/stretchr/testify/require"
 
 	// Register agents so GetByAgentType works in tests.
@@ -16,6 +20,49 @@ import (
 	_ "github.com/entireio/cli/cmd/entire/cli/agent/cursor"
 	_ "github.com/entireio/cli/cmd/entire/cli/agent/factoryaidroid"
 )
+
+type fakeTranscriptCompactorAgent struct {
+	name         types.AgentName
+	agentType    types.AgentType
+	fullCompact  []byte
+	scopedByPath map[string][]byte
+	err          error
+	caps         agent.DeclaredCaps
+}
+
+func (f *fakeTranscriptCompactorAgent) Name() types.AgentName                          { return f.name }
+func (f *fakeTranscriptCompactorAgent) Type() types.AgentType                          { return f.agentType }
+func (f *fakeTranscriptCompactorAgent) Description() string                            { return "fake transcript compactor" }
+func (f *fakeTranscriptCompactorAgent) IsPreview() bool                                { return false }
+func (f *fakeTranscriptCompactorAgent) DetectPresence(context.Context) (bool, error)   { return true, nil }
+func (f *fakeTranscriptCompactorAgent) ProtectedDirs() []string                        { return nil }
+func (f *fakeTranscriptCompactorAgent) ReadTranscript(string) ([]byte, error)          { return nil, nil }
+func (f *fakeTranscriptCompactorAgent) ChunkTranscript(context.Context, []byte, int) ([][]byte, error) {
+	return nil, nil
+}
+func (f *fakeTranscriptCompactorAgent) ReassembleTranscript([][]byte) ([]byte, error) { return nil, nil }
+func (f *fakeTranscriptCompactorAgent) GetSessionID(*agent.HookInput) string           { return "" }
+func (f *fakeTranscriptCompactorAgent) GetSessionDir(string) (string, error)           { return "", nil }
+func (f *fakeTranscriptCompactorAgent) ResolveSessionFile(_, sessionID string) string  { return sessionID }
+func (f *fakeTranscriptCompactorAgent) ReadSession(*agent.HookInput) (*agent.AgentSession, error) {
+	return nil, nil //nolint:nilnil // test stub
+}
+func (f *fakeTranscriptCompactorAgent) WriteSession(context.Context, *agent.AgentSession) error {
+	return nil
+}
+func (f *fakeTranscriptCompactorAgent) FormatResumeCommand(string) string { return "" }
+func (f *fakeTranscriptCompactorAgent) DeclaredCapabilities() agent.DeclaredCaps {
+	return f.caps
+}
+func (f *fakeTranscriptCompactorAgent) CompactTranscript(_ context.Context, sessionRef string) (*agent.CompactedTranscript, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	if compacted, ok := f.scopedByPath[sessionRef]; ok {
+		return &agent.CompactedTranscript{Transcript: compacted}, nil
+	}
+	return &agent.CompactedTranscript{Transcript: f.fullCompact}, nil
+}
 
 // calculateTokenUsage is a test helper that looks up an agent by type and
 // calculates token usage from pre-loaded transcript bytes.
@@ -42,6 +89,58 @@ func TestCalculateTokenUsage_CursorReturnsNil(t *testing.T) {
 	if result != nil {
 		t.Errorf("CalculateTokenUsage(Cursor) = %+v, want nil", result)
 	}
+}
+
+func TestBuildCompactTranscript_UsesAgentTranscriptCompactor(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, ".entire"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, ".entire", "settings.json"), []byte(testCheckpointsV2SettingsJSON), 0o644))
+
+	ag := &fakeTranscriptCompactorAgent{
+		name:        types.AgentName("test-external-compactor"),
+		agentType:   types.AgentType("Test External Compactor"),
+		fullCompact: []byte("{\"v\":1,\"type\":\"assistant\"}\n"),
+		caps:        agent.DeclaredCaps{CompactTranscript: true},
+	}
+	state := &SessionState{
+		SessionID:              "sess-1",
+		AgentType:              ag.agentType,
+		TranscriptPath:         "/tmp/session.jsonl",
+		CheckpointTranscriptStart: 0,
+	}
+	writeOpts := &cpkg.WriteCommittedOptions{}
+
+	buildCompactTranscript(context.Background(), ag, redact.AlreadyRedacted([]byte("not-jsonl")), state, writeOpts)
+	require.Equal(t, ag.fullCompact, writeOpts.CompactTranscript)
+	require.Equal(t, 0, writeOpts.CompactTranscriptStart)
+}
+
+func TestBuildCompactTranscript_UsesExistingCompactOffsetForAgentTranscriptCompactor(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, ".entire"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, ".entire", "settings.json"), []byte(testCheckpointsV2SettingsJSON), 0o644))
+
+	ag := &fakeTranscriptCompactorAgent{
+		name:        types.AgentName("test-external-offset"),
+		agentType:   types.AgentType("Test External Offset"),
+		fullCompact: []byte("{\"v\":1,\"type\":\"user\"}\n{\"v\":1,\"type\":\"assistant\"}\n"),
+		caps:        agent.DeclaredCaps{CompactTranscript: true},
+	}
+
+	state := &SessionState{
+		SessionID:              "sess-1",
+		AgentType:              ag.agentType,
+		TranscriptPath:         "/tmp/session.jsonl",
+		CheckpointTranscriptStart: 1,
+		CompactTranscriptStart: 1,
+	}
+	writeOpts := &cpkg.WriteCommittedOptions{}
+
+	buildCompactTranscript(context.Background(), ag, redact.AlreadyRedacted([]byte("not-jsonl")), state, writeOpts)
+	require.Equal(t, ag.fullCompact, writeOpts.CompactTranscript)
+	require.Equal(t, 1, writeOpts.CompactTranscriptStart)
 }
 
 func TestCalculateTokenUsage_EmptyData(t *testing.T) {

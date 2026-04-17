@@ -422,6 +422,42 @@ func buildCompactTranscript(ctx context.Context, ag agent.Agent, redacted redact
 	compactStart := time.Now()
 	compactCtx, compactSpan := perf.Start(ctx, "compact_transcript_v2")
 	if settings.IsCheckpointsV2Enabled(ctx) {
+		if compactor, ok := agent.AsTranscriptCompactor(ag); ok {
+			if state.TranscriptPath == "" {
+				logging.Warn(compactCtx, "external transcript compaction skipped: missing session transcript path",
+					slog.String("session_id", state.SessionID),
+					slog.String("agent", string(ag.Name())),
+				)
+			} else if compacted, err := compactor.CompactTranscript(compactCtx, state.TranscriptPath); err != nil {
+				logging.Warn(compactCtx, "external transcript compaction failed, skipping transcript.jsonl on /main",
+					slog.String("session_id", state.SessionID),
+					slog.String("agent", string(ag.Name())),
+					slog.String("error", err.Error()),
+				)
+			} else {
+				if len(compacted.Assets) > 0 {
+					logging.Warn(compactCtx, "external transcript compaction returned assets that are not yet persisted",
+						slog.String("session_id", state.SessionID),
+						slog.String("agent", string(ag.Name())),
+						slog.Int("asset_count", len(compacted.Assets)),
+					)
+				}
+				writeOpts.CompactTranscript = compacted.Transcript
+				writeOpts.CompactTranscriptStart = state.CompactTranscriptStart
+				compactSpan.End()
+				return time.Since(compactStart)
+			}
+			compactSpan.End()
+			return time.Since(compactStart)
+		} else if _, ok := ag.(agent.CapabilityDeclarer); ok && ag != nil {
+			logging.Warn(compactCtx, "external transcript compaction unavailable, skipping transcript.jsonl on /main",
+				slog.String("session_id", state.SessionID),
+				slog.String("agent", string(ag.Name())),
+			)
+			compactSpan.End()
+			return time.Since(compactStart)
+		}
+
 		// Generate scoped compact (only new content) for line counting and offset calculation.
 		scopedCompact := compactTranscriptForV2(compactCtx, ag, redacted, state.CheckpointTranscriptStart)
 		// Generate full compact (cumulative) for storage — v2 /main replaces
