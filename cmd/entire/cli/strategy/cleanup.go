@@ -346,7 +346,7 @@ func DeleteOrphanedCheckpoints(ctx context.Context, checkpointIDs []string) (del
 func ListEligibleV2Generations(ctx context.Context) ([]CleanupItem, []string, error) {
 	s, err := settings.Load(ctx)
 	if err != nil {
-		return []CleanupItem{}, nil, nil
+		return []CleanupItem{}, nil, nil //nolint:nilerr // settings unavailable — nothing to clean without config
 	}
 
 	repo, err := OpenRepository(ctx)
@@ -415,7 +415,7 @@ type V2GenerationRef struct {
 // DeleteV2Generations deletes archived checkpoints v2 /full/* generation refs.
 // When RefOID is set, deletion uses compare-and-swap to avoid deleting a ref
 // that was repointed after enumeration.
-func DeleteV2Generations(ctx context.Context, generations []V2GenerationRef) (deleted []string, failed []string, err error) {
+func DeleteV2Generations(ctx context.Context, generations []V2GenerationRef) (deleted []string, failed []string, err error) { //nolint:unparam // err kept for consistency with other Delete* functions
 	if len(generations) == 0 {
 		return []string{}, []string{}, nil
 	}
