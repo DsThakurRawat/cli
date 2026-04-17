@@ -60,7 +60,7 @@ entire dispatch [flags]
 |---|---|---|
 | `--generate` | off | Synthesize bullets into a voice-styled dispatch via LLM (opener + themed sections + bullets + closer). In default mode, the server runs the LLM (Entire's tokens). In `--local` mode, the CLI runs the user's configured LLM (user's tokens). |
 | `--voice <value>` | neutral | Voice/tone guidance for `--generate`. Resolution chain: (1) if value matches a built-in preset name (case-insensitive), use the preset; (2) else if value resolves to a readable file on disk, use its content; (3) else treat as a literal string. Built-in presets shipped with the CLI: `neutral` (default), `marvin` (sardonic AI companion, inspired by the Entire Dispatch). In default mode, passed to the server in the request body; in `--local` mode, used directly. |
-| `--dry-run` | off | Show what checkpoints and labels would be fed to generation. Works with or without `--generate`. Makes no LLM calls and no cloud analysis fetches. In default mode, issues a dry-run request to the server (server returns scope preview without calling its LLM). |
+| `--dry-run` | off | Show what checkpoints, labels, warnings, and counts a real run would produce, without persisting anything or spending LLM tokens. Works with or without `--generate`. **Analysis fetches still happen** (they're cheap, cached per-checkpoint, and required for the preview to show real pending/failed/unknown/access-denied counts). What dry-run actually suppresses: LLM synthesis, persistence to the dispatches table, fingerprint reservation, and dedupe. In default mode, `dry_run: true` in the POST body instructs the server to skip those persistence-/cost-bearing steps and return the preview-shaped response; in `--local` mode, the CLI does the same work locally and skips the LLM call. |
 | `--format <text\|markdown\|json>` | `text` | Output format. `text` = plain-text with `•` bullets and indented sections, suitable for terminals. `markdown` = pure markdown (`#` headers, `-` bullets, fenced where appropriate), paste-friendly for docs and blog posts. `json` = structured payload (checkpoints, analyses, labels, files) for pipelines. Rendering happens client-side in both modes — the server always returns the structured payload, and the CLI's renderer produces the requested format. |
 
 ### Behavior flags
@@ -131,11 +131,10 @@ flowchart TD
         L4 -->|no| LDone[Bullets ready]
     end
 
-    Server --> Unpushed
-    Local --> Unpushed
+    Server --> Render
+    Local --> Render
 
-    Unpushed[Detect unpushed checkpoints<br/>server mode: local enum − server set<br/>local mode: 404s from batch fetch]
-    Unpushed --> Render[Render via --format:<br/>text · markdown · json]
+    Render[Render via --format:<br/>text · markdown · json]
     Render --> UrlCheck{Server mode<br/>+ text/markdown?}
     UrlCheck -->|yes| Url[Append web_url line]
     UrlCheck -->|no| Done
@@ -145,7 +144,7 @@ flowchart TD
 ### Server-side path (default)
 
 1. CLI resolves the scope locally: determines the current repo's `owner/name` from `git remote` (or uses `--org`), collects `--since`, `--branches`, `--voice`, etc.
-2. CLI issues a single call: `POST /api/v1/users/me/dispatches` with body `{repo: "<owner/name>"|null, org: "<name>"|null, since: <ISO>, branches: [...]|"all", generate: bool, voice: "<string>"|null, dry_run: bool}`.
+2. CLI issues a single call: `POST /api/v1/users/me/dispatches` with body `{repo: "<owner/name>"|null, org: "<name>"|null, since: <ISO>, until: <ISO>, branches: [...]|"all", generate: bool, voice: "<string>"|null, dry_run: bool}`. Server floor/ceil-normalizes `since`/`until` to minute precision before any processing (see Idempotency → API window precision); these normalized values are used for the fingerprint, persistence, and the echoed `window.normalized_since`/`normalized_until` in the response.
 3. Server enumerates checkpoints, consumes analyses (already cached per-checkpoint), optionally runs its LLM for `--generate`, persists the result (so entire.io can show it), and returns the structured payload plus a `web_url` pointing at the web view.
 4. CLI renders to `--format`, prints the web URL at the end in `text`/`markdown` modes.
 
@@ -158,10 +157,13 @@ Server path requirements:
 For each checkpoint in the time window, resolve bullet text and section label via this chain:
 
 1. **Cloud analysis** — `POST /api/v1/users/me/checkpoints/analyses/batch` with `{repoFullName, checkpointIds}`. Note: analysis-pipeline `status: failed` is distinct from an HTTP network failure — a pipeline failure on one checkpoint doesn't abort the command, whereas a network failure does (see Edge cases).
-   - `status: complete` → use first `summary` block as bullet text, `labels` for section grouping.
-   - `status: pending` or `generating` → skip with per-checkpoint warning; counted and reported at end of output. With `--wait`, poll until complete (5-min cap).
-   - `status: failed` (pipeline error for this checkpoint) → fall through to step 2.
-   - `404` (unknown to backend, i.e., unpushed) → fall through to step 2. Count as "unpushed" for the end-of-output nudge.
+
+   **The batch response returns a per-ID status, never a bare 404 for the checkpoint.** Deliberate contract — avoids overloading 404 across unrelated conditions. Per-ID statuses:
+   - `complete` → use first `summary` block as bullet text, `labels` for section grouping.
+   - `pending` or `generating` → skip with per-checkpoint warning; counted and reported at end of output. With `--wait`, poll until complete (5-min cap).
+   - `failed` (pipeline error for this checkpoint) → fall through to step 2. Counted under `warnings.failed_count`.
+   - `not_visible` → the server knows this checkpoint exists but the caller lacks access. Fall through to step 2 (we still have local data — we enumerated this ID from our own git). Counted under `warnings.access_denied_count`, surfaced separately from other statuses.
+   - `unknown` → the server has no record of this checkpoint ID. Fall through to step 2 AND increment `warnings.unknown_count`. This surface is necessary because `unknown` can mean either "never pushed yet" (benign) or "backend record lost / ingestion regression" (serious). Making it silent would let data-loss go undetected. The user-visible line is neutral and observational: `"ℹ N checkpoints not known to the server"` — the user or an admin can investigate if this is suspiciously high.
 2. **Local summarize title** — if summarization is enabled (`settings.IsSummarizeEnabled()`) and a `Summary.Title` exists for the checkpoint in `entire/checkpoints/v1/<id>/…/metadata.json`, use it. No labels → checkpoint lands in a flat "Updates" section for its repo.
 3. **Commit message subject** — if the checkpoint has an associated commit via the `Entire-Checkpoint` trailer, use the subject line. No labels → "Updates".
 4. **None of the above** — omit the checkpoint from output. Count reported at end: `"N uncategorized checkpoints skipped."`
@@ -171,16 +173,21 @@ For each checkpoint in the time window, resolve bullet text and section label vi
 - **Batch analyses**: one call per repo, up to 200 IDs. Paginate over 200.
 - **Org enumeration** (for `--org --local`): a new endpoint, `GET /api/v1/orgs/:org/checkpoints?since=<iso>&limit=…&cursor=…`, which returns `{checkpoints: [{id, repo_full_name, created_at}], cursor}`. Required only for `--org --local`. The server path uses its own internal enumeration.
 
-### Unpushed-checkpoint detection
+### Warnings
 
-- **Local mode**: after batch fetch, any checkpoint that returns 404/unknown from the cloud is considered unpushed.
-- **Server mode**: the server only knows about pushed checkpoints, so the CLI does a separate local count (enumerate local `entire/checkpoints/v1` commits in the window, subtract the set that the server's response references) to detect unpushed checkpoints.
+Warnings reported by the CLI reflect server-observed conditions only. No local-git heuristics for v1 — see Open questions for "push-state nudging" deferral.
 
-If the count is > 0 and format is `text` or `markdown`, a single-line nudge is appended. In `--format json`, the count is surfaced as a `warnings.unpushed_count` field instead.
+**Per-classification warnings** (each counted separately — no conflation of unrelated conditions):
 
-```
-⚠ 7 checkpoints weren't pushed — run `git push origin entire/checkpoints/v1` for richer analysis next run.
-```
+| Classification | Source of truth | Text-mode line |
+|---|---|---|
+| `access_denied_count` | API status `not_visible` | `⚠ N checkpoints you no longer have access to` |
+| `pending_count` | API status `pending`/`generating` | `⏳ N checkpoints still being analyzed (retry in a minute or use --wait)` |
+| `failed_count` | API status `failed` | `✕ N checkpoints failed analysis on the server` |
+| `unknown_count` | API status `unknown` | `ℹ N checkpoints not known to the server` |
+| `uncategorized_count` | all fallback steps exhausted | `N uncategorized checkpoints skipped` |
+
+In `--format text`/`markdown` these render as separate lines in the warnings block; in `--format json` they live under `warnings.<name>`.
 
 ## Output format
 
@@ -204,7 +211,6 @@ cli/
     • Summary provider is persisted to local settings and respected by `entire configure`.
 
 13 checkpoints · 4 branches · 23 files touched
-⚠ 2 checkpoints weren't pushed — run `git push origin entire/checkpoints/v1` for richer analysis next run.
 ```
 
 ### `--generate` output
@@ -253,7 +259,6 @@ _7 days, current repo, current branch_
 ---
 
 _13 checkpoints · 4 branches · 23 files touched_
-_⚠ 2 checkpoints weren't pushed — run `git push origin entire/checkpoints/v1` for richer analysis next run._
 ```
 
 ### `--format json` output
@@ -263,7 +268,12 @@ Structured payload with all source data, suitable for piping and scripting:
 ```json
 {
   "generated_at": "2026-04-16T14:32:00Z",
-  "window": {"since": "2026-04-09T00:00:00Z", "until": "2026-04-16T14:32:00Z"},
+  "window": {
+    "normalized_since": "2026-04-09T00:00:00Z",
+    "normalized_until": "2026-04-16T14:33:00Z",
+    "first_checkpoint_created_at": "2026-04-09T09:12:00Z",
+    "last_checkpoint_created_at": "2026-04-16T13:45:00Z"
+  },
   "repos": [
     {
       "full_name": "entireio/cli",
@@ -284,11 +294,17 @@ Structured payload with all source data, suitable for piping and scripting:
             }
           ]
         }
-      ],
-      "skipped": {"pending": 0, "unpushed": 2, "uncategorized": 0}
+      ]
     }
   ],
-  "totals": {"checkpoints": 13, "branches": 4, "files_touched": 23}
+  "totals": {"checkpoints": 13, "used_checkpoint_count": 11, "branches": 4, "files_touched": 23},
+  "warnings": {
+    "access_denied_count": 0,
+    "pending_count": 0,
+    "failed_count": 0,
+    "unknown_count": 0,
+    "uncategorized_count": 0
+  }
 }
 ```
 
@@ -355,23 +371,198 @@ fallback_test.go
 
 ### Server-side prerequisites
 
-- `POST /api/v1/users/me/checkpoints/analyses/batch` — **exists** (see analysis-endpoints PR). Used in `--local` mode.
-- `POST /api/v1/users/me/dispatches` — **new, required for default mode**. Takes scope params + generate/voice, returns the structured dispatch payload + `web_url`. Persists result so entire.io web can render.
-- `GET /api/v1/orgs/:org/checkpoints?since=…&cursor=…` — **new, required for `--org --local`** only. Server-mode `--org` uses internal enumeration, so this endpoint isn't blocking for the default path.
+- `POST /api/v1/users/me/checkpoints/analyses/batch` — **exists** (see analysis-endpoints PR). Used in `--local` mode. **Authorization required**: server MUST enforce per-checkpoint access (each ID's repo must be visible to the caller). IDs the caller cannot see return status `not_visible`, not `unknown`, so the CLI can distinguish access-denied from truly-unknown.
+- `POST /api/v1/users/me/dispatches` — **new, required for default mode**. Takes scope params + generate/voice, returns the structured dispatch payload + `web_url`. Persists result so entire.io web can render. See authorization and idempotency sections below.
+- `GET /api/v1/orgs/:org/checkpoints?since=…&cursor=…` — **new, required for `--org --local`** only. Server-mode `--org` uses internal enumeration, so this endpoint isn't blocking for the default path. **Authorization required**: response filters to repos the caller has access to within the requested org; mixed-access orgs return only the visible subset (and never leak repo names/IDs outside that subset).
 
-Rough response shape for the new dispatches endpoint:
+#### Authorization contract (required for all new endpoints)
+
+**All dispatch-related endpoints MUST enforce per-repo authorization before any work or persistence.** Authentication (a valid login token) is necessary but not sufficient.
+
+**Canonical `authorize(requester, dispatch)` algorithm** — applied identically across read endpoints. Dispatches are **content-addressed cache objects with no ownership model in v1** — no `creator_id` is tracked on rows; anyone with current access to every covered repo can view a dispatch.
+
+```
+authorize(requester, dispatch):
+  for repo in dispatch.covered_repos:
+    if not requester has current access to repo:
+      return deny(404)   # live strict check; deny == 404 (don't leak existence)
+  allow
+```
+
+Per-endpoint applications:
+
+- `POST /api/v1/users/me/dispatches` (create) — caller must currently have access to every repo in the resolved scope. For `repo: "owner/name"` verify current access; for `org: "name"` resolve scope to intersection of org's repos and caller's current access; empty intersection → 404. The persisted row stores `covered_repos` (the authorization boundary) and the content. No `creator_id`.
+- `GET /api/v1/dispatches/:id` (detail) — run `authorize()`; on deny, return 404 (don't leak existence).
+- Per-repo / per-org dispatch listings — filter to dispatches whose `covered_repos` is a subset of what the viewer currently has access to. Must not leak titles or counts for denied dispatches.
+- `GET /api/v1/orgs/:org/checkpoints` — filter results to repos the caller has current access to in that org. Zero access in the org → 404.
+- Batch analyses — per-ID access check; inaccessible IDs return `not_visible`, not the content.
+
+**No DELETE endpoint in v1.** Dispatches are cache-like; server GCs old rows by age (retention window e.g. 90 days, finalized in operational docs). Deferred to post-v1 if a concrete user need appears.
+
+**No `creator_id` means**: no personal feed, no "dispatches I made," no creator-only actions. A user navigating to a repo's dispatches page sees every dispatch whose `covered_repos ⊆ user's current access`. If two users submit the same inputs, they get the same cached dispatch record. If a user loses access to a covered repo, they lose the ability to view that dispatch — matches the restrictive-access default.
+
+#### Persistence and idempotency — pure content-addressed cache
+
+**Only `generate: true` dispatches persist.** Bullets-only requests (`generate: false`) are computed live and returned inline with no persisted row, no fingerprint, no dedupe — the bullet data is cheap to regenerate, so caching is unnecessary. `dry_run: true` requests likewise never persist (see Dry-run below). The persistence tier exists to cache LLM-generated prose, which is the expensive step worth caching.
+
+**Implications:**
+- Bullets-only responses have no `id`, no `web_url`, no `fingerprint_hash` — same shape as the dry-run response minus the `dry_run: true` flag.
+- Users who want to revisit a bullets-only dispatch re-run the command; output will be identical for identical inputs (deterministic transform of a fixed used-ID set).
+- Only LLM-generated dispatches show up in the web UI's per-repo / per-org listings.
+
+**API window precision — floor/ceil, not floor/floor**: the server normalizes `since` and `until` to minute precision at request receipt using half-open-interval semantics (`since` floored, `until` ceiled). This preserves all checkpoints the caller asked about and makes sub-minute input variations deterministic.
+
+- Request with `since=2026-04-16T14:32:47.893Z`, `until=2026-04-16T14:33:12.001Z` → normalized `since=2026-04-16T14:32:00Z`, `until=2026-04-16T14:34:00Z`.
+- All checkpoints created in the second half of `until`'s original minute are still included (ceil preserves them).
+
+The normalized values appear in the echoed `window` metadata on the response. They're not part of the fingerprint — see below.
+
+**Idempotency key (for `generate: true` requests only)** — a pure content-addressed cache key:
+
+```
+fingerprint_hash = SHA-256(
+  sha256(lex_sorted(used_checkpoint_ids).join(","))  // the rendered artifact's inputs
+  + "|"
+  + voice_normalized                                  // preset name; OR hash of voice file content; OR hash of literal string
+)
+```
+
+That's the entire key. Deliberately excluded:
+
+| Field | Why excluded |
+|---|---|
+| `user_id` | Dispatches are shared cache objects; no ownership model in v1. Two users submitting the same inputs get the same record. |
+| `scope` (repos / org) | Different scope requests that resolve to the same used-ID set produce the same rendered artifact. Dedupe is semantically correct. |
+| `normalized_since` / `normalized_until` | Different windows with identical used sets produce identical output. |
+| `branches` | Same as scope — a filter on candidates, not on output. |
+| `generate` | Bullets-only doesn't persist at all, so there's no generate=false record to collide with. |
+
+**What the fingerprint does and does not trigger as a fresh dispatch:**
+
+| Change | Fresh dispatch? | Why |
+|---|---|---|
+| New checkpoint enters window AND becomes a bullet | Yes | Joins used set → hash changes |
+| Pending checkpoint completes AND becomes a bullet | Yes | Joins used set |
+| Used checkpoint revoked/failed/removed | Yes | Leaves used set |
+| New checkpoint enters window but stays `pending` | No | Not in used set; cached dispatch returned |
+| Analysis pipeline reprocesses a used checkpoint (same id, revised labels/summary) | No | Id unchanged; cached dispatch returned |
+| Different request window/scope/branches, same used set | No | Artifact is identical; labels on echoed metadata may be stale |
+| Different voice | Yes | Explicit fingerprint component |
+| Two different users, same used set + same voice | No | Shared cache object |
+
+**Decision log — explicitly accepted tradeoffs:**
+
+- **Reprocessing staleness**: analysis pipeline re-runs are rare and typically produce incrementally updated content. We accept that a cached dispatch may reflect a slightly older pipeline version for the same ids. If a user wants fresh content, they can modify the voice (shifting the fingerprint) or wait for a new checkpoint to shift the used set.
+- **Pending-not-used staleness**: a newly-arrived pending checkpoint doesn't change the dispatch until it completes and joins the used set. The cached row's `pending_count` may be outdated for an intermediate submission, but when the pending transitions to complete, the used set changes and a fresh dispatch is produced.
+- **Scope/window label drift**: the echoed `covered_repos`/`window`/`branches` metadata on a deduped response reflects the first submitter's request. Since the content is identical across submissions with the same used set, this is accepted as cosmetic and not worth a cache-key dimension.
+
+**Order of operations on the server** (for `generate: true` requests):
+
+1. Resolve access + enumerate candidate checkpoints in the request's window.
+2. Batch-fetch analyses.
+3. Apply the fallback chain to determine the "used" set.
+4. Compute `fingerprint_hash = sha256(sha256(lex_sorted(used_ids).join(",")) + "|" + voice_normalized)`.
+5. **Reserve-before-synthesize** (see below).
+6. If reservation won: run LLM, persist `covered_repos`, bullets, generated_text, counts, status=`complete`. Return `deduped: false`.
+7. If reservation lost: fetch by fingerprint. If `status: complete`, return `deduped: true`. If `status: generating`, see in-flight coordination.
+
+For `generate: false` requests: steps 1–3 only. Return the bullets payload inline with no persistence. No fingerprint computed.
+
+**Atomic dedupe — reserve the row BEFORE the LLM call**:
+
+The dispatches table has a partial unique index on `fingerprint_hash` scoped to `status IN ('generating','complete')`. Creation is a single transactional upsert:
+
+```sql
+INSERT INTO dispatches (id, fingerprint_hash, status, covered_repos, …)
+VALUES (gen_id(), :fingerprint_hash, 'generating', :covered_repos, …)
+ON CONFLICT (fingerprint_hash)
+  WHERE status IN ('generating','complete')
+  DO NOTHING
+RETURNING id;
+```
+
+- **Row returned** → this request won the reservation. It runs the LLM, updates to `status='complete'`, returns.
+- **No row returned** → another request already reserved. Fetch the existing row by fingerprint; no LLM call.
+
+**In-flight coordination** — colliding row is still `generating`: server MAY (a) block on a completion signal up to the client's `--wait` limit, or (b) return id with `status: generating` and let the client poll.
+
+**Failure cleanup**: failed synthesis marks the row `status: failed`, which falls outside the partial unique index — a later legitimate retry can reserve afresh. `failed` rows are retained for debugging but don't block new attempts.
+
+**No regenerate endpoint.** Re-submitting `POST /dispatches` with the same inputs naturally returns the same cached dispatch (unchanged used set + voice) or a fresh one (something changed). Nothing else needed.
+
+**Client retry semantics**: CLI can safely retry 5xx on `generate: true`. Atomic upsert guarantees one record per fingerprint.
+
+**Dry-run requests** (`dry_run: true`) skip LLM, persistence, and fingerprinting entirely. Response shape:
+
+```json
+{
+  "dry_run": true,
+  "requested_generate": true,
+  "window": {
+    "normalized_since": "…",
+    "normalized_until": "…",
+    "first_checkpoint_created_at": "…",
+    "last_checkpoint_created_at": "…"
+  },
+  "repos": [ /* candidates + used bullets */ ],
+  "totals": { "checkpoints": 13, "used_checkpoint_count": 11, "branches": 4, "files_touched": 23 },
+  "warnings": { "access_denied_count": 0, "pending_count": 0, "failed_count": 0, "unknown_count": 0, "uncategorized_count": 0 }
+}
+```
+
+Fields explicitly absent from dry-run responses: `id`, `fingerprint_hash`, `web_url`, `status`, `deduped`, `generated_text`. Dry-run still runs access-resolution + analysis fetches (these determine warnings/counts) but nothing else.
+
+**No DELETE endpoint in v1.** Dispatches are cache-like; server GCs rows older than a retention window (operational default 90 days, finalized in operational docs). A policy-reviewed DELETE can be added post-v1 if a concrete user need emerges.
+
+#### Response shape for `POST /dispatches` (`generate: true` — persisted)
 
 ```json
 {
   "id": "dsp_01H…",
+  "status": "complete",                      /* complete | generating | failed */
+  "fingerprint_hash": "sha256:…",            /* echoed so callers can verify / dedupe client-side */
+  "deduped": false,                          /* true if server returned existing cached record */
   "web_url": "https://entire.io/dispatch/dsp_01H…",
-  "window": {"since": "…", "until": "…"},
+  "window": {
+    "normalized_since": "2026-04-16T14:32:00Z",
+    "normalized_until": "2026-04-16T14:34:00Z",
+    "first_checkpoint_created_at": "…",
+    "last_checkpoint_created_at": "…"
+  },
+  "covered_repos": ["entireio/cli"],          /* frozen at first synthesis — auth boundary */
   "repos": [ /* same shape as --format json output below */ ],
-  "totals": { "checkpoints": 13, "branches": 4, "files_touched": 23 },
-  "warnings": { "unpushed_count": 2, "pending_count": 0, "uncategorized_count": 0 },
-  "generated_text": "…"  /* only when `generate: true` in request; null otherwise */
+  "totals": { "checkpoints": 13, "used_checkpoint_count": 11, "branches": 4, "files_touched": 23 },
+  "warnings": {
+    "access_denied_count": 0,
+    "pending_count": 0,
+    "failed_count": 0,
+    "unknown_count": 0,
+    "uncategorized_count": 0
+  },
+  "generated_text": "…"                        /* present when status: complete */
 }
 ```
+
+#### Response shape for `POST /dispatches` (`generate: false` — NOT persisted, returned inline)
+
+```json
+{
+  "generate": false,
+  "window": {
+    "normalized_since": "2026-04-16T14:32:00Z",
+    "normalized_until": "2026-04-16T14:34:00Z",
+    "first_checkpoint_created_at": "…",
+    "last_checkpoint_created_at": "…"
+  },
+  "repos": [ /* bullets, no covered_repos frozen */ ],
+  "totals": { "checkpoints": 13, "used_checkpoint_count": 11, "branches": 4, "files_touched": 23 },
+  "warnings": { "access_denied_count": 0, "pending_count": 0, "failed_count": 0, "unknown_count": 0, "uncategorized_count": 0 }
+}
+```
+
+Fields explicitly absent on a `generate: false` response: `id`, `fingerprint_hash`, `web_url`, `status`, `deduped`, `generated_text`. Nothing was persisted; there is no URL to visit. Same principle as dry-run, just with `"generate": false` (vs `"dry_run": true`) and real data (rather than a preview).
+
+Counts and bullets on a persisted (generate: true) response reflect the snapshot at synthesis time. Because the fingerprint covers the used-ID set + voice only, subsequent requests with the same used set + voice always return this same snapshot. If the caller wants the current state to be re-evaluated (e.g., a pending checkpoint has since completed), they re-submit; if the used set has changed, a fresh dispatch is produced.
 
 **Workflow for adding new entire.io routes** — the `POST /dispatches` and `GET /orgs/:org/checkpoints` endpoints must be developed in a **new** git worktree whose branch is created off the `analysis-chunk-merge` branch (located at `/Users/alisha/Projects/wt/entire.io/analysis-chunk-merge`). Do **not** make changes on the `analysis-chunk-merge` worktree/branch itself — it is used only as the starting point. Also do not add backend routes from within the CLI repo worktree. Coordination: the CLI spec can merge independently of the server endpoints if the CLI is released without the server flag behavior enabled (or gated behind a feature flag until the server ships).
 
@@ -393,7 +584,7 @@ Rough response shape for the new dispatches endpoint:
 | Auth token expired/revoked | Error: `"login expired — run \`entire login\`"` |
 | `--repos` and `--org` both passed | Error: `"--repos and --org are mutually exclusive"` |
 | `--format json` and `--generate` both passed | Allowed — JSON payload includes a `generated_text` field with the LLM output |
-| `--format json` and `--dry-run` both passed | Allowed — JSON version of dry-run payload (no cloud/LLM calls) |
+| `--format json` and `--dry-run` both passed | Allowed — JSON-shaped dry-run payload. Dry-run still performs access resolution and analysis fetches (required for accurate warnings/counts) but skips fingerprinting, persistence, dedupe, and LLM synthesis. |
 | `--voice` without `--generate` | Error: `"--voice requires --generate"` |
 | `--voice <value>` as a file path that looks like a file but can't be read | Error before any cloud calls. If the value has no path separators and doesn't resolve to a file, it's treated as a literal string (no error). |
 | `--branches <list>` where a listed branch doesn't exist | Warn per missing branch, continue with remaining branches |
@@ -404,8 +595,26 @@ Rough response shape for the new dispatches endpoint:
 ### Unit (`cmd/entire/cli/dispatch/*_test.go`)
 
 - **Mode selection** (`dispatch_test.go`) — `--local` routes to local path, absence routes to server path. Flag combinations (`--repos` without `--local` → error, `--org` allowed in both).
-- **Fallback chain (local mode)** (`fallback_test.go`) — every branch: cloud complete → bullet, cloud pending → skip + count, cloud 404 → unpushed + fall through, cloud failed → fall through, local summary present → bullet, local summary absent + commit → bullet, none of above → omit + count.
-- **Server client** (`server_test.go`) — happy path response parsing, 404/5xx mapping to user-facing errors, auth header, request body shape.
+- **Fallback chain (local mode)** (`fallback_test.go`) — every branch: cloud `complete` → bullet · cloud `pending`/`generating` → skip + `pending_count++` · cloud `unknown` → fall through to local data + `unknown_count++` (explicitly surfaced — see Local path status mapping) · cloud `failed` → fall through + `failed_count++` · cloud `not_visible` → fall through + `access_denied_count++` · local summary present → bullet · local summary absent + commit → bullet · none of above → omit + `uncategorized_count++`. Text-mode rendering assertions for each warning: each non-zero counter produces exactly its documented text-mode line; JSON mode exposes each as `warnings.<name>` at the payload top level.
+- **Authorization contract** (server-side tests, not CLI) — `POST /dispatches` with repo/org outside caller's access returns 404; `GET /dispatches/:id` to a user who currently lacks access to any covered_repo returns 404; batch analyses returns `not_visible` for inaccessible IDs.
+- **Content-addressed fingerprint** (server-side tests for `generate: true`):
+  - (a) Same used-ID set + same voice → `deduped: true`, same id (regardless of caller, window, branches, or scope spelling).
+  - (b) Pending→complete transition that joins the used set → hash changes → new dispatch.
+  - (c) Used checkpoint revoked / removed / flipped to failed → leaves used set → hash changes → new dispatch.
+  - (d) New candidate enters window but stays pending (not used) → hash unchanged → cached dispatch returned (accepted tradeoff — see Decision log).
+  - (e) Analysis reprocessing producing different labels/summary on a used id → hash unchanged → cached dispatch returned (accepted tradeoff).
+  - (f) Different voice (preset vs preset, preset vs literal, literal vs file) → different fingerprints → separate dispatches.
+  - (g) Two different users with the same used set + voice → same dispatch returned to both (shared cache; no `user_id` in key).
+  - (h) Same used set + voice but different scope/window/branches requests → same dispatch returned (scope is NOT in key).
+  - (i) Multi-repo: union of used IDs across repos produces the same hash regardless of iteration order.
+  - (j) **Bullets-only (`generate: false`)** never creates a row: no `id`, no `fingerprint_hash`, no `web_url`, no persistence; test asserts empty dispatches table after N bullets-only POSTs.
+  - (k) **Concurrent generate:true** (N parallel POSTs with same fingerprint): exactly one wins the reservation INSERT; exactly one LLM synthesis occurs; all N responses return the same `id`. Race test counts LLM mock invocations = 1 over N concurrent requests.
+  - (l) Reservation claimant crashes mid-synthesis: sweeper marks abandoned `generating` rows as `failed`; next retry can reserve afresh.
+  - (m) **Window boundary inclusion**: checkpoint created at `14:32:59.500` is included in a request with `until=14:32:47` because `normalized_until` ceils to `14:33:00Z`.
+  - (n) **Dry-run response shape** — `dry_run: true` responses include `dry_run: true` and `requested_generate: <echoed boolean>`, and MUST NOT include `id`, `web_url`, `fingerprint_hash`, `status`, `deduped`, or `generated_text`. No dispatches row is created. Both `dry_run+generate:true` and `dry_run+generate:false` variants tested; LLM mock call count = 0 in both.
+  - (o) **Bullets-only response shape** — `generate: false` non-dry-run responses include `"generate": false` and MUST NOT include `id`, `web_url`, `fingerprint_hash`, `status`, `deduped`, or `generated_text`. No row created.
+  - (p) **Client preview/bullets parsing** — CLI and web frontend branch on `dry_run`/`generate` in the response and never attempt to navigate to `/dispatches/:id` or store an id when no `id` field is present, even if a buggy server leaks one.
+- **Server client** (`server_test.go`) — happy path response parsing, 404/5xx mapping to user-facing errors, auth header, request body shape. **Warnings parsing coverage**: for each counter (`access_denied_count`, `pending_count`, `failed_count`, `unknown_count`, `uncategorized_count`), feed a mocked server response with that counter non-zero; assert the client exposes it correctly; assert the text renderer emits exactly the documented line (e.g. non-zero `unknown_count` → `ℹ N checkpoints not known to the server` line appears); assert the JSON passthrough preserves the field at `warnings.<name>`. These tests cover the default (server) mode end-to-end, not only the local-mode fallback.
 - **Section grouping** (`render_test.go`) — checkpoints with labels group by label; checkpoints without labels go into flat "Updates"; mixed case (some with labels, some without) — labeled group normally, unlabeled land in "Updates".
 - **`--since` parsing** — Go durations, git-style relative, ISO dates, invalid inputs.
 - **`--branches` parsing** — single branch, multiple branches, `all`/`*` wildcard, missing branch warnings.
@@ -436,6 +645,10 @@ Rough response shape for the new dispatches endpoint:
 3. **Voice preset library** — v1 ships `neutral` and `marvin`. Future candidates: `plain`, `changelog`, `standup`, `release-notes`. Presets are plain markdown files in `cmd/entire/cli/dispatch/voices/`, embedded at build time; adding one is a code-free-ish drop-in. User-defined saved voices (e.g., `~/.config/entire/voices/`) deferred to post-v1.
 4. **"Since last dispatch" mode** — currently user has to remember `--since` value. A `--since last-dispatch` mode that reads a timestamp from `.entire/state/last-dispatch` could be nice. Deferred to post-v1.
 5. **Additional output formats** — current spec covers `text` (default) and `markdown`. Future candidates: `html` (email-ready), `rss` (for feed-driven newsletters), `slack` (Slack-flavored markdown). Deferred to post-v1.
+6. **Local push-state nudging** — v1 does not try to detect or warn about locally-committed-but-unpushed checkpoints. Client-side `git rev-list` against a remote-tracking ref is not authoritative (stale refs, hardcoded `origin`, no upstream), so any such nudge would be unreliable. Could be reintroduced in a later version if users report wanting it, via the branch's configured upstream and an explicit `git fetch` first.
+7. **LLM-reshuffle affordance** — with the content-addressed fingerprint, re-submitting `POST /dispatches` returns the cached record when used-ID set + voice are unchanged. The "I want a different LLM wording with exactly the same inputs" case has a workaround today (tweak the voice). If users report wanting an explicit "reshuffle" button, revisit by adding a caller-scoped bypass-dedupe flag. Intentionally deferred — cache semantics are clean without it.
+8. **Personal feed / history** — v1 has no per-user dispatch history. Users navigate to repo/org dispatch pages and see all dispatches whose covered_repos they currently have access to. If user feedback asks for "my dispatches" (e.g. "show me what I've submitted recently"), add a lightweight server-side submissions-log (many-to-many between user and dispatch) in a later version. Adding this later is non-breaking.
+9. **DELETE** — no DELETE endpoint in v1. Server GC by age (operational default 90 days) is the retention mechanism. If a concrete need emerges (e.g. sensitive content accidentally included), add a policy-reviewed admin-only DELETE or a pull-from-cache operation.
 
 ## Interactive wizard
 
