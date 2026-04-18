@@ -712,89 +712,93 @@ func TestResolveCheckpointFetchTarget_FallsBackOnError(t *testing.T) {
 	assert.Equal(t, "origin", target)
 }
 
+// setupRepoWithBlobOnMetadataBranch creates a repo with a blob committed on
+// entire/checkpoints/v1, checks out the default branch, and returns
+// (repoDir, blobHash) for tests that need a reachable blob on the metadata branch.
+func setupRepoWithBlobOnMetadataBranch(t *testing.T) (string, plumbing.Hash) {
+	t.Helper()
+	dir := t.TempDir()
+	testutil.InitRepo(t, dir)
+	testutil.WriteFile(t, dir, "f.txt", "init")
+	testutil.GitAdd(t, dir, "f.txt")
+	testutil.GitCommit(t, dir, "init")
+
+	defaultBranch := gitDefaultBranch(t, dir)
+
+	gitRun(t, dir, "checkout", "--orphan", "entire/checkpoints/v1")
+	gitRun(t, dir, "rm", "-rf", ".")
+	testutil.WriteFile(t, dir, "ab/cdef123456/metadata.json", `{"checkpoint_id": "abcdef123456"}`)
+	testutil.GitAdd(t, dir, "ab/cdef123456/metadata.json")
+	gitRun(t, dir, "-c", "commit.gpgsign=false", "commit", "-m", "Checkpoint: abcdef123456")
+
+	blobHash := plumbing.NewHash(gitOutput(t, dir, "rev-parse", "HEAD:ab/cdef123456/metadata.json"))
+
+	gitRun(t, dir, "checkout", defaultBranch)
+	return dir, blobHash
+}
+
 // Not parallel: uses t.Chdir()
-// Tests that FetchBlobsByHash succeeds when origin lacks the metadata branch
-// but a checkpoint_remote is configured that has the blobs.
-// This is the bug scenario: origin = entireio/cli (no checkpoints),
-// checkpoint_remote = entireio/cli-checkpoints (has checkpoints).
-func TestFetchBlobsByHash_UsesCheckpointRemote(t *testing.T) {
+// Tests basic FetchBlobsByHash mechanics: when the resolved fetch target has
+// the blob, the function brings it into the local object store.
+// Target selection is tested separately in TestResolveCheckpointFetchTarget_*.
+func TestFetchBlobsByHash_FetchesMissingBlob(t *testing.T) {
 	ctx := context.Background()
 
-	// --- Set up "checkpoint remote" repo with a blob on the metadata branch ---
-	checkpointDir := t.TempDir()
-	testutil.InitRepo(t, checkpointDir)
-	testutil.WriteFile(t, checkpointDir, "f.txt", "init")
-	testutil.GitAdd(t, checkpointDir, "f.txt")
-	testutil.GitCommit(t, checkpointDir, "init")
+	remoteDir, blobHash := setupRepoWithBlobOnMetadataBranch(t)
 
-	defaultBranch := gitDefaultBranch(t, checkpointDir)
-
-	// Create orphan entire/checkpoints/v1 branch with a blob
-	gitRun(t, checkpointDir, "checkout", "--orphan", "entire/checkpoints/v1")
-	gitRun(t, checkpointDir, "rm", "-rf", ".")
-
-	testutil.WriteFile(t, checkpointDir, "ab/cdef123456/metadata.json", `{"checkpoint_id": "abcdef123456"}`)
-	testutil.GitAdd(t, checkpointDir, "ab/cdef123456/metadata.json")
-	gitRun(t, checkpointDir, "-c", "commit.gpgsign=false", "commit", "-m", "Checkpoint: abcdef123456")
-
-	// Get blob hash
-	blobHash := gitOutput(t, checkpointDir, "rev-parse", "HEAD:ab/cdef123456/metadata.json")
-
-	gitRun(t, checkpointDir, "checkout", defaultBranch)
-
-	// --- Set up "origin" repo WITHOUT metadata branch ---
-	originDir := t.TempDir()
-	testutil.InitRepo(t, originDir)
-	testutil.WriteFile(t, originDir, "f.txt", "init")
-	testutil.GitAdd(t, originDir, "f.txt")
-	testutil.GitCommit(t, originDir, "init")
-
-	// --- Set up local repo ---
 	localDir := t.TempDir()
 	testutil.InitRepo(t, localDir)
 	testutil.WriteFile(t, localDir, "f.txt", "init")
 	testutil.GitAdd(t, localDir, "f.txt")
 	testutil.GitCommit(t, localDir, "init")
 
-	// Origin points to the repo WITHOUT checkpoints
+	// Origin is the remote that has the blob. With no checkpoint_remote
+	// configured, resolveCheckpointFetchTarget returns "origin".
+	gitRun(t, localDir, "remote", "add", "origin", remoteDir)
+
+	t.Chdir(localDir)
+
+	// Precondition: blob is not local
+	localRepo, err := git.PlainOpen(localDir)
+	require.NoError(t, err)
+	require.Error(t, localRepo.Storer.HasEncodedObject(blobHash), "blob should not exist locally before fetch")
+
+	// Fetch succeeds; blob lands in local store
+	require.NoError(t, FetchBlobsByHash(ctx, []plumbing.Hash{blobHash}))
+
+	freshRepo, err := git.PlainOpen(localDir)
+	require.NoError(t, err)
+	require.NoError(t, freshRepo.Storer.HasEncodedObject(blobHash), "blob should exist locally after fetch")
+}
+
+// Not parallel: uses t.Chdir()
+// Tests that FetchBlobsByHash returns an error when the blob is unreachable
+// from the resolved target and both fallback fetches fail.
+func TestFetchBlobsByHash_FailsWhenBlobUnreachable(t *testing.T) {
+	ctx := context.Background()
+
+	// Origin has no metadata branch, no blobs
+	originDir := t.TempDir()
+	testutil.InitRepo(t, originDir)
+	testutil.WriteFile(t, originDir, "f.txt", "init")
+	testutil.GitAdd(t, originDir, "f.txt")
+	testutil.GitCommit(t, originDir, "init")
+
+	localDir := t.TempDir()
+	testutil.InitRepo(t, localDir)
+	testutil.WriteFile(t, localDir, "f.txt", "init")
+	testutil.GitAdd(t, localDir, "f.txt")
+	testutil.GitCommit(t, localDir, "init")
+
 	gitRun(t, localDir, "remote", "add", "origin", originDir)
 
 	t.Chdir(localDir)
 
-	hash := plumbing.NewHash(blobHash)
+	// Arbitrary hash nobody has
+	unreachable := plumbing.NewHash("deadbeefdeadbeefdeadbeefdeadbeefdeadbeef")
 
-	// Verify blob doesn't exist locally
-	localRepo, err := git.PlainOpen(localDir)
-	require.NoError(t, err)
-	require.Error(t, localRepo.Storer.HasEncodedObject(hash), "blob should not exist locally before fetch")
-
-	// With origin pointing to a repo without checkpoints, FetchBlobsByHash should fail
-	err = FetchBlobsByHash(ctx, []plumbing.Hash{hash})
-	require.Error(t, err, "FetchBlobsByHash should fail when origin lacks the blob and no checkpoint_remote")
-
-	// Now add the checkpoint remote as a second remote and fetch the metadata branch
-	// from it so the blob becomes reachable via that remote.
-	gitRun(t, localDir, "remote", "add", "checkpoint", checkpointDir)
-	gitRun(t, localDir, "fetch", "checkpoint", "entire/checkpoints/v1:entire/checkpoints/v1")
-
-	// FetchBlobsByHash still uses hardcoded "origin" — so even though the blob is
-	// on the checkpoint remote, it can't find it. This test verifies the fix:
-	// after updating FetchBlobsByHash to use resolveCheckpointFetchTarget,
-	// it should try the checkpoint remote URL when origin fails.
-	//
-	// For this test to work end-to-end, we configure settings to point to the
-	// checkpoint dir. Since origin is a local path, ResolveCheckpointRemoteURL
-	// can't derive a URL. Instead we test at a lower level: replace origin URL
-	// with the checkpoint dir to simulate what resolveCheckpointFetchTarget does.
-	gitRun(t, localDir, "remote", "set-url", "origin", checkpointDir)
-
-	err = FetchBlobsByHash(ctx, []plumbing.Hash{hash})
-	require.NoError(t, err, "FetchBlobsByHash should succeed when origin has the blob")
-
-	// Verify blob is now local
-	freshRepo, err := git.PlainOpen(localDir)
-	require.NoError(t, err)
-	assert.NoError(t, freshRepo.Storer.HasEncodedObject(hash), "blob should exist locally after fetch")
+	err := FetchBlobsByHash(ctx, []plumbing.Hash{unreachable})
+	require.Error(t, err, "FetchBlobsByHash should fail when blob is unreachable and no fallback succeeds")
 }
 
 // gitRun runs a git command in dir and fails the test on error.
