@@ -692,6 +692,7 @@ for you and (optionally) create a matching GitHub repository via the gh CLI.`,
 			// settings files that setup writes.
 			var bootstrap *bootstrapState
 			if _, err := paths.WorktreeRoot(ctx); err != nil {
+				bootstrapOpts.Yes = opts.Yes
 				state, bootstrapErr := runGitHubBootstrapInit(ctx, cmd.OutOrStdout(), cmd.ErrOrStderr(), bootstrapOpts)
 				if errors.Is(bootstrapErr, errBootstrapDeclined) {
 					fmt.Fprintln(cmd.ErrOrStderr(), "Not a git repository. Please run 'entire enable' from within a git repository, or pass --init-repo to initialize one here.")

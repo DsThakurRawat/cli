@@ -41,6 +41,10 @@ type GitHubBootstrapOptions struct {
 	// user can commit themselves. The GitHub repo (if requested) is
 	// still created, but nothing is pushed.
 	SkipInitialCommit bool
+	// Yes accepts all defaults without prompting: init repo, create GitHub
+	// repo under the user's account (private), default commit message.
+	// Explicit flags (--no-github, --repo-owner, etc.) take precedence.
+	Yes bool
 }
 
 // bootstrapRunner executes external commands. Tests override this to avoid
@@ -176,7 +180,7 @@ func runGitHubBootstrapInitWith(ctx context.Context, w, errW io.Writer, opts Git
 	// prompts. Skip the confirm when any gh-specific flag is set (the flag
 	// implies intent) or when we're non-interactive (keep the documented
 	// happy path: default to yes).
-	if useGitHub && !ghFlagsProvided(opts) && interactive.CanPromptInteractively() {
+	if useGitHub && !opts.Yes && !ghFlagsProvided(opts) && interactive.CanPromptInteractively() {
 		confirmed, err := confirmCreateGitHubRepo()
 		if err != nil {
 			return nil, err
@@ -333,7 +337,7 @@ func confirmInitRepo(_ io.Writer, cwd string, opts GitHubBootstrapOptions) (bool
 	if opts.NoInitRepo {
 		return false, nil
 	}
-	if opts.InitRepo {
+	if opts.InitRepo || opts.Yes {
 		return true, nil
 	}
 	if !interactive.CanPromptInteractively() {
@@ -404,7 +408,7 @@ func resolveOwner(w io.Writer, currentUser string, orgs []string, opts GitHubBoo
 		// enumerate (e.g. missing read:org scope).
 		return opts.RepoOwner, nil
 	}
-	if len(owners) == 1 {
+	if len(owners) == 1 || opts.Yes {
 		fmt.Fprintf(w, "Using GitHub owner: %s\n", currentUser)
 		return currentUser, nil
 	}
@@ -450,7 +454,7 @@ func resolveRepoName(ctx context.Context, w, errW io.Writer, runner bootstrapRun
 		return opts.RepoName, nil
 	}
 
-	if !interactive.CanPromptInteractively() {
+	if opts.Yes || !interactive.CanPromptInteractively() {
 		return suggested, nil
 	}
 
@@ -508,7 +512,7 @@ func resolveVisibility(owner, currentUser string, opts GitHubBootstrapOptions) (
 			return "", fmt.Errorf("invalid visibility %q: must be one of public, private, internal", opts.RepoVisibility)
 		}
 	}
-	if !interactive.CanPromptInteractively() {
+	if opts.Yes || !interactive.CanPromptInteractively() {
 		return visibilityPrivate, nil
 	}
 
@@ -550,7 +554,7 @@ func resolveCommitMessage(opts GitHubBootstrapOptions) (string, bool, error) {
 	if opts.InitialCommitMessage != "" {
 		return opts.InitialCommitMessage, true, nil
 	}
-	if !interactive.CanPromptInteractively() {
+	if opts.Yes || !interactive.CanPromptInteractively() {
 		return defaultMsg, true, nil
 	}
 

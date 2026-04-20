@@ -1034,3 +1034,85 @@ func restoreCwd(t *testing.T, dir string) {
 	}
 	t.Chdir(canon)
 }
+
+func TestRunGitHubBootstrap_YesAcceptsAllDefaults(t *testing.T) {
+	// --yes should init repo, create GitHub repo under user's account (private),
+	// and use default commit message — without any interactive prompts.
+	t.Setenv("ENTIRE_TEST_TTY", "0") // non-interactive
+	dir := t.TempDir()
+	restoreCwd(t, dir)
+
+	r := newFakeRunner()
+	r.setIdentityConfigured()
+	r.set("gh", []string{"--version"}, "gh 2.81.0", nil)
+	r.set("gh", []string{"auth", "status"}, "Logged in", nil)
+	r.set("gh", []string{"api", "user", "--jq", ".login"}, "myuser\n", nil)
+	r.set("gh", []string{"api", "user/orgs", "--jq", ".[].login"}, "myorg\n", nil)
+	r.set("git", []string{"init"}, "", nil)
+	r.set("git", []string{"add", "-A"}, "", nil)
+	r.set("git", []string{"status", "--porcelain"}, " M f\n", nil)
+	r.set("git", []string{"-c", "commit.gpgsign=false", "commit", "-m", "Initial commit"}, "", nil)
+
+	// Expect repo created under the user's account (not org), private
+	repoName := filepath.Base(dir)
+	fullName := "myuser/" + repoName
+	r.set("gh", []string{
+		"repo", "create", fullName,
+		"--private",
+		"--source=.",
+		"--remote=origin",
+	}, "", nil)
+	r.set("git", []string{"push", "-q", "--no-verify", "-u", "origin", "HEAD"}, "", nil)
+
+	opts := GitHubBootstrapOptions{Yes: true}
+	var stdout bytes.Buffer
+	err := runGitHubBootstrapWith(context.Background(), &stdout, io.Discard, opts, r)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Should have used user's account, not org
+	output := stdout.String()
+	if !strings.Contains(output, "Using GitHub owner: myuser") {
+		t.Errorf("expected owner to be user's account, got: %s", output)
+	}
+	// Should have committed with default message
+	if !r.hasCall(argsMatch("git", []string{"-c", "commit.gpgsign=false", "commit", "-m", "Initial commit"})) {
+		t.Error("expected commit with default 'Initial commit' message")
+	}
+	// Should have created the repo
+	if !r.hasCall(func(c fakeCall) bool {
+		return c.name == "gh" && len(c.args) > 3 && c.args[0] == ghSubcmdRepo && c.args[1] == ghActCreate
+	}) {
+		t.Error("expected gh repo create call")
+	}
+}
+
+func TestRunGitHubBootstrap_YesWithNoGitHub(t *testing.T) {
+	// --yes combined with --no-github should skip GitHub but still init + commit.
+	t.Setenv("ENTIRE_TEST_TTY", "0")
+	dir := t.TempDir()
+	restoreCwd(t, dir)
+
+	r := newFakeRunner()
+	r.setIdentityConfigured()
+	r.set("git", []string{"init"}, "", nil)
+	r.set("git", []string{"add", "-A"}, "", nil)
+	r.set("git", []string{"status", "--porcelain"}, " M f\n", nil)
+	r.set("git", []string{"-c", "commit.gpgsign=false", "commit", "-m", "Initial commit"}, "", nil)
+
+	opts := GitHubBootstrapOptions{Yes: true, NoGitHub: true}
+	err := runGitHubBootstrapWith(context.Background(), io.Discard, io.Discard, opts, r)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Should NOT have called gh at all
+	if r.hasCall(func(c fakeCall) bool { return c.name == "gh" }) {
+		t.Error("expected no gh calls with --no-github")
+	}
+	// Should have committed
+	if !r.hasCall(argsMatch("git", []string{"-c", "commit.gpgsign=false", "commit", "-m", "Initial commit"})) {
+		t.Error("expected commit with default message")
+	}
+}
