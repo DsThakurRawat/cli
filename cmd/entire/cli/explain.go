@@ -60,6 +60,14 @@ func generateOrRawLabel(generate bool) string {
 	return "show raw transcript"
 }
 
+// printNoTrailerMessage renders the friendly message shown when a resolved
+// commit has no Entire-Checkpoint trailer in read-only modes.
+func printNoTrailerMessage(w io.Writer, shortSHA string) {
+	fmt.Fprintln(w, "No associated Entire checkpoint")
+	fmt.Fprintf(w, "\nCommit %s does not have an Entire-Checkpoint trailer.\n", shortSHA)
+	fmt.Fprintln(w, "This commit was not created during an Entire session, or the trailer was removed.")
+}
+
 // interaction holds a single prompt and its responses for display.
 type interaction struct {
 	Prompt    string
@@ -308,16 +316,12 @@ func runExplainAuto(ctx context.Context, w, errW io.Writer, target string, noPag
 	}
 	cpID, hasCheckpoint := trailers.ParseCheckpoint(commit.Message)
 	if !hasCheckpoint {
-		// --generate/--raw-transcript explicitly ask for checkpoint work. If
-		// the resolved commit has no trailer there is nothing to generate
-		// against, so error instead of silently succeeding (which would leave
-		// scripts unable to distinguish "done" from "didn't happen").
+		// Side-effect modes must error — silently succeeding would leave
+		// scripts unable to distinguish "done" from "didn't happen".
 		if generate || rawTranscript {
 			return fmt.Errorf("cannot %s: commit %s has no Entire-Checkpoint trailer", generateOrRawLabel(generate), hash.String()[:7])
 		}
-		fmt.Fprintln(w, "No associated Entire checkpoint")
-		fmt.Fprintf(w, "\nCommit %s does not have an Entire-Checkpoint trailer.\n", hash.String()[:7])
-		fmt.Fprintln(w, "This commit was not created during an Entire session, or the trailer was removed.")
+		printNoTrailerMessage(w, hash.String()[:7])
 		return nil
 	}
 	logging.Debug(ctx, "explain auto: resolved commit to checkpoint via trailer",
@@ -331,34 +335,30 @@ func runExplainAuto(ctx context.Context, w, errW io.Writer, target string, noPag
 // is ambiguous between a git revision and a committed-checkpoint prefix.
 // Writing a summary via --generate mutates checkpoint state, so silently
 // picking one interpretation could persist AI content onto the wrong
-// checkpoint. Read-only flows tolerate the same ambiguity by preferring the
-// checkpoint interpretation; users who hit a collision there can re-run with
-// --commit or --checkpoint.
+// checkpoint. Read-only flows tolerate the ambiguity by preferring the
+// checkpoint path.
 //
-// The guard is best-effort: failures to open the repo or list checkpoints
-// return nil so normal error reporting downstream still produces useful
-// messages — this function's job is to detect a clear collision, not to
-// replace the main resolution flow.
+// Best-effort: on repo/list failures we return nil and let the main flow
+// surface the real error instead of double-reporting.
 func runExplainAutoAmbiguityGuard(ctx context.Context, target string) error {
-	// The guard intentionally swallows errors on the "can't check" paths and
-	// returns nil so the main flow handles them. Downstream code (openRepo in
-	// runExplainCheckpoint, listCommittedForExplain call inside it, etc.) will
-	// produce the appropriate user-facing error. Returning those errors here
-	// would double-report and mask the real resolution path.
+	// Targets longer than a checkpoint ID can't prefix-match one, so no
+	// collision is possible — skip the git walk.
+	if len(target) > id.ShortIDLength {
+		return nil
+	}
 	repo, err := openRepository(ctx)
 	if err != nil {
-		return nil //nolint:nilerr // intentional: best-effort guard, main flow handles repo errors
+		return nil //nolint:nilerr // best-effort guard
 	}
-	hash, gitErr := repo.ResolveRevision(plumbing.Revision(target))
-	if gitErr != nil {
-		return nil //nolint:nilerr // intentional: target isn't a git ref → no collision possible
+	hash, err := repo.ResolveRevision(plumbing.Revision(target))
+	if err != nil {
+		return nil //nolint:nilerr // target isn't a git ref
 	}
 	v1Store := checkpoint.NewGitStore(repo)
 	v2Store := checkpoint.NewV2GitStore(repo, strategy.ResolveCheckpointURL(ctx, "origin"))
-	preferV2 := settings.IsCheckpointsV2Enabled(ctx)
-	committed, err := listCommittedForExplain(ctx, v1Store, v2Store, preferV2)
+	committed, err := listCommittedForExplain(ctx, v1Store, v2Store, settings.IsCheckpointsV2Enabled(ctx))
 	if err != nil {
-		return nil //nolint:nilerr // intentional: if we can't enumerate, main flow will surface the real failure
+		return nil //nolint:nilerr // best-effort guard
 	}
 	for _, info := range committed {
 		if strings.HasPrefix(info.CheckpointID.String(), target) {
@@ -1772,16 +1772,12 @@ func runExplainCommit(ctx context.Context, w, errW io.Writer, commitRef string, 
 	// Extract Entire-Checkpoint trailer
 	checkpointID, hasCheckpoint := trailers.ParseCheckpoint(commit.Message)
 	if !hasCheckpoint {
-		// --generate/--raw-transcript explicitly ask for checkpoint work;
-		// silently succeeding would leave scripts unable to tell success
-		// from no-op. Match runExplainAuto's behavior for trailer-less
-		// commits in those modes.
+		// Side-effect modes must error so scripts can distinguish "done"
+		// from "didn't happen"; read-only modes print a friendly message.
 		if generate || rawTranscript {
 			return fmt.Errorf("cannot %s: commit %s has no Entire-Checkpoint trailer", generateOrRawLabel(generate), hash.String()[:7])
 		}
-		fmt.Fprintln(w, "No associated Entire checkpoint")
-		fmt.Fprintf(w, "\nCommit %s does not have an Entire-Checkpoint trailer.\n", hash.String()[:7])
-		fmt.Fprintln(w, "This commit was not created during an Entire session, or the trailer was removed.")
+		printNoTrailerMessage(w, hash.String()[:7])
 		return nil
 	}
 

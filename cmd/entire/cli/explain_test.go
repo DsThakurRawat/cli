@@ -237,28 +237,21 @@ func TestExplainCmd_PositionalArgConflictsWithFlags(t *testing.T) {
 }
 
 // runExplainAutoTestRepo seeds a git repo and returns the initial commit's hash.
-// It configures the repo the way testutil.InitRepo does and matches the setup
-// used by the surrounding TestRunExplainCheckpoint_* tests so the auto-path
-// tests exercise the same production code paths.
 func runExplainAutoTestRepo(t *testing.T) (repo *git.Repository, initialCommit plumbing.Hash) {
 	t.Helper()
 	tmpDir := t.TempDir()
 	t.Chdir(tmpDir)
 
 	testutil.InitRepo(t, tmpDir)
-	repoOpened, err := git.PlainOpen(tmpDir)
-	require.NoError(t, err)
+	testutil.WriteFile(t, tmpDir, "seed.txt", "seed")
+	testutil.GitAdd(t, tmpDir, "seed.txt")
+	testutil.GitCommit(t, tmpDir, "seed commit")
 
-	wt, err := repoOpened.Worktree()
+	opened, err := git.PlainOpen(tmpDir)
 	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, "seed.txt"), []byte("seed"), 0o644))
-	_, err = wt.Add("seed.txt")
+	head, err := opened.Head()
 	require.NoError(t, err)
-	initial, err := wt.Commit("seed commit", &git.CommitOptions{
-		Author: &object.Signature{Name: "Test", Email: "test@example.com", When: time.Now()},
-	})
-	require.NoError(t, err)
-	return repoOpened, initial
+	return opened, head.Hash()
 }
 
 // TestRunExplainAuto_ChecksPositionalCheckpointIDFirst verifies that a
@@ -427,36 +420,16 @@ func TestRunExplainAuto_GenerateAmbiguousPrefixRefused(t *testing.T) {
 	repo, _ := runExplainAutoTestRepo(t)
 	ctx := context.Background()
 
-	// Seed a committed checkpoint whose ID starts with a common hex prefix.
-	cpID := id.MustCheckpointID("abcdef123456")
-	v1Store := checkpoint.NewGitStore(repo)
-	require.NoError(t, v1Store.WriteCommitted(ctx, checkpoint.WriteCommittedOptions{
-		CheckpointID: cpID,
-		SessionID:    "session-ambiguous",
-		Strategy:     "manual-commit",
-		Transcript:   redact.AlreadyRedacted([]byte(`{"type":"user","message":{"content":[{"type":"text","text":"hi"}]}}` + "\n")),
-		AuthorName:   "Test",
-		AuthorEmail:  "test@example.com",
-	}))
-
-	// Find a short prefix that resolves as a git revision (the initial
-	// seed commit's SHA abbreviation) AND also prefix-matches the
-	// checkpoint ID. We construct this by using the first few chars of
-	// the commit SHA; git can resolve 4+ char unique abbreviations.
-	wt, err := repo.Worktree()
-	require.NoError(t, err)
+	// Build a checkpoint ID whose prefix matches the seed commit's SHA so
+	// the positional arg resolves as both a git revision AND a committed-
+	// checkpoint prefix. SHA mining isn't practical here, so we pick a
+	// collision-able ID by prefixing with the real commit's abbreviation.
 	head, err := repo.Head()
 	require.NoError(t, err)
 	commitPrefix := head.Hash().String()[:7]
-	require.NotEmpty(t, commitPrefix)
-
-	// To create a real collision, make a new commit whose SHA we force-
-	// select to start with "abcdef". That's impractical without SHA
-	// mining, so instead we rename the checkpoint prefix to match the
-	// real commit prefix we have.
-	_ = wt
 	collisionID := id.MustCheckpointID(commitPrefix + "aaaaa") // 7 + 5 = 12 chars
-	require.NoError(t, v1Store.WriteCommitted(ctx, checkpoint.WriteCommittedOptions{
+
+	require.NoError(t, checkpoint.NewGitStore(repo).WriteCommitted(ctx, checkpoint.WriteCommittedOptions{
 		CheckpointID: collisionID,
 		SessionID:    "session-collision",
 		Strategy:     "manual-commit",
