@@ -1490,11 +1490,11 @@ func TestHandleTurnEnd_V2UsesExternalTranscriptCompactor(t *testing.T) {
 	state.TurnCheckpointIDs = nil
 	require.NoError(t, s.saveSessionState(context.Background(), state))
 
-	cpIDStr := "a1b2c3d4e5f6"
+	cpIDStr := testTrailerCheckpointID.String()
 	commitWithCheckpointTrailer(t, repo, dir, cpIDStr)
 	require.NoError(t, s.PostCommit(context.Background()))
 
-	cpID := id.MustCheckpointID(cpIDStr)
+	cpID := testTrailerCheckpointID
 	v2Store := checkpoint.NewV2GitStore(repo, ResolveCheckpointURL(context.Background(), "origin"))
 	initialCompact, err := v2Store.ReadSessionCompactTranscript(context.Background(), cpID, 0)
 	require.NoError(t, err)
@@ -1587,11 +1587,11 @@ func TestHandleTurnEnd_V2ExternalTranscriptCompactor_SkipsNonZeroCompactOffset(t
 	v2Store := checkpoint.NewV2GitStore(repo, ResolveCheckpointURL(context.Background(), "origin"))
 	initialCompact1, err := v2Store.ReadSessionCompactTranscript(context.Background(), id.MustCheckpointID(cpID1), 0)
 	require.NoError(t, err)
-	require.Equal(t, []byte("{\"v\":1,\"type\":\"assistant\",\"text\":\"checkpoint-1\"}\n"), initialCompact1)
+	require.JSONEq(t, "{\"v\":1,\"type\":\"assistant\",\"text\":\"checkpoint-1\"}\n", string(initialCompact1))
 
 	initialCompact2, err := v2Store.ReadSessionCompactTranscript(context.Background(), id.MustCheckpointID(cpID2), 0)
 	require.NoError(t, err)
-	require.Equal(t, []byte("{\"v\":1,\"type\":\"assistant\",\"text\":\"checkpoint-2\"}\n"), initialCompact2)
+	require.JSONEq(t, "{\"v\":1,\"type\":\"assistant\",\"text\":\"checkpoint-2\"}\n", string(initialCompact2))
 
 	updatedTranscript := `{"type":"human","message":{"content":"build something"}}
 {"type":"assistant","message":{"content":"done building"}}
