@@ -253,28 +253,12 @@ func runExplain(ctx context.Context, w, errW io.Writer, sessionID, commitRef, ch
 	return runExplainBranchWithFilter(ctx, w, noPager, sessionID)
 }
 
-// runExplainAuto resolves a target string as either a checkpoint ID (or prefix)
-// or a git commit ref, then delegates to the checkpoint detail view.
-//
-// Resolution order:
-//  1. When --generate is set, pre-check for ambiguity: if the target
-//     both resolves as a git revision AND prefix-matches a committed
-//     checkpoint, refuse rather than silently persist a summary onto a
-//     checkpoint the user may not have meant.
-//  2. Try the checkpoint path (committed checkpoints, then shadow-branch
-//     temporary checkpoints). This preserves short-prefix matching for
-//     checkpoint IDs.
-//  3. On checkpoint.ErrCheckpointNotFound, resolve the target as a git
-//     commit ref and follow its Entire-Checkpoint trailer.
-//
-// errCannotGenerateTemporaryCheckpoint (returned when --generate hits a
-// real temp checkpoint) does NOT trigger fallback — the commit path would
-// give a misleading "no trailer" error for the shadow-branch commit.
-//
-// When a resolved commit has no Entire-Checkpoint trailer, a friendly
-// message is printed and nil is returned for read-only modes; --generate
-// or --raw-transcript surfaces an error instead to avoid silently
-// succeeding without doing the requested work.
+// runExplainAuto resolves a positional target as either a checkpoint ID
+// (or prefix) or a git commit ref. Ordering: checkpoint path first (which
+// also handles shadow-branch temp checkpoints), falling back to commit
+// resolution only on checkpoint.ErrCheckpointNotFound. --generate runs
+// an ambiguity pre-check to avoid writing a summary to the wrong
+// checkpoint on short-prefix collisions.
 func runExplainAuto(ctx context.Context, w, errW io.Writer, target string, noPager, verbose, full, rawTranscript, generate, force, searchAll bool) error {
 	if generate {
 		if err := runExplainAutoAmbiguityGuard(ctx, target); err != nil {
@@ -331,18 +315,15 @@ func runExplainAuto(ctx context.Context, w, errW io.Writer, target string, noPag
 	return runExplainCheckpoint(ctx, w, errW, cpID.String(), noPager, verbose, full, rawTranscript, generate, force, searchAll)
 }
 
-// runExplainAutoAmbiguityGuard refuses --generate when the positional target
-// is ambiguous between a git revision and a committed-checkpoint prefix.
-// Writing a summary via --generate mutates checkpoint state, so silently
-// picking one interpretation could persist AI content onto the wrong
-// checkpoint. Read-only flows tolerate the ambiguity by preferring the
-// checkpoint path.
+// runExplainAutoAmbiguityGuard refuses --generate when the positional
+// target resolves as both a git revision and a committed-checkpoint prefix.
+// Writing a summary to the wrong checkpoint is destructive; read-only flows
+// tolerate the same ambiguity by preferring the checkpoint path.
 //
-// Best-effort: on repo/list failures we return nil and let the main flow
-// surface the real error instead of double-reporting.
+// Best-effort: on repo/list failures we return nil so the main flow
+// surfaces the real error instead of double-reporting.
 func runExplainAutoAmbiguityGuard(ctx context.Context, target string) error {
-	// Targets longer than a checkpoint ID can't prefix-match one, so no
-	// collision is possible — skip the git walk.
+	// Targets longer than a checkpoint ID can't prefix-match one.
 	if len(target) > id.ShortIDLength {
 		return nil
 	}

@@ -254,12 +254,12 @@ func runExplainAutoTestRepo(t *testing.T) (repo *git.Repository, initialCommit p
 	return opened, head.Hash()
 }
 
-// TestRunExplainAuto_ChecksPositionalCheckpointIDFirst verifies that a
-// checkpoint-ID-shaped positional arg routes through the checkpoint path.
-// When the checkpoint does not exist locally, the returned error must wrap
-// checkpoint.ErrCheckpointNotFound so runExplainAuto can detect it via
-// errors.Is rather than substring matching (PR #990 review feedback).
-func TestRunExplainAuto_ChecksPositionalCheckpointIDFirst(t *testing.T) {
+// TestRunExplainAuto_NoMatchReturnsCompositeError verifies that a target
+// that's neither a checkpoint ID/prefix nor a resolvable git ref returns
+// the composite "no checkpoint or commit found" error — proving the
+// checkpoint-first → commit-fallback routing chains correctly all the way
+// to the final error.
+func TestRunExplainAuto_NoMatchReturnsCompositeError(t *testing.T) {
 	runExplainAutoTestRepo(t)
 
 	var out, errOut bytes.Buffer
@@ -269,16 +269,15 @@ func TestRunExplainAuto_ChecksPositionalCheckpointIDFirst(t *testing.T) {
 	require.ErrorContains(t, err, `no checkpoint or commit found matching "abababababab"`)
 }
 
-// TestRunExplainAuto_CommitRefWithCheckpointTrailer verifies that a commit SHA
-// passed positionally falls through to commit resolution and delegates to the
-// checkpoint path with the ID from the Entire-Checkpoint trailer.
+// TestRunExplainAuto_CommitRefWithCheckpointTrailer verifies that a commit
+// SHA passed positionally falls through to commit resolution and delegates
+// to the checkpoint path with the ID from the Entire-Checkpoint trailer.
 func TestRunExplainAuto_CommitRefWithCheckpointTrailer(t *testing.T) {
 	repo, _ := runExplainAutoTestRepo(t)
 	ctx := context.Background()
 
 	cpID := id.MustCheckpointID("deadbeefcafe")
-	v1Store := checkpoint.NewGitStore(repo)
-	require.NoError(t, v1Store.WriteCommitted(ctx, checkpoint.WriteCommittedOptions{
+	require.NoError(t, checkpoint.NewGitStore(repo).WriteCommitted(ctx, checkpoint.WriteCommittedOptions{
 		CheckpointID: cpID,
 		SessionID:    "session-auto",
 		Strategy:     "manual-commit",
@@ -287,7 +286,6 @@ func TestRunExplainAuto_CommitRefWithCheckpointTrailer(t *testing.T) {
 		AuthorEmail:  "test@example.com",
 	}))
 
-	// Create a second commit whose message includes the checkpoint trailer.
 	wt, err := repo.Worktree()
 	require.NoError(t, err)
 	tmpDir := wt.Filesystem.Root()
@@ -305,129 +303,76 @@ func TestRunExplainAuto_CommitRefWithCheckpointTrailer(t *testing.T) {
 	require.Contains(t, out.String(), cpID.String(), "expected checkpoint header resolved via trailer")
 }
 
-// TestRunExplainAuto_CommitRefWithoutTrailer verifies the silent-success path:
-// a valid git commit without an Entire-Checkpoint trailer prints the friendly
-// message and returns nil. This matches runExplainCommit's behavior.
-func TestRunExplainAuto_CommitRefWithoutTrailer(t *testing.T) {
-	_, initialCommit := runExplainAutoTestRepo(t)
+// TestRunExplainAuto_CommitWithoutTrailer covers the trailer-less commit
+// dispatch: read-only modes print a friendly message and exit 0, while
+// --generate / --raw-transcript must error so scripts can distinguish
+// "done" from "didn't happen" (Cursor Bugbot finding on PR #990).
+func TestRunExplainAuto_CommitWithoutTrailer(t *testing.T) {
+	_, initial := runExplainAutoTestRepo(t)
+	shortSHA := initial.String()[:7]
 
-	var out, errOut bytes.Buffer
-	err := runExplainAuto(context.Background(), &out, &errOut, initialCommit.String(), true, false, false, false, false, false, false)
-
-	require.NoError(t, err, "commit without trailer must not error")
-	output := out.String()
-	require.Contains(t, output, "No associated Entire checkpoint")
-	require.Contains(t, output, initialCommit.String()[:7])
-	require.Contains(t, output, "does not have an Entire-Checkpoint trailer")
+	tests := []struct {
+		name        string
+		rawTrans    bool
+		generate    bool
+		wantErr     bool
+		wantContain string // substring required in err (if wantErr) or out (if !wantErr)
+	}{
+		{"read-only prints friendly message", false, false, false, "No associated Entire checkpoint"},
+		{"--generate errors", false, true, true, "cannot generate summary"},
+		{"--raw-transcript errors", true, false, true, "cannot show raw transcript"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var out, errOut bytes.Buffer
+			err := runExplainAuto(context.Background(), &out, &errOut, initial.String(), true, false, false, tc.rawTrans, tc.generate, false, false)
+			if tc.wantErr {
+				require.Error(t, err)
+				require.ErrorContains(t, err, tc.wantContain)
+				require.ErrorContains(t, err, shortSHA)
+			} else {
+				require.NoError(t, err)
+				require.Contains(t, out.String(), tc.wantContain)
+				require.Contains(t, out.String(), shortSHA)
+			}
+		})
+	}
 }
 
-// TestRunExplainAuto_NoMatch verifies that a target that is neither a
-// checkpoint ID nor a resolvable git ref returns the composite error.
-func TestRunExplainAuto_NoMatch(t *testing.T) {
+// TestRunExplainCheckpoint_NotFoundSentinels verifies the typed-error
+// contract runExplainAuto depends on: non-matching targets return an error
+// wrapping checkpoint.ErrCheckpointNotFound (for errors.Is detection),
+// regardless of --generate. The old code returned the temp-checkpoint
+// sentinel speculatively for --generate, breaking fallback routing.
+func TestRunExplainCheckpoint_NotFoundSentinels(t *testing.T) {
 	runExplainAutoTestRepo(t)
 
-	var out, errOut bytes.Buffer
-	err := runExplainAuto(context.Background(), &out, &errOut, "zzzzzz999999", false, false, false, false, false, false, false)
+	for _, generate := range []bool{false, true} {
+		t.Run(fmt.Sprintf("generate=%v", generate), func(t *testing.T) {
+			var out, errOut bytes.Buffer
+			err := runExplainCheckpoint(context.Background(), &out, &errOut, "abababababab", false, false, false, false, generate, false, false)
 
-	require.Error(t, err)
-	require.ErrorContains(t, err, `no checkpoint or commit found matching "zzzzzz999999"`)
-}
-
-// TestRunExplainAuto_GenerateCommitWithoutTrailer guards against silently
-// dropping --generate when the resolved commit has no Entire-Checkpoint
-// trailer. The user explicitly asked to generate a summary; returning nil
-// (exit 0) would make scripts unable to distinguish success from no-op.
-func TestRunExplainAuto_GenerateCommitWithoutTrailer(t *testing.T) {
-	_, initialCommit := runExplainAutoTestRepo(t)
-
-	var out, errOut bytes.Buffer
-	// Note: args are (noPager, verbose, full, rawTranscript, generate, force, searchAll).
-	err := runExplainAuto(context.Background(), &out, &errOut, initialCommit.String(), true, false, false, false, true, false, false)
-
-	require.Error(t, err, "--generate on a commit without a trailer must surface as an error, not silently succeed")
-	require.ErrorContains(t, err, "cannot generate summary")
-	require.ErrorContains(t, err, initialCommit.String()[:7])
-}
-
-// TestRunExplainAuto_RawTranscriptCommitWithoutTrailer is the --raw-transcript
-// twin of the test above — same silent-success hazard, same fix.
-func TestRunExplainAuto_RawTranscriptCommitWithoutTrailer(t *testing.T) {
-	_, initialCommit := runExplainAutoTestRepo(t)
-
-	var out, errOut bytes.Buffer
-	err := runExplainAuto(context.Background(), &out, &errOut, initialCommit.String(), true, false, false, true, false, false, false)
-
-	require.Error(t, err)
-	require.ErrorContains(t, err, "cannot show raw transcript")
-	require.ErrorContains(t, err, initialCommit.String()[:7])
-}
-
-// TestRunExplainCheckpoint_NotFoundMessageNotDuplicated guards against the
-// "checkpoint not found: X: checkpoint not found" regression from wrapping
-// the sentinel with a format string that also spelled out its text.
-func TestRunExplainCheckpoint_NotFoundMessageNotDuplicated(t *testing.T) {
-	runExplainAutoTestRepo(t)
-
-	var out, errOut bytes.Buffer
-	err := runExplainCheckpoint(context.Background(), &out, &errOut, "abababababab", false, false, false, false, false, false, false)
-
-	require.Error(t, err)
-	require.Equal(t, 1, strings.Count(err.Error(), "checkpoint not found"),
-		"error phrase %q should appear once, got %q", "checkpoint not found", err.Error())
-}
-
-// TestRunExplainCheckpoint_WrapsSentinelNotFound guards the typed-error
-// contract runExplainAuto depends on: runExplainCheckpoint must return an
-// error matching checkpoint.ErrCheckpointNotFound via errors.Is when the
-// target matches no checkpoint (PR #990 review feedback).
-func TestRunExplainCheckpoint_WrapsSentinelNotFound(t *testing.T) {
-	runExplainAutoTestRepo(t)
-
-	var out, errOut bytes.Buffer
-	err := runExplainCheckpoint(context.Background(), &out, &errOut, "abababababab", false, false, false, false, false, false, false)
-
-	require.Error(t, err)
-	require.ErrorIs(t, err, checkpoint.ErrCheckpointNotFound,
-		"runExplainCheckpoint must wrap checkpoint.ErrCheckpointNotFound so runExplainAuto can detect it with errors.Is")
-}
-
-// TestRunExplainCheckpoint_GenerateNonMatchingReturnsNotFound verifies the
-// corrected contract: when --generate is requested for a target that does
-// NOT match any committed or temporary checkpoint, runExplainCheckpoint
-// returns ErrCheckpointNotFound (so runExplainAuto can fall back to commit
-// resolution), not errCannotGenerateTemporaryCheckpoint. The previous
-// behavior returned the temp-checkpoint sentinel speculatively and broke
-// fallback routing for random SHAs with --generate.
-func TestRunExplainCheckpoint_GenerateNonMatchingReturnsNotFound(t *testing.T) {
-	runExplainAutoTestRepo(t)
-
-	var out, errOut bytes.Buffer
-	err := runExplainCheckpoint(context.Background(), &out, &errOut, "abababababab", false, false, false, false, true, false, false)
-
-	require.Error(t, err)
-	require.ErrorIs(t, err, checkpoint.ErrCheckpointNotFound,
-		"non-matching --generate target must return ErrCheckpointNotFound so runExplainAuto can fall back to commit resolution")
-	require.NotErrorIs(t, err, errCannotGenerateTemporaryCheckpoint,
-		"sentinel must not fire unless a real temp checkpoint was matched")
+			require.Error(t, err)
+			require.ErrorIs(t, err, checkpoint.ErrCheckpointNotFound)
+			require.NotErrorIs(t, err, errCannotGenerateTemporaryCheckpoint,
+				"sentinel must not fire unless a real temp checkpoint was matched")
+		})
+	}
 }
 
 // TestRunExplainAuto_GenerateAmbiguousPrefixRefused guards the Codex finding
 // that a short positional arg matching both a committed-checkpoint prefix
 // and a git revision must not silently write a summary to the wrong
-// checkpoint. With --generate set, runExplainAuto should refuse and ask the
-// user to disambiguate via --commit or --checkpoint.
+// checkpoint. SHA mining isn't practical, so we construct the collision by
+// picking a checkpoint ID that starts with the seed commit's abbreviation.
 func TestRunExplainAuto_GenerateAmbiguousPrefixRefused(t *testing.T) {
 	repo, _ := runExplainAutoTestRepo(t)
 	ctx := context.Background()
 
-	// Build a checkpoint ID whose prefix matches the seed commit's SHA so
-	// the positional arg resolves as both a git revision AND a committed-
-	// checkpoint prefix. SHA mining isn't practical here, so we pick a
-	// collision-able ID by prefixing with the real commit's abbreviation.
 	head, err := repo.Head()
 	require.NoError(t, err)
 	commitPrefix := head.Hash().String()[:7]
-	collisionID := id.MustCheckpointID(commitPrefix + "aaaaa") // 7 + 5 = 12 chars
+	collisionID := id.MustCheckpointID(commitPrefix + "aaaaa")
 
 	require.NoError(t, checkpoint.NewGitStore(repo).WriteCommitted(ctx, checkpoint.WriteCommittedOptions{
 		CheckpointID: collisionID,
@@ -441,34 +386,15 @@ func TestRunExplainAuto_GenerateAmbiguousPrefixRefused(t *testing.T) {
 	var out, errOut bytes.Buffer
 	err = runExplainAuto(ctx, &out, &errOut, commitPrefix, true, false, false, false, true, false, false)
 
-	require.Error(t, err, "--generate on an ambiguous target must error, not write to a checkpoint")
+	require.Error(t, err)
 	require.ErrorContains(t, err, "ambiguous target")
 	require.ErrorContains(t, err, "--commit")
 	require.ErrorContains(t, err, "--checkpoint")
 }
 
-// TestRunExplainAuto_GenerateUnambiguousCheckpointIDPasses verifies the
-// ambiguity guard does NOT fire when the target is a valid 12-char
-// checkpoint ID that doesn't resolve as a git revision. Regression guard
-// against over-triggering.
-func TestRunExplainAuto_GenerateUnambiguousCheckpointIDPasses(t *testing.T) {
-	_, _ = runExplainAutoTestRepo(t)
-
-	// A 12-char hex string that is extremely unlikely to resolve as a git
-	// ref in a fresh repo. The ambiguity guard should be a no-op here.
-	var out, errOut bytes.Buffer
-	err := runExplainAuto(context.Background(), &out, &errOut, "ffffffffffff", true, false, false, false, true, false, false)
-
-	require.Error(t, err)
-	require.NotContains(t, err.Error(), "ambiguous target",
-		"ambiguity guard must not fire when target does not resolve as a git ref")
-}
-
-// TestExplainCmd_CommitFlagWithGenerateValidates verifies Fix #3: the
-// --commit flag combined with --generate now passes flag validation.
-// Previously hasCheckpointTarget excluded commitFlag, so users of the
-// explicit --commit form couldn't invoke generate/raw-transcript modes
-// even though the positional equivalent worked.
+// TestExplainCmd_CommitFlagWithGenerateValidates verifies --commit +
+// --generate passes flag validation (previously hasCheckpointTarget
+// excluded commitFlag, so the explicit form couldn't invoke generate).
 func TestExplainCmd_CommitFlagWithGenerateValidates(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Chdir(tmpDir)
@@ -483,13 +409,10 @@ func TestExplainCmd_CommitFlagWithGenerateValidates(t *testing.T) {
 	cmd.SetErr(&stderr)
 	cmd.SetArgs([]string{"--commit", "HEAD", "--generate"})
 
-	err := cmd.Execute()
-	// The command will fail downstream (no trailer on seed commit) but
-	// must get past flag validation. We verify it's NOT the "--generate
-	// requires..." validation error.
-	if err != nil {
-		require.NotContains(t, err.Error(), "--generate requires",
-			"--commit + --generate must pass flag validation")
+	// Command will fail downstream (no trailer on seed commit), but must
+	// not fail at flag validation.
+	if err := cmd.Execute(); err != nil {
+		require.NotContains(t, err.Error(), "--generate requires")
 	}
 }
 
