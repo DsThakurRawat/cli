@@ -1584,40 +1584,6 @@ func ExtractSessionIDFromCommit(commit *object.Commit) string {
 //
 // See push_common.go and session_test.go for usage examples.
 
-// createCommit creates a commit object
-func createCommit(repo *git.Repository, treeHash, parentHash plumbing.Hash, message, authorName, authorEmail string) (plumbing.Hash, error) { //nolint:unparam // already present in codebase
-	now := time.Now()
-	sig := object.Signature{
-		Name:  authorName,
-		Email: authorEmail,
-		When:  now,
-	}
-
-	commit := &object.Commit{
-		TreeHash:  treeHash,
-		Author:    sig,
-		Committer: sig,
-		Message:   message,
-	}
-
-	// Add parent if not a new branch
-	if parentHash != plumbing.ZeroHash {
-		commit.ParentHashes = []plumbing.Hash{parentHash}
-	}
-
-	obj := repo.Storer.NewEncodedObject()
-	if err := commit.Encode(obj); err != nil {
-		return plumbing.ZeroHash, fmt.Errorf("failed to encode commit: %w", err)
-	}
-
-	hash, err := repo.Storer.SetEncodedObject(obj)
-	if err != nil {
-		return plumbing.ZeroHash, fmt.Errorf("failed to store commit: %w", err)
-	}
-
-	return hash, nil
-}
-
 // getSessionDescriptionFromTree reads the first line of prompt.txt from a git tree.
 // This is the tree-based equivalent of getSessionDescription (which reads from filesystem).
 //
