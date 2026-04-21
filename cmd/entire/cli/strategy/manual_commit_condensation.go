@@ -254,12 +254,12 @@ func (s *ManualCommitStrategy) CondenseSession(ctx context.Context, repo *git.Re
 
 	compactTranscriptDuration := buildCompactTranscript(ctx, ag, redactedTranscript, state, &writeOpts)
 
-	v2Only := settings.IsCheckpointsV2OnlyEnabled(ctx)
+	v2 := settings.CheckpointsVersion(ctx) == 2
 
 	// Write checkpoint metadata to the primary store.
 	writeV1Start := time.Now()
 	writeCtx, writeCommittedSpan := perf.Start(ctx, "write_committed_v1")
-	if !v2Only {
+	if !v2 {
 		if err := store.WriteCommitted(writeCtx, writeOpts); err != nil {
 			writeCommittedSpan.RecordError(err)
 			writeCommittedSpan.End()
@@ -271,7 +271,7 @@ func (s *ManualCommitStrategy) CondenseSession(ctx context.Context, repo *git.Re
 
 	writeV2Start := time.Now()
 	writeV2Ctx, writeCommittedV2Span := perf.Start(ctx, "write_committed_v2")
-	if v2Only {
+	if v2 {
 		if err := writeCommittedV2(writeV2Ctx, repo, writeOpts); err != nil {
 			writeCommittedV2Span.RecordError(err)
 			writeCommittedV2Span.End()

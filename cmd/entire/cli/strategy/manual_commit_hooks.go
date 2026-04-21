@@ -2745,7 +2745,7 @@ func (s *ManualCommitStrategy) finalizeAllTurnCheckpoints(ctx context.Context, s
 	}
 
 	store := checkpoint.NewGitStore(repo)
-	v2Only := settings.IsCheckpointsV2OnlyEnabled(logCtx)
+	v2 := settings.CheckpointsVersion(logCtx) == 2
 
 	// Evaluate v2 flag once before the loop to avoid re-reading settings per checkpoint
 	var v2Store *checkpoint.V2GitStore
@@ -2790,7 +2790,7 @@ func (s *ManualCommitStrategy) finalizeAllTurnCheckpoints(ctx context.Context, s
 				content *checkpoint.SessionContent
 				readErr error
 			)
-			if v2Only {
+			if v2 {
 				content, readErr = v2Store.ReadSessionContentByID(ctx, cpID, state.SessionID)
 			} else {
 				content, readErr = store.ReadSessionContentByID(ctx, cpID, state.SessionID)
@@ -2812,7 +2812,7 @@ func (s *ManualCommitStrategy) finalizeAllTurnCheckpoints(ctx context.Context, s
 			updateOpts.CompactTranscript = compactTranscriptForV2(logCtx, finalAg, redactedTranscript, startLine)
 		}
 
-		if !v2Only {
+		if !v2 {
 			updateErr := store.UpdateCommitted(ctx, updateOpts)
 			if updateErr != nil {
 				logging.Warn(logCtx, "finalize: failed to update checkpoint",
@@ -2830,7 +2830,7 @@ func (s *ManualCommitStrategy) finalizeAllTurnCheckpoints(ctx context.Context, s
 					slog.String("checkpoint_id", cpIDStr),
 					slog.String("error", v2Err.Error()),
 				}
-				if v2Only {
+				if v2 {
 					logging.Warn(logCtx, "finalize: failed to update checkpoint in v2", attrs...)
 					errCount++
 					continue
