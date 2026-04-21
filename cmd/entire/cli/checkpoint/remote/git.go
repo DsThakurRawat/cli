@@ -28,6 +28,7 @@ type FetchOptions struct {
 	RefSpecs  []string // one or more refspecs / object hashes
 	Shallow   bool     // adds --depth=1
 	NoTags    bool     // adds --no-tags
+	NoFilter  bool     // when true, skips --filter=blob:none even if filtered fetches are enabled
 	Dir       string   // working directory (empty = CWD)
 	ExtraArgs []string // additional flags before remote (e.g., "--no-write-fetch-head")
 }
@@ -48,7 +49,7 @@ func Fetch(ctx context.Context, opts FetchOptions) ([]byte, error) {
 		args = append(args, "--depth=1")
 	}
 	args = append(args, opts.ExtraArgs...)
-	if settings.IsFilteredFetchesEnabled(ctx) {
+	if !opts.NoFilter && settings.IsFilteredFetchesEnabled(ctx) {
 		args = append(args, "--filter=blob:none")
 	}
 	args = append(args, opts.Remote)

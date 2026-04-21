@@ -112,12 +112,15 @@ func resolvePushSettings(ctx context.Context, pushRemoteName string) pushSetting
 // and updates the local branch. Unlike fetchMetadataBranchIfMissing, this always
 // fetches regardless of whether the branch exists locally (for resume scenarios
 // where the local branch may be stale).
+//
+// The fetch is unfiltered (NoFilter: true) because resume needs blob content
+// (transcripts, metadata JSON) — not just tree objects.
 func FetchMetadataBranch(ctx context.Context, remoteURL string) error {
 	branchName := paths.MetadataBranchName
 	tmpRef := FetchTmpRefPrefix + branchName
 	srcRef := "refs/heads/" + branchName
 
-	if err := fetchURLIntoTmpRef(ctx, remoteURL, srcRef, tmpRef, "metadata branch"); err != nil {
+	if err := fetchURLIntoTmpRef(ctx, remoteURL, srcRef, tmpRef, "metadata branch", true); err != nil {
 		return err
 	}
 	return PromoteTmpRefSafely(ctx, plumbing.ReferenceName(tmpRef), plumbing.NewBranchReferenceName(branchName), branchName)
@@ -126,8 +129,10 @@ func FetchMetadataBranch(ctx context.Context, remoteURL string) error {
 // FetchV2MainFromURL fetches the v2 /main ref from a remote URL and advances
 // the local ref only when doing so cannot rewind locally-ahead commits.
 // Uses explicit refspec since v2 refs are under refs/entire/, not refs/heads/.
+//
+// The fetch is unfiltered (NoFilter: true) because resume needs full metadata.
 func FetchV2MainFromURL(ctx context.Context, remoteURL string) error {
-	if err := fetchURLIntoTmpRef(ctx, remoteURL, paths.V2MainRefName, V2MainFetchTmpRef, "v2 /main"); err != nil {
+	if err := fetchURLIntoTmpRef(ctx, remoteURL, paths.V2MainRefName, V2MainFetchTmpRef, "v2 /main", true); err != nil {
 		return err
 	}
 	return PromoteTmpRefSafely(ctx, V2MainFetchTmpRef, paths.V2MainRefName, "v2 /main")
@@ -138,7 +143,12 @@ func FetchV2MainFromURL(ctx context.Context, remoteURL string) error {
 // credential helper doesn't hang the process. Errors include the redacted URL
 // and any captured stderr so operators can diagnose without credentials
 // leaking into logs.
-func fetchURLIntoTmpRef(ctx context.Context, remoteURL, srcRef, tmpRef, label string) error {
+//
+// When noFilter is true, --filter=blob:none is suppressed even if filtered
+// fetches are globally enabled. Use noFilter for operations that need blob
+// content (resume, explain) as opposed to sync operations (push recovery)
+// that only need tree structure.
+func fetchURLIntoTmpRef(ctx context.Context, remoteURL, srcRef, tmpRef, label string, noFilter bool) error {
 	fetchCtx, cancel := context.WithTimeout(ctx, checkpointRemoteFetchTimeout)
 	defer cancel()
 
@@ -147,6 +157,7 @@ func fetchURLIntoTmpRef(ctx context.Context, remoteURL, srcRef, tmpRef, label st
 		Remote:   remoteURL,
 		RefSpecs: []string{refSpec},
 		NoTags:   true,
+		NoFilter: noFilter,
 	})
 	if fetchErr == nil {
 		return nil
