@@ -24,7 +24,7 @@ func IsAccessibleMode() bool {
 
 // entireTheme returns the Dracula theme for consistent styling.
 func entireTheme() *huh.Theme {
-	return huh.ThemeDracula()
+	return huh.ThemeCharm()
 }
 
 // NewAccessibleForm creates a new huh form with accessibility mode
