@@ -310,6 +310,7 @@ func TestParseGitHubRelease(t *testing.T) {
 }
 
 func TestUpdateCommand(t *testing.T) {
+	const plainBinPath = "/usr/local/bin/entire"
 	tests := []struct {
 		name           string
 		currentVersion string
@@ -355,13 +356,13 @@ func TestUpdateCommand(t *testing.T) {
 		{
 			name:           "unknown path stable falls back to stable curl command",
 			currentVersion: "1.0.0",
-			execPath:       func() (string, error) { return "/usr/local/bin/entire", nil },
+			execPath:       func() (string, error) { return plainBinPath, nil },
 			want:           "curl -fsSL https://entire.io/install.sh | bash",
 		},
 		{
 			name:           "unknown path nightly falls back to nightly curl command",
 			currentVersion: "1.0.1-nightly.202604101200.abc1234",
-			execPath:       func() (string, error) { return "/usr/local/bin/entire", nil },
+			execPath:       func() (string, error) { return plainBinPath, nil },
 			want:           "curl -fsSL https://entire.io/install.sh | bash -s -- --channel nightly",
 		},
 		{
