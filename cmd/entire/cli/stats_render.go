@@ -4,12 +4,14 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
+	"golang.org/x/term"
 )
 
 type statsStyles struct {
@@ -30,9 +32,28 @@ type statsStyles struct {
 	muted   lipgloss.Style
 }
 
+// getFullTerminalWidth returns the terminal width without the 80-char cap
+// used by other commands. Stats benefits from wide output for bar charts.
+func getFullTerminalWidth(w io.Writer) int {
+	if f, ok := w.(*os.File); ok {
+		if width, _, err := term.GetSize(int(f.Fd())); err == nil && width > 0 { //nolint:gosec // G115: uintptr->int is safe for fd
+			return width
+		}
+	}
+	for _, f := range []*os.File{os.Stdout, os.Stderr} {
+		if f == nil {
+			continue
+		}
+		if width, _, err := term.GetSize(int(f.Fd())); err == nil && width > 0 { //nolint:gosec // G115: uintptr->int is safe for fd
+			return width
+		}
+	}
+	return 80
+}
+
 func newStatsStyles(w io.Writer) statsStyles {
 	useColor := shouldUseColor(w)
-	width := getTerminalWidth(w)
+	width := getFullTerminalWidth(w)
 
 	s := statsStyles{
 		colorEnabled: useColor,
@@ -260,12 +281,15 @@ func renderAgentBar(sty statsStyles, agents map[string]int, maxCount, barWidth i
 }
 
 func renderCommitList(w io.Writer, sty statsStyles, days []commitDay) {
+	renderCommitListN(w, sty, days, 3)
+}
+
+func renderCommitListN(w io.Writer, sty statsStyles, days []commitDay, maxDays int) {
 	if len(days) == 0 {
 		return
 	}
 
-	maxDays := 3
-	if len(days) < maxDays {
+	if maxDays <= 0 || maxDays > len(days) {
 		maxDays = len(days)
 	}
 
@@ -373,10 +397,10 @@ func formatCommitDate(dateStr string) string {
 	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
 	days := int(today.Sub(t).Hours() / 24)
 
-	switch {
-	case days == 0:
+	switch days {
+	case 0:
 		return t.Format("Monday 2 Jan") + " (today)"
-	case days == 1:
+	case 1:
 		return t.Format("Monday 2 Jan") + " (yesterday)"
 	default:
 		return t.Format("Monday 2 Jan")

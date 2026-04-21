@@ -81,10 +81,14 @@ func runStats(ctx context.Context, w, errW io.Writer) error {
 	repos := computeRepoContributions(checkpoints)
 	days := groupCommitsByDay(commits)
 
-	sty := newStatsStyles(w)
-	renderStats(w, sty, stats, repos, days)
+	// Non-interactive fallback: piped output or accessibility mode
+	if !isTerminalWriter(w) || IsAccessibleMode() {
+		sty := newStatsStyles(w)
+		renderStats(w, sty, stats, repos, days)
+		return nil
+	}
 
-	return nil
+	return runStatsTUI(stats, repos, days)
 }
 
 func fetchCheckpoints(ctx context.Context, client *api.Client) ([]userCheckpoint, []string, error) {
