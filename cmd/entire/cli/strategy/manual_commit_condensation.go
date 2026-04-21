@@ -428,6 +428,39 @@ type compactTranscriptResult struct {
 	Duration   time.Duration // Time spent producing the compact transcript.
 }
 
+// compactAndRedactExternalTranscript calls the external agent's compact-transcript
+// subcommand and redacts the result. Returns (nil, false) if the agent is not
+// external. Returns (nil, true) if the agent is external but compaction failed.
+func compactAndRedactExternalTranscript(ctx context.Context, ag agent.Agent, state *SessionState) (transcript []byte, isExternal bool) {
+	compactor, ok := agent.AsTranscriptCompactor(ag)
+	if !ok {
+		if _, isCap := ag.(agent.CapabilityDeclarer); isCap {
+			logging.Warn(ctx, "external transcript compaction unavailable, skipping transcript.jsonl",
+				slog.String("session_id", state.SessionID),
+				slog.String("agent", string(ag.Name())),
+			)
+			return nil, true
+		}
+		return nil, false
+	}
+
+	compacted := compactTranscriptForExternalAgent(ctx, compactor, state.SessionID, state.TranscriptPath)
+	if compacted == nil {
+		return nil, true
+	}
+
+	redacted, err := redactSessionJSONLBytes(compacted.Transcript)
+	if err != nil {
+		logging.Warn(ctx, "failed to redact external compact transcript, dropping",
+			slog.String("session_id", state.SessionID),
+			slog.String("agent", string(compactor.Name())),
+			slog.String("error", err.Error()),
+		)
+		return nil, true
+	}
+	return redacted.Bytes(), true
+}
+
 // buildExternalCompactTranscript produces the compact transcript for external
 // agents by calling the agent's compact-transcript subcommand and redacting
 // the result. Returns nil if the agent is not external (caller should use
@@ -437,44 +470,24 @@ func buildExternalCompactTranscript(ctx context.Context, ag agent.Agent, state *
 		return nil
 	}
 
-	compactor, ok := agent.AsTranscriptCompactor(ag)
-	if !ok {
-		if _, isCap := ag.(agent.CapabilityDeclarer); isCap {
-			logging.Warn(ctx, "external transcript compaction unavailable, skipping transcript.jsonl on /main",
-				slog.String("session_id", state.SessionID),
-				slog.String("agent", string(ag.Name())),
-			)
-			return &compactTranscriptResult{}
-		}
-		return nil
-	}
-
 	compactStart := time.Now()
-	compactCtx, compactSpan := perf.Start(ctx, "compact_transcript_v2_external")
+	compactCtx, compactSpan := perf.Start(ctx, "compact_transcript_v2")
 	defer compactSpan.End()
 
-	compacted := compactTranscriptForExternalAgent(compactCtx, compactor, state.SessionID, state.TranscriptPath)
-	if compacted == nil {
+	transcript, isExternal := compactAndRedactExternalTranscript(compactCtx, ag, state)
+	if !isExternal {
+		return nil
+	}
+	if transcript == nil {
 		return &compactTranscriptResult{Duration: time.Since(compactStart)}
 	}
 
-	redacted, err := redactSessionJSONLBytes(compacted.Transcript)
-	if err != nil {
-		logging.Warn(compactCtx, "failed to redact external compact transcript, dropping transcript.jsonl on /main",
-			slog.String("session_id", state.SessionID),
-			slog.String("agent", string(compactor.Name())),
-			slog.String("error", err.Error()),
-		)
-		return &compactTranscriptResult{Duration: time.Since(compactStart)}
-	}
-
-	transcript := redacted.Bytes()
 	startLine := state.CompactTranscriptStart
 	fullLines := countCompactLines(transcript)
 	if fullLines < startLine {
 		logging.Warn(compactCtx, "external compact transcript shorter than previous compact transcript start; resetting compact transcript start",
 			slog.String("session_id", state.SessionID),
-			slog.String("agent", string(compactor.Name())),
+			slog.String("agent", string(ag.Name())),
 			slog.Int("compact_transcript_lines", fullLines),
 			slog.Int("previous_compact_transcript_start", startLine),
 		)
@@ -496,7 +509,7 @@ func buildInternalCompactTranscript(ctx context.Context, ag agent.Agent, redacte
 	}
 
 	compactStart := time.Now()
-	compactCtx, compactSpan := perf.Start(ctx, "compact_transcript_v2_internal")
+	compactCtx, compactSpan := perf.Start(ctx, "compact_transcript_v2")
 	defer compactSpan.End()
 
 	// Generate scoped compact (only new content) for line counting and offset calculation.

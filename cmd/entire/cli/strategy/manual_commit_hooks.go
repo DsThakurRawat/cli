@@ -2754,6 +2754,18 @@ func (s *ManualCommitStrategy) finalizeAllTurnCheckpoints(ctx context.Context, s
 
 	precomputed := precomputeTranscriptBlobsForFinalize(logCtx, repo, redactedTranscript, state)
 
+	// Compute the compact transcript once before the loop — it is invariant
+	// across checkpoints (same session, same transcript).
+	var compactTranscript []byte
+	if v2Store != nil && redactedTranscript.Len() > 0 {
+		finalAg, _ := agent.GetByAgentType(state.AgentType) //nolint:errcheck // ag may be nil; compactTranscriptForV2 handles nil
+		if extCompact, isExternal := compactAndRedactExternalTranscript(logCtx, finalAg, state); isExternal {
+			compactTranscript = extCompact
+		} else {
+			compactTranscript = compactTranscriptForV2(logCtx, finalAg, redactedTranscript, 0)
+		}
+	}
+
 	// Update each checkpoint with the full transcript
 	for _, cpIDStr := range state.TurnCheckpointIDs {
 		cpID, parseErr := id.NewCheckpointID(cpIDStr)
@@ -2767,22 +2779,13 @@ func (s *ManualCommitStrategy) finalizeAllTurnCheckpoints(ctx context.Context, s
 		}
 
 		updateOpts := checkpoint.UpdateCommittedOptions{
-			CheckpointID:     cpID,
-			SessionID:        state.SessionID,
-			Transcript:       redactedTranscript,
-			Prompts:          prompts,
-			Agent:            state.AgentType,
-			PrecomputedBlobs: precomputed,
-		}
-
-		// Generate compact transcript for v2 /main
-		if v2Store != nil && redactedTranscript.Len() > 0 {
-			finalAg, _ := agent.GetByAgentType(state.AgentType) //nolint:errcheck // ag may be nil; compactTranscriptForV2 handles nil
-			if extCompact := finalizeExternalCompactTranscript(logCtx, finalAg, state); extCompact != nil {
-				updateOpts.CompactTranscript = extCompact
-			} else {
-				updateOpts.CompactTranscript = compactTranscriptForV2(logCtx, finalAg, redactedTranscript, 0)
-			}
+			CheckpointID:      cpID,
+			SessionID:         state.SessionID,
+			Transcript:        redactedTranscript,
+			Prompts:           prompts,
+			Agent:             state.AgentType,
+			PrecomputedBlobs:  precomputed,
+			CompactTranscript: compactTranscript,
 		}
 
 		if !v2Only {
@@ -2826,39 +2829,6 @@ func (s *ManualCommitStrategy) finalizeAllTurnCheckpoints(ctx context.Context, s
 	state.TurnCheckpointIDs = nil
 
 	return errCount
-}
-
-// finalizeExternalCompactTranscript produces the redacted compact transcript
-// for external agents during turn-end finalization. Returns nil if the agent
-// is not external (caller should fall through to compactTranscriptForV2).
-func finalizeExternalCompactTranscript(ctx context.Context, ag agent.Agent, state *SessionState) []byte {
-	compactor, ok := agent.AsTranscriptCompactor(ag)
-	if !ok {
-		if _, isCap := ag.(agent.CapabilityDeclarer); isCap {
-			logging.Warn(ctx, "external transcript compaction unavailable, skipping transcript.jsonl finalization",
-				slog.String("session_id", state.SessionID),
-				slog.String("agent", string(ag.Name())),
-			)
-			return []byte{}
-		}
-		return nil
-	}
-
-	compacted := compactTranscriptForExternalAgent(ctx, compactor, state.SessionID, state.TranscriptPath)
-	if compacted == nil {
-		return []byte{}
-	}
-
-	redacted, err := redactSessionJSONLBytes(compacted.Transcript)
-	if err != nil {
-		logging.Warn(ctx, "failed to redact external compact transcript in finalization, dropping",
-			slog.String("session_id", state.SessionID),
-			slog.String("agent", string(compactor.Name())),
-			slog.String("error", err.Error()),
-		)
-		return []byte{}
-	}
-	return redacted.Bytes()
 }
 
 // filesChangedInCommit returns the set of files changed in a commit using git diff-tree.
