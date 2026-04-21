@@ -2765,11 +2765,11 @@ func (s *ManualCommitStrategy) finalizeAllTurnCheckpoints(ctx context.Context, s
 	// Compute the compact transcript once before the loop — it is invariant
 	// across checkpoints (same session, same transcript).
 	var compactTranscript []byte
-	if v2Store != nil && redactedTranscript.Len() > 0 {
+	if v2Store != nil {
 		finalAg, _ := agent.GetByAgentType(state.AgentType) //nolint:errcheck // ag may be nil; compactTranscriptForV2 handles nil
 		if extCompact, isExternal := compactAndRedactExternalTranscript(logCtx, finalAg, state); isExternal {
 			compactTranscript = extCompact
-		} else {
+		} else if redactedTranscript.Len() > 0 {
 			compactTranscript = compactTranscriptForV2(logCtx, finalAg, redactedTranscript, 0)
 		}
 	}
