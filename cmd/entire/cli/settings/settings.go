@@ -739,7 +739,7 @@ func (s *EntireSettings) CheckpointsVersion() int {
 	warnUnsupported := func(configured any) {
 		checkpointsVersionWarningOnce.Do(func() {
 			fmt.Fprintf(os.Stderr,
-				"[entire] unsupported checkpoints version %v detected in settings. Falling back to latest supported version (1).\n",
+				"[entire] unsupported checkpoints version %v detected in settings. Falling back to the default version (1).\n",
 				configured,
 			)
 		})
