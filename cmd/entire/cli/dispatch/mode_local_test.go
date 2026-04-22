@@ -2,6 +2,9 @@ package dispatch
 
 import (
 	"context"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -423,6 +426,43 @@ func TestLocalMode_ImplicitCurrentBranchUsesCheckpointBranchWithoutTrailerReacha
 	}
 	if len(got.Repos) != 1 || got.Repos[0].Sections[0].Bullets[0].Text != testLocalFallbackText {
 		t.Fatalf("unexpected dispatch payload: %+v", got)
+	}
+}
+
+func TestReachableCheckpointIDsOnHEAD_LimitsLogToWindowAndCheckpointTrailers(t *testing.T) {
+	tmpDir := t.TempDir()
+	argsFile := filepath.Join(tmpDir, "git-args.txt")
+	gitPath := filepath.Join(tmpDir, "git")
+
+	script := "#!/bin/sh\n" +
+		"printf '%s\\n' \"$@\" > \"$TEST_GIT_ARGS_FILE\"\n" +
+		"printf 'subject\\n\\nEntire-Checkpoint: " + testCheckpointID + "\\000'\n"
+	if err := os.WriteFile(gitPath, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("PATH", tmpDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("TEST_GIT_ARGS_FILE", argsFile)
+
+	since := time.Date(2026, 4, 1, 12, 30, 0, 0, time.UTC)
+	reachable, err := reachableCheckpointIDsOnHEAD(context.Background(), "/tmp/repo", since)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := reachable[testCheckpointID]; !ok {
+		t.Fatalf("expected checkpoint %s to be reachable, got %v", testCheckpointID, reachable)
+	}
+
+	argsBytes, err := os.ReadFile(argsFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	args := string(argsBytes)
+	if !strings.Contains(args, "--grep") || !strings.Contains(args, "Entire-Checkpoint:") {
+		t.Fatalf("expected git log to filter checkpoint trailers, got args %q", args)
+	}
+	if !strings.Contains(args, "--since=2026-04-01T12:30:00Z") {
+		t.Fatalf("expected git log to bound history by since window, got args %q", args)
 	}
 }
 

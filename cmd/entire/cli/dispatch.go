@@ -75,7 +75,7 @@ Examples:
 	cmd.Flags().BoolVar(&flagAllBranches, "all-branches", false, "include all branches instead of the default branch scope")
 	cmd.Flags().StringSliceVar(&flagRepos, "repos", nil, "server repo slugs (for example entireio/cli)")
 	cmd.Flags().StringSliceVar(&flagOrgs, "org", nil, "enumerate checkpoints across one or more orgs")
-	cmd.Flags().StringVar(&flagVoice, "voice", "", "voice preset name, file path, or literal description")
+	cmd.Flags().StringVar(&flagVoice, "voice", "", "voice preset name or literal description")
 
 	return cmd
 }
@@ -148,6 +148,7 @@ func resolveDispatchOptions(
 	flagVoice string,
 	currentBranch func() (string, error),
 ) (dispatchpkg.Options, error) {
+	flagRepos = normalizeDispatchScopeValues(flagRepos)
 	flagOrgs = normalizeDispatchScopeValues(flagOrgs)
 	if len(flagOrgs) > 0 && len(flagRepos) > 0 {
 		return dispatchpkg.Options{}, errors.New("--org and --repos are mutually exclusive")

@@ -65,6 +65,30 @@ func TestParseDispatchFlags_ServerReposAreAllowed(t *testing.T) {
 	}
 }
 
+func TestParseDispatchFlags_NormalizesRepoScopeValues(t *testing.T) {
+	t.Parallel()
+
+	opts, err := parseDispatchFlags(
+		&cobra.Command{},
+		false,
+		"7d",
+		"",
+		false,
+		[]string{" entireio/cli ", "", "entireio/cli", " otherco/service ", "   "},
+		nil,
+		"",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(opts.RepoPaths, ","); got != "entireio/cli,otherco/service" {
+		t.Fatalf("expected normalized repo scope, got %q", got)
+	}
+	if opts.Branches != nil {
+		t.Fatalf("expected nil branches for repo scope, got %v", opts.Branches)
+	}
+}
+
 func TestParseDispatchFlags_LocalRejectsRepos(t *testing.T) {
 	t.Parallel()
 

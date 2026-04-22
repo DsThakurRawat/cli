@@ -151,7 +151,7 @@ func enumerateRepoCandidates(ctx context.Context, repoRoot string, opts Options,
 	}
 	reachableCheckpointIDs := map[string]struct{}{}
 	if opts.ImplicitCurrentBranch && !opts.AllBranches {
-		reachableCheckpointIDs, err = reachableCheckpointIDsOnHEAD(ctx, repoRoot)
+		reachableCheckpointIDs, err = reachableCheckpointIDsOnHEAD(ctx, repoRoot, since)
 		if err != nil {
 			return nil, err
 		}
@@ -210,8 +210,19 @@ func enumerateRepoCandidates(ctx context.Context, repoRoot string, opts Options,
 	return candidates, nil
 }
 
-func reachableCheckpointIDsOnHEAD(ctx context.Context, repoRoot string) (map[string]struct{}, error) {
-	cmd := exec.CommandContext(ctx, "git", "-C", repoRoot, "log", "HEAD", "--format=%B%x00")
+func reachableCheckpointIDsOnHEAD(ctx context.Context, repoRoot string, since time.Time) (map[string]struct{}, error) {
+	cmd := exec.CommandContext(
+		ctx,
+		"git",
+		"-C",
+		repoRoot,
+		"log",
+		"HEAD",
+		"--since="+since.UTC().Format(time.RFC3339),
+		"--grep",
+		"Entire-Checkpoint:",
+		"--format=%B%x00",
+	)
 	output, err := cmd.Output()
 	if err != nil {
 		return nil, fmt.Errorf("list HEAD checkpoint trailers: %w", err)
