@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/entireio/cli/cmd/entire/cli/checkpoint"
 	"github.com/entireio/cli/cmd/entire/cli/settings"
 
 	"github.com/go-git/go-git/v6"
@@ -74,9 +75,8 @@ func doPushBranch(ctx context.Context, target, branchName string) error {
 	stop := startProgressDots(os.Stderr)
 
 	// Try pushing first
-	if err := tryPushSessionsCommon(ctx, target, branchName); err == nil {
-		stop(" done")
-		printSettingsCommitHint(ctx, target)
+	if result, err := tryPushSessionsCommon(ctx, target, branchName); err == nil {
+		finishPush(ctx, stop, result, target)
 		return nil
 	}
 	stop("")
@@ -97,13 +97,12 @@ func doPushBranch(ctx context.Context, target, branchName string) error {
 	fmt.Fprintf(os.Stderr, "[entire] Pushing %s to %s...", branchName, displayTarget)
 	stop = startProgressDots(os.Stderr)
 
-	if err := tryPushSessionsCommon(ctx, target, branchName); err != nil {
+	if result, err := tryPushSessionsCommon(ctx, target, branchName); err != nil {
 		stop("")
 		fmt.Fprintf(os.Stderr, "[entire] Warning: failed to push %s after sync: %v\n", branchName, err)
 		printCheckpointRemoteHint(target)
 	} else {
-		stop(" done")
-		printSettingsCommitHint(ctx, target)
+		finishPush(ctx, stop, result, target)
 	}
 
 	return nil
@@ -121,6 +120,9 @@ func printCheckpointRemoteHint(target string) {
 
 // settingsHintOnce ensures the settings commit hint prints at most once per process.
 var settingsHintOnce sync.Once
+
+// checkpointsV2MigrationHintOnce ensures the checkpoints v2 migration hint prints at most once per process.
+var checkpointsV2MigrationHintOnce sync.Once
 
 // printSettingsCommitHint prints a hint after a successful checkpoint remote push
 // when the committed .entire/settings.json does not contain a checkpoint_remote config.
@@ -141,6 +143,53 @@ func printSettingsCommitHint(ctx context.Context, target string) {
 	})
 }
 
+// printCheckpointsV2MigrationHint prints a hint when the committed project
+// settings enable checkpoints_version: 2 AND there are v1 checkpoints that have
+// not yet been mirrored into v2. Suppressed when v2 already has every v1
+// checkpoint (nothing to migrate) so the hint does not become noise once the
+// migration is done.
+func printCheckpointsV2MigrationHint(ctx context.Context) {
+	checkpointsV2MigrationHintOnce.Do(func() {
+		if !isCheckpointsVersion2Committed(ctx) {
+			return
+		}
+		if !hasUnmigratedV1Checkpoints(ctx) {
+			return
+		}
+		fmt.Fprintln(os.Stderr, "[entire] Note: .entire/settings.json sets checkpoints_version: 2. Run 'entire migrate --checkpoints v2' to migrate existing checkpoints to v2.")
+		fmt.Fprintln(os.Stderr, "[entire] Use 'entire migrate --checkpoints v2 --force' to rewrite all checkpoints in v2.")
+	})
+}
+
+// hasUnmigratedV1Checkpoints reports whether any v1 checkpoint has no matching
+// entry in v2. Any failure opening the repo or listing either store is treated
+// as "no migration needed" so we stay silent instead of printing a speculative
+// hint — the hint is advisory and should never be the reason a push gets noisy.
+func hasUnmigratedV1Checkpoints(ctx context.Context) bool {
+	repo, err := OpenRepository(ctx)
+	if err != nil {
+		return false
+	}
+	v1List, err := checkpoint.NewGitStore(repo).ListCommitted(ctx)
+	if err != nil || len(v1List) == 0 {
+		return false
+	}
+	v2List, err := checkpoint.NewV2GitStore(repo, "").ListCommitted(ctx)
+	if err != nil {
+		return false
+	}
+	v2Set := make(map[string]struct{}, len(v2List))
+	for _, info := range v2List {
+		v2Set[info.CheckpointID.String()] = struct{}{}
+	}
+	for _, info := range v1List {
+		if _, ok := v2Set[info.CheckpointID.String()]; !ok {
+			return true
+		}
+	}
+	return false
+}
+
 // isCheckpointRemoteCommitted returns true if the committed .entire/settings.json
 // at HEAD contains a valid checkpoint_remote configuration. This is the true
 // discoverability check: entire.io reads from committed project settings, not from
@@ -159,24 +208,77 @@ func isCheckpointRemoteCommitted(ctx context.Context) bool {
 	return committed.GetCheckpointRemote() != nil
 }
 
+// isCheckpointsVersion2Committed returns true if the committed .entire/settings.json
+// at HEAD sets checkpoints_version to 2.
+func isCheckpointsVersion2Committed(ctx context.Context) bool {
+	cmd := exec.CommandContext(ctx, "git", "show", "HEAD:.entire/settings.json")
+	output, err := cmd.Output()
+	if err != nil {
+		return false
+	}
+	committed, err := settings.LoadFromBytes(output)
+	if err != nil {
+		return false
+	}
+	return committed.CheckpointsVersion() == 2
+}
+
+// pushResult describes what happened during a push attempt.
+type pushResult struct {
+	// upToDate is true when the remote already had all commits (nothing transferred).
+	upToDate bool
+}
+
+// parsePushResult checks git push --porcelain output for ref status flags.
+// In porcelain mode, each ref gets a tab-delimited status line:
+//
+//	<flag>\t<from>:<to>\t<summary>
+//
+// where flag '=' means the ref was already up-to-date. This is locale-independent,
+// unlike the human-readable "Everything up-to-date" message.
+func parsePushResult(output string) pushResult {
+	for _, line := range strings.Split(output, "\n") {
+		if strings.HasPrefix(line, "=\t") {
+			return pushResult{upToDate: true}
+		}
+	}
+	return pushResult{upToDate: false}
+}
+
+// finishPush stops the progress dots and prints "already up-to-date" or "done"
+// depending on the push result. Only prints the settings commit hint when new
+// content was actually pushed.
+func finishPush(ctx context.Context, stop func(string), result pushResult, target string) {
+	if result.upToDate {
+		stop(" already up-to-date")
+	} else {
+		stop(" done")
+		printSettingsCommitHint(ctx, target)
+	}
+	printCheckpointsV2MigrationHint(ctx)
+}
+
 // tryPushSessionsCommon attempts to push the sessions branch.
-func tryPushSessionsCommon(ctx context.Context, remote, branchName string) error {
+func tryPushSessionsCommon(ctx context.Context, remote, branchName string) (pushResult, error) {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
 
-	// Use --no-verify to prevent recursive hook calls
-	cmd := CheckpointGitCommand(ctx, remote, "push", "--no-verify", remote, branchName)
+	// Use --no-verify to prevent recursive hook calls.
+	// Use --porcelain for machine-readable, locale-independent output.
+	cmd := CheckpointGitCommand(ctx, remote, "push", "--no-verify", "--porcelain", remote, branchName)
 
 	output, err := cmd.CombinedOutput()
+	outputStr := string(output)
 	if err != nil {
 		// Check if it's a non-fast-forward error (we can try to recover)
-		if strings.Contains(string(output), "non-fast-forward") ||
-			strings.Contains(string(output), "rejected") {
-			return errors.New("non-fast-forward")
+		if strings.Contains(outputStr, "non-fast-forward") ||
+			strings.Contains(outputStr, "rejected") {
+			return pushResult{}, errors.New("non-fast-forward")
 		}
-		return fmt.Errorf("push failed: %s", output)
+		return pushResult{}, fmt.Errorf("push failed: %s", outputStr)
 	}
-	return nil
+
+	return parsePushResult(outputStr), nil
 }
 
 // fetchAndRebaseSessionsCommon fetches remote sessions and rebases local commits
@@ -395,7 +497,7 @@ func isURL(target string) bool {
 }
 
 // createMergeCommitCommon creates a merge commit with multiple parents.
-func createMergeCommitCommon(repo *git.Repository, treeHash plumbing.Hash, parents []plumbing.Hash, message string) (plumbing.Hash, error) {
+func createMergeCommitCommon(ctx context.Context, repo *git.Repository, treeHash plumbing.Hash, parents []plumbing.Hash, message string) (plumbing.Hash, error) {
 	authorName, authorEmail := GetGitAuthorFromRepo(repo)
 	now := time.Now()
 	sig := object.Signature{
@@ -411,6 +513,8 @@ func createMergeCommitCommon(repo *git.Repository, treeHash plumbing.Hash, paren
 		Committer:    sig,
 		Message:      message,
 	}
+
+	checkpoint.SignCommitBestEffort(ctx, commit)
 
 	obj := repo.Storer.NewEncodedObject()
 	if err := commit.Encode(obj); err != nil {

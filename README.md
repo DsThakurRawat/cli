@@ -74,6 +74,8 @@ cd your-project && entire enable
 entire status
 ```
 
+After the initial setup, use `entire configure` to add/remove agents or update setup-related options, and use `entire enable` / `entire disable` to toggle Entire on or off.
+
 ## Release Channels
 
 Entire currently ships two release channels:
@@ -97,7 +99,12 @@ How to use each channel:
 entire enable
 ```
 
-This installs agent and Git hooks to work with your AI agent. You'll be prompted to select which agents to enable. To enable a specific agent non-interactively, use `entire enable --agent <name>` (e.g., `entire enable --agent cursor`).
+On a repo that has not been enabled yet, `entire enable` runs the initial enable flow: it creates Entire settings, installs git hooks, and prompts you to choose which agent hooks to install. To enable a specific agent non-interactively, use `entire enable --agent <name>` (for example, `entire enable --agent cursor`).
+
+After setup:
+
+- Use `entire enable` to turn Entire back on if the repo is currently disabled.
+- Use `entire configure` to change which agents are installed or to update setup-related settings.
 
 The hooks capture session data as you work. Checkpoints are created when you or the agent make a git commit. Your code commits stay clean, Entire never creates commits on your active branch. All session metadata is stored on a separate `entire/checkpoints/v1` branch.
 
@@ -225,6 +232,7 @@ go test -tags=integration ./cmd/entire/cli/integration_test -run TestLogin
 | Command          | Description                                                                                       |
 | ---------------- | ------------------------------------------------------------------------------------------------- |
 | `entire clean`   | Clean up session data and orphaned Entire data (use `--all` for repo-wide cleanup)                |
+| `entire configure` | Configure agents and setup options for the current repository                                  |
 | `entire disable` | Remove Entire hooks from repository                                                               |
 | `entire doctor`  | Fix or clean up stuck sessions                                                                    |
 | `entire enable`  | Enable Entire in your repository                                                                  |
@@ -251,11 +259,46 @@ go test -tags=integration ./cmd/entire/cli/integration_test -run TestLogin
 **Examples:**
 
 ```
-# Force reinstall hooks
+# First-time setup with a specific agent
+entire enable --agent claude-code
+
+# Re-enable a disabled repo
+entire enable
+
+# Re-enable and refresh hooks
 entire enable --force
 
 # Save settings locally (not committed to git)
 entire enable --local
+```
+
+`entire enable` is primarily for turning Entire on. On an unconfigured repo it will also bootstrap setup, but once the repo is already configured, `entire configure` is the clearer command for managing agents and setup options.
+
+### `entire configure`
+
+Use `entire configure` after the repo is already set up and you want to change the configuration without framing the action as an enable/disable toggle.
+
+Typical uses:
+
+- Add another agent
+- Remove an agent
+- Reinstall hooks for selected agents
+- Update settings such as `--checkpoint-remote` or `--skip-push-sessions`
+
+**Examples:**
+
+```bash
+# Add or remove agents interactively
+entire configure
+
+# Install or refresh hooks for one agent non-interactively
+entire configure --agent claude-code --force
+
+# Update setup settings on an existing repo
+entire configure --checkpoint-remote github:myorg/checkpoints-private
+
+# Remove one agent's hooks
+entire configure --remove claude-code
 ```
 
 ## Configuration
@@ -337,6 +380,21 @@ Entire derives the git URL automatically using the same protocol (SSH or HTTPS) 
 - Push `entire/checkpoints/v1` to the checkpoint repo instead of your default push remote
 - Skip pushing if a fork is detected (push remote owner differs from checkpoint repo owner)
 - If the remote is unreachable, warn and continue without blocking your main push
+
+#### `ENTIRE_CHECKPOINT_TOKEN`
+
+`ENTIRE_CHECKPOINT_TOKEN` allows you to provide a dedicated token for checkpoint repository operations, without modifying the credentials used for your primary repository.
+
+When this environment variable is set, Entire behaves as follows:
+
+- Injects the token into HTTPS Git operations used for checkpoint fetch and push
+- If `checkpoint_remote` is configured:
+  - Prefers an HTTPS URL for the checkpoint remote when a token is present, even if the repository’s `origin` uses SSH
+- If `checkpoint_remote` is not configured:
+  - Falls back to using the default `origin` remote
+- If `checkpoint_remote` configuration cannot be loaded:
+  - Falls back to `origin`
+  - If `origin` is a valid SSH or HTTPS Git remote, Entire converts it to an HTTPS URL to enable token-based authentication
 
 ### Auto-Summarization
 
@@ -461,6 +519,21 @@ mise trust
 # Build the CLI
 mise run build
 ```
+
+### Dev Container
+
+The repo includes a `.devcontainer/` configuration that installs the system packages used by local development and CI (`git`, `tmux`, `gnome-keyring`, etc) and then bootstraps the repo's `mise` toolchain.
+
+Open the folder in a Dev Container, or start it from the `devcontainer` CLI as follows:
+
+```bash
+devcontainer up --workspace-folder .
+devcontainer exec --workspace-folder . bash -lc '.devcontainer/run-with-keyring.sh'
+```
+
+The container's `postCreateCommand` runs `mise trust --yes && mise install`, so Go, `golangci-lint`, `gotestsum`, `shellcheck`, and the canary E2E helper binaries are ready after creation. Use `.devcontainer/run-with-keyring.sh <command>` for commands that touch the Linux keyring, including `mise run test:ci`.
+
+If `ENTIRE_DEVCONTAINER_KEYRING_PASSWORD` is set in the environment, `.devcontainer/run-with-keyring.sh` uses that value to unlock the keyring non-interactively. If it is unset, the script generates a random password for the session automatically.
 
 ### Common Tasks
 

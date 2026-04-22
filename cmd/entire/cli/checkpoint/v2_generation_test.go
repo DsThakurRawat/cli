@@ -27,7 +27,7 @@ func TestReadGeneration_EmptyTree_ReturnsDefault(t *testing.T) {
 	emptyTree, err := BuildTreeFromEntries(context.Background(), repo, map[string]object.TreeEntry{})
 	require.NoError(t, err)
 
-	gen, err := store.readGeneration(emptyTree)
+	gen, err := store.ReadGeneration(emptyTree)
 	require.NoError(t, err)
 
 	assert.True(t, gen.OldestCheckpointAt.IsZero())
@@ -53,7 +53,7 @@ func TestReadGeneration_ParsesJSON(t *testing.T) {
 	require.NoError(t, err)
 
 	// Read it back
-	gen, err := store.readGeneration(treeHash)
+	gen, err := store.ReadGeneration(treeHash)
 	require.NoError(t, err)
 
 	assert.True(t, gen.OldestCheckpointAt.Equal(now.Add(-1*time.Hour)))
@@ -82,7 +82,7 @@ func TestWriteGeneration_RoundTrips(t *testing.T) {
 	treeHash, err := BuildTreeFromEntries(context.Background(), repo, entries)
 	require.NoError(t, err)
 
-	gen, err := store.readGeneration(treeHash)
+	gen, err := store.ReadGeneration(treeHash)
 	require.NoError(t, err)
 
 	assert.True(t, gen.OldestCheckpointAt.Equal(now))
@@ -108,12 +108,12 @@ func TestReadGenerationFromRef(t *testing.T) {
 
 	refName := plumbing.ReferenceName(paths.V2FullCurrentRefName)
 	authorName, authorEmail := GetGitAuthorFromRepo(repo)
-	commitHash, err := CreateCommit(repo, treeHash, plumbing.ZeroHash, "test", authorName, authorEmail)
+	commitHash, err := CreateCommit(context.Background(), repo, treeHash, plumbing.ZeroHash, "test", authorName, authorEmail)
 	require.NoError(t, err)
 	require.NoError(t, repo.Storer.SetReference(plumbing.NewHashReference(refName, commitHash)))
 
 	// Read back via ref
-	result, err := store.readGenerationFromRef(refName)
+	result, err := store.ReadGenerationFromRef(refName)
 	require.NoError(t, err)
 
 	assert.True(t, result.OldestCheckpointAt.Equal(now))
@@ -127,8 +127,8 @@ func TestAddGenerationJSONToTree(t *testing.T) {
 
 	// Start with a root tree that has a shard directory entry (simulating checkpoint data)
 	shardEntries := map[string]object.TreeEntry{}
-	shardEntries["aa/bbccddeeff/0/full.jsonl"] = object.TreeEntry{
-		Name: "full.jsonl",
+	shardEntries["aa/bbccddeeff/0/"+paths.V2RawTranscriptFileName] = object.TreeEntry{
+		Name: paths.V2RawTranscriptFileName,
 		Mode: 0o100644,
 		Hash: plumbing.ZeroHash, // dummy
 	}
@@ -146,7 +146,7 @@ func TestAddGenerationJSONToTree(t *testing.T) {
 	assert.NotEqual(t, rootTreeHash, newRootHash)
 
 	// Verify generation.json is present and shard dir is preserved
-	readGen, err := store.readGeneration(newRootHash)
+	readGen, err := store.ReadGeneration(newRootHash)
 	require.NoError(t, err)
 	assert.False(t, readGen.OldestCheckpointAt.IsZero())
 
@@ -233,7 +233,7 @@ func TestWriteCommittedFull_NoGenerationJSON(t *testing.T) {
 	}
 
 	// Checkpoint data should still be present
-	content := v2ReadFile(t, fullTree, cpID.Path()+"/0/"+paths.TranscriptFileName)
+	content := v2ReadFile(t, fullTree, cpID.Path()+"/0/"+paths.V2RawTranscriptFileName)
 	assert.Contains(t, content, "hello")
 }
 
@@ -276,7 +276,7 @@ func TestUpdateCommitted_DoesNotAddGenerationJSON(t *testing.T) {
 	}
 
 	// Verify the transcript was actually updated (sanity check)
-	content := v2ReadFile(t, fullTree, cpID.Path()+"/0/"+paths.TranscriptFileName)
+	content := v2ReadFile(t, fullTree, cpID.Path()+"/0/"+paths.V2RawTranscriptFileName)
 	assert.Contains(t, content, "finalized")
 }
 
@@ -297,7 +297,7 @@ func createArchivedRef(t *testing.T, repo *git.Repository, number int) {
 	require.NoError(t, err)
 
 	authorName, authorEmail := GetGitAuthorFromRepo(repo)
-	commitHash, err := CreateCommit(repo, treeHash, plumbing.ZeroHash, "archived", authorName, authorEmail)
+	commitHash, err := CreateCommit(context.Background(), repo, treeHash, plumbing.ZeroHash, "archived", authorName, authorEmail)
 	require.NoError(t, err)
 
 	refName := plumbing.ReferenceName(fmt.Sprintf("%s%013d", paths.V2FullRefPrefix, number))
@@ -405,7 +405,7 @@ func TestRotateGeneration_ArchivesCurrentAndCreatesNewOrphan(t *testing.T) {
 	// Archived ref should contain generation.json with timestamps
 	archiveCommit, err := repo.CommitObject(archiveRef.Hash())
 	require.NoError(t, err)
-	archiveGen, err := store.readGeneration(archiveCommit.TreeHash)
+	archiveGen, err := store.ReadGeneration(archiveCommit.TreeHash)
 	require.NoError(t, err)
 	assert.False(t, archiveGen.OldestCheckpointAt.IsZero(), "archived generation should have oldest timestamp")
 	assert.False(t, archiveGen.NewestCheckpointAt.IsZero(), "archived generation should have newest timestamp")
@@ -414,7 +414,7 @@ func TestRotateGeneration_ArchivesCurrentAndCreatesNewOrphan(t *testing.T) {
 	archiveTree, err := archiveCommit.Tree()
 	require.NoError(t, err)
 	for _, cpID := range cpIDs {
-		_, treeErr := archiveTree.File(cpID.Path() + "/0/" + paths.TranscriptFileName)
+		_, treeErr := archiveTree.File(cpID.Path() + "/0/" + paths.V2RawTranscriptFileName)
 		require.NoError(t, treeErr, "archived tree should contain transcript for %s", cpID)
 	}
 
@@ -460,7 +460,7 @@ func TestRotateGeneration_SequentialNumbering(t *testing.T) {
 	// Verify each archived ref has generation.json with timestamps
 	for _, name := range archived {
 		refName := plumbing.ReferenceName(paths.V2FullRefPrefix + name)
-		gen, readErr := store.readGenerationFromRef(refName)
+		gen, readErr := store.ReadGenerationFromRef(refName)
 		require.NoError(t, readErr)
 		assert.False(t, gen.OldestCheckpointAt.IsZero(), "archive %s should have oldest timestamp", name)
 		assert.False(t, gen.NewestCheckpointAt.IsZero(), "archive %s should have newest timestamp", name)
@@ -502,7 +502,7 @@ func TestReadGeneration_BackwardCompatible(t *testing.T) {
 	require.NoError(t, err)
 
 	// Should parse without error, ignoring the unknown checkpoints field
-	gen, err := store.readGeneration(treeHash)
+	gen, err := store.ReadGeneration(treeHash)
 	require.NoError(t, err)
 
 	expected := time.Date(2026, 3, 25, 12, 0, 0, 0, time.UTC)

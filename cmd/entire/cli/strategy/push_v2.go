@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/entireio/cli/cmd/entire/cli/checkpoint"
+	"github.com/entireio/cli/cmd/entire/cli/checkpoint/remote"
 	"github.com/entireio/cli/cmd/entire/cli/jsonutil"
 	"github.com/entireio/cli/cmd/entire/cli/logging"
 	"github.com/entireio/cli/cmd/entire/cli/paths"
@@ -41,23 +42,26 @@ func pushRefIfNeeded(ctx context.Context, target string, refName plumbing.Refere
 }
 
 // tryPushRef attempts to push a custom ref using an explicit refspec.
-func tryPushRef(ctx context.Context, target string, refName plumbing.ReferenceName) error {
+func tryPushRef(ctx context.Context, target string, refName plumbing.ReferenceName) (pushResult, error) {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
 
-	// Use --no-verify to prevent recursive hook calls (this runs inside pre-push)
+	// Use --no-verify to prevent recursive hook calls (this runs inside pre-push).
+	// Use --porcelain for machine-readable, locale-independent output.
 	refSpec := fmt.Sprintf("%s:%s", refName, refName)
-	cmd := CheckpointGitCommand(ctx, target, "push", "--no-verify", target, refSpec)
+	cmd := CheckpointGitCommand(ctx, target, "push", "--no-verify", "--porcelain", target, refSpec)
 
 	output, err := cmd.CombinedOutput()
+	outputStr := string(output)
 	if err != nil {
-		if strings.Contains(string(output), "non-fast-forward") ||
-			strings.Contains(string(output), "rejected") {
-			return errors.New("non-fast-forward")
+		if strings.Contains(outputStr, "non-fast-forward") ||
+			strings.Contains(outputStr, "rejected") {
+			return pushResult{}, errors.New("non-fast-forward")
 		}
-		return fmt.Errorf("push failed: %s", output)
+		return pushResult{}, fmt.Errorf("push failed: %s", outputStr)
 	}
-	return nil
+
+	return parsePushResult(outputStr), nil
 }
 
 // doPushRef pushes a custom ref with fetch+merge recovery on conflict.
@@ -71,9 +75,8 @@ func doPushRef(ctx context.Context, target string, refName plumbing.ReferenceNam
 	fmt.Fprintf(os.Stderr, "[entire] Pushing %s to %s...", shortRef, displayTarget)
 	stop := startProgressDots(os.Stderr)
 
-	if err := tryPushRef(ctx, target, refName); err == nil {
-		stop(" done")
-		printSettingsCommitHint(ctx, target)
+	if result, err := tryPushRef(ctx, target, refName); err == nil {
+		finishPush(ctx, stop, result, target)
 		return nil
 	}
 	stop("")
@@ -92,13 +95,12 @@ func doPushRef(ctx context.Context, target string, refName plumbing.ReferenceNam
 	fmt.Fprintf(os.Stderr, "[entire] Pushing %s to %s...", shortRef, displayTarget)
 	stop = startProgressDots(os.Stderr)
 
-	if err := tryPushRef(ctx, target, refName); err != nil {
+	if result, err := tryPushRef(ctx, target, refName); err != nil {
 		stop("")
 		fmt.Fprintf(os.Stderr, "[entire] Warning: failed to push %s after sync: %v\n", shortRef, err)
 		printCheckpointRemoteHint(target)
 	} else {
-		stop(" done")
-		printSettingsCommitHint(ctx, target)
+		finishPush(ctx, stop, result, target)
 	}
 
 	return nil
@@ -190,7 +192,7 @@ func fetchAndMergeRef(ctx context.Context, target string, refName plumbing.Refer
 		return fmt.Errorf("failed to build merged tree: %w", err)
 	}
 
-	mergeCommitHash, err := createMergeCommitCommon(repo, mergedTreeHash,
+	mergeCommitHash, err := createMergeCommitCommon(ctx, repo, mergedTreeHash,
 		[]plumbing.Hash{localRef.Hash(), remoteRef.Hash()},
 		"Merge remote "+shortRefName(refName))
 	if err != nil {
@@ -322,7 +324,7 @@ func handleRotationConflict(ctx context.Context, target, fetchTarget string, rep
 	}
 
 	// Create commit parented on archive's commit (fast-forward)
-	mergeCommitHash, err := createMergeCommitCommon(repo, mergedTreeHash,
+	mergeCommitHash, err := createMergeCommitCommon(ctx, repo, mergedTreeHash,
 		[]plumbing.Hash{archiveRef.Hash()},
 		"Merge local checkpoints into archived generation")
 	if err != nil {
@@ -335,7 +337,7 @@ func handleRotationConflict(ctx context.Context, target, fetchTarget string, rep
 		return fmt.Errorf("failed to update archive ref: %w", err)
 	}
 
-	if pushErr := tryPushRef(ctx, target, archiveRefName); pushErr != nil {
+	if _, pushErr := tryPushRef(ctx, target, archiveRefName); pushErr != nil {
 		return fmt.Errorf("failed to push updated archive: %w", pushErr)
 	}
 
@@ -410,7 +412,13 @@ func pushV2Refs(ctx context.Context, target string) {
 	if err != nil {
 		return
 	}
-	store := checkpoint.NewV2GitStore(repo, ResolveCheckpointURL(ctx, "origin"))
+	v2URL, err := remote.FetchURL(ctx)
+	if err != nil {
+		logging.Debug(ctx, "push-v2: using origin for archived generation fetch remote",
+			slog.String("error", err.Error()),
+		)
+	}
+	store := checkpoint.NewV2GitStore(repo, v2URL)
 	archived, err := store.ListArchivedGenerations()
 	if err != nil || len(archived) == 0 {
 		return

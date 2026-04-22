@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"strings"
@@ -178,7 +179,7 @@ func (s *V2GitStore) updateCommittedMain(ctx context.Context, opts UpdateCommitt
 
 	authorName, authorEmail := GetGitAuthorFromRepo(s.repo)
 	commitMsg := fmt.Sprintf("Finalize checkpoint: %s\n", opts.CheckpointID)
-	if err := s.updateRef(refName, newTreeHash, parentHash, commitMsg, authorName, authorEmail); err != nil {
+	if err := s.updateRef(ctx, refName, newTreeHash, parentHash, commitMsg, authorName, authorEmail); err != nil {
 		return 0, err
 	}
 
@@ -208,19 +209,56 @@ func (s *V2GitStore) updateCommittedFullTranscript(ctx context.Context, opts Upd
 		return err
 	}
 
-	// Clear existing transcript entries at this session path before writing new ones
+	// Ignore precompute if invariants are violated — fall back to fresh chunking.
+	precomputed := opts.PrecomputedBlobs
+	if precomputed != nil && !precomputed.isUsable() {
+		precomputed = nil
+	}
+
+	// Short-circuit: if the existing raw_transcript_hash.txt already matches
+	// the new transcript's sha256, the existing chunk entries represent the
+	// same content — preserve them and skip chunking + zlib.
+	rawTranscriptPath := sessionPath + paths.V2RawTranscriptFileName
+	rawHashPath := sessionPath + paths.V2RawTranscriptHashFileName
+	var newContentHash string
+	if precomputed != nil {
+		newContentHash = precomputed.ContentHash
+	} else {
+		newContentHash = fmt.Sprintf("sha256:%x", sha256.Sum256(opts.Transcript.Bytes()))
+	}
+	if existing, ok := entries[rawHashPath]; ok {
+		if blob, err := s.repo.BlobObject(existing.Hash); err == nil {
+			if rdr, rerr := blob.Reader(); rerr == nil {
+				existingHash, readErr := io.ReadAll(rdr)
+				_ = rdr.Close()
+				if readErr == nil && string(existingHash) == newContentHash {
+					// Content unchanged — skip tree surgery and ref advance to
+					// avoid a no-op commit on /full/current. The existing ref
+					// already references the correct tree.
+					return nil
+				}
+			}
+		}
+	}
+
+	// Clear existing transcript artifacts for this session path before writing new ones.
+	// Preserve non-transcript metadata under the same session (e.g., tasks/*).
 	for key := range entries {
-		if strings.HasPrefix(key, sessionPath) {
+		switch {
+		case key == rawTranscriptPath:
+			delete(entries, key)
+		case strings.HasPrefix(key, rawTranscriptPath+"."):
+			delete(entries, key)
+		case key == rawHashPath:
 			delete(entries, key)
 		}
 	}
 
-	redactedTranscript, err := s.writeTranscriptBlobs(ctx, opts.Transcript, opts.Agent, sessionPath, entries)
-	if err != nil {
+	if err := s.writeTranscriptBlobs(ctx, opts.Transcript, opts.Agent, precomputed, sessionPath, entries); err != nil {
 		return err
 	}
 
-	if err := s.writeContentHash(redactedTranscript, sessionPath, entries); err != nil {
+	if err := s.writeContentHashFromPrecompute(newContentHash, precomputed, sessionPath, entries); err != nil {
 		return err
 	}
 
@@ -232,12 +270,12 @@ func (s *V2GitStore) updateCommittedFullTranscript(ctx context.Context, opts Upd
 
 	authorName, authorEmail := GetGitAuthorFromRepo(s.repo)
 	commitMsg := fmt.Sprintf("Finalize checkpoint: %s\n", opts.CheckpointID)
-	return s.updateRef(refName, newTreeHash, parentHash, commitMsg, authorName, authorEmail)
+	return s.updateRef(ctx, refName, newTreeHash, parentHash, commitMsg, authorName, authorEmail)
 }
 
 // writeCommittedMain writes metadata entries to the /main ref.
 // This includes session metadata and prompts — but NOT the raw transcript
-// (full.jsonl) or content hash (content_hash.txt), which go to /full/current.
+// (raw_transcript) or content hash (raw_transcript_hash.txt), which go to /full/current.
 // Returns the session index used, so the caller can pass it to writeCommittedFullTranscript.
 func (s *V2GitStore) writeCommittedMain(ctx context.Context, opts WriteCommittedOptions) (int, error) {
 	refName := plumbing.ReferenceName(paths.V2MainRefName)
@@ -272,7 +310,7 @@ func (s *V2GitStore) writeCommittedMain(ctx context.Context, opts WriteCommitted
 	}
 
 	commitMsg := fmt.Sprintf("Checkpoint: %s\n", opts.CheckpointID)
-	if err := s.updateRef(refName, newTreeHash, parentHash, commitMsg, opts.AuthorName, opts.AuthorEmail); err != nil {
+	if err := s.updateRef(ctx, refName, newTreeHash, parentHash, commitMsg, opts.AuthorName, opts.AuthorEmail); err != nil {
 		return 0, err
 	}
 	return sessionIndex, nil
@@ -321,8 +359,8 @@ func (s *V2GitStore) writeMainCheckpointEntries(ctx context.Context, opts WriteC
 
 // writeMainSessionToSubdirectory writes a single session's metadata, prompts,
 // and compact transcript to a session subdirectory (0/, 1/, 2/, … indexed by
-// session order within the checkpoint). The raw transcript (full.jsonl) and its
-// content hash (content_hash.txt) go to /full/current, not here.
+// session order within the checkpoint). The raw transcript (raw_transcript) and its
+// content hash (raw_transcript_hash.txt) go to /full/current, not here.
 func (s *V2GitStore) writeMainSessionToSubdirectory(opts WriteCommittedOptions, sessionPath string, entries map[string]object.TreeEntry) (SessionFilePaths, error) {
 	filePaths := SessionFilePaths{}
 
@@ -409,21 +447,6 @@ func (s *V2GitStore) writeMainSessionToSubdirectory(opts WriteCommittedOptions, 
 	return filePaths, nil
 }
 
-// writeContentHash computes and writes the content hash for already-redacted transcript bytes.
-func (s *V2GitStore) writeContentHash(redactedTranscript []byte, sessionPath string, entries map[string]object.TreeEntry) error {
-	contentHash := fmt.Sprintf("sha256:%x", sha256.Sum256(redactedTranscript))
-	hashBlob, err := CreateBlobFromContent(s.repo, []byte(contentHash))
-	if err != nil {
-		return err
-	}
-	entries[sessionPath+paths.ContentHashFileName] = object.TreeEntry{
-		Name: sessionPath + paths.ContentHashFileName,
-		Mode: filemode.Regular,
-		Hash: hashBlob,
-	}
-	return nil
-}
-
 // writeCompactTranscriptHash computes and writes the SHA-256 hash of the compact transcript.
 func (s *V2GitStore) writeCompactTranscriptHash(compactTranscript []byte, sessionPath string, entries map[string]object.TreeEntry) error {
 	hash := fmt.Sprintf("sha256:%x", sha256.Sum256(compactTranscript))
@@ -497,12 +520,12 @@ func (s *V2GitStore) writeCommittedFullTranscript(ctx context.Context, opts Writ
 		}
 	}
 
-	redactedTranscript, err := s.writeTranscriptBlobs(ctx, transcript, opts.Agent, sessionPath, entries)
-	if err != nil {
+	if err := s.writeTranscriptBlobs(ctx, transcript, opts.Agent, nil, sessionPath, entries); err != nil {
 		return err
 	}
 
-	if err := s.writeContentHash(redactedTranscript, sessionPath, entries); err != nil {
+	contentHash := fmt.Sprintf("sha256:%x", sha256.Sum256(transcript.Bytes()))
+	if err := s.writeContentHashFromPrecompute(contentHash, nil, sessionPath, entries); err != nil {
 		return err
 	}
 
@@ -513,7 +536,7 @@ func (s *V2GitStore) writeCommittedFullTranscript(ctx context.Context, opts Writ
 	}
 
 	commitMsg := fmt.Sprintf("Checkpoint: %s\n", opts.CheckpointID)
-	if err := s.updateRef(refName, newTreeHash, parentHash, commitMsg, opts.AuthorName, opts.AuthorEmail); err != nil {
+	if err := s.updateRef(ctx, refName, newTreeHash, parentHash, commitMsg, opts.AuthorName, opts.AuthorEmail); err != nil {
 		return err
 	}
 
@@ -540,20 +563,29 @@ func (s *V2GitStore) writeCommittedFullTranscript(ctx context.Context, opts Writ
 }
 
 // writeTranscriptBlobs writes pre-redacted, chunked transcript blobs to entries.
-// Returns the transcript bytes so the caller can compute the content hash.
-func (s *V2GitStore) writeTranscriptBlobs(ctx context.Context, transcript redact.RedactedBytes, agentType types.AgentType, sessionPath string, entries map[string]object.TreeEntry) ([]byte, error) {
-	raw := transcript.Bytes()
-	chunks, err := agent.ChunkTranscript(ctx, raw, agentType)
-	if err != nil {
-		return nil, fmt.Errorf("failed to chunk transcript: %w", err)
+// When precomputed is non-nil, reuses its chunk blob hashes and skips both
+// ChunkTranscript and CreateBlobFromContent.
+func (s *V2GitStore) writeTranscriptBlobs(ctx context.Context, transcript redact.RedactedBytes, agentType types.AgentType, precomputed *PrecomputedTranscriptBlobs, sessionPath string, entries map[string]object.TreeEntry) error {
+	var chunkHashes []plumbing.Hash
+	if precomputed != nil {
+		chunkHashes = precomputed.ChunkHashes
+	} else {
+		chunks, err := chunkTranscript(ctx, transcript.Bytes(), agentType)
+		if err != nil {
+			return fmt.Errorf("failed to chunk transcript: %w", err)
+		}
+		chunkHashes = make([]plumbing.Hash, len(chunks))
+		for i, chunk := range chunks {
+			h, err := CreateBlobFromContent(s.repo, chunk)
+			if err != nil {
+				return err
+			}
+			chunkHashes[i] = h
+		}
 	}
 
-	for i, chunk := range chunks {
-		chunkPath := sessionPath + agent.ChunkFileName(paths.TranscriptFileName, i)
-		blobHash, err := CreateBlobFromContent(s.repo, chunk)
-		if err != nil {
-			return nil, err
-		}
+	for i, blobHash := range chunkHashes {
+		chunkPath := sessionPath + agent.ChunkFileName(paths.V2RawTranscriptFileName, i)
 		entries[chunkPath] = object.TreeEntry{
 			Name: chunkPath,
 			Mode: filemode.Regular,
@@ -561,7 +593,29 @@ func (s *V2GitStore) writeTranscriptBlobs(ctx context.Context, transcript redact
 		}
 	}
 
-	return raw, nil
+	return nil
+}
+
+// writeContentHashFromPrecompute writes the content-hash blob for the given
+// transcript hash. When precomputed is non-nil, reuses its ContentHashBlob
+// hash; otherwise creates a fresh blob.
+func (s *V2GitStore) writeContentHashFromPrecompute(contentHash string, precomputed *PrecomputedTranscriptBlobs, sessionPath string, entries map[string]object.TreeEntry) error {
+	var hashBlob plumbing.Hash
+	if precomputed != nil {
+		hashBlob = precomputed.ContentHashBlob
+	} else {
+		h, err := CreateBlobFromContent(s.repo, []byte(contentHash))
+		if err != nil {
+			return err
+		}
+		hashBlob = h
+	}
+	entries[sessionPath+paths.V2RawTranscriptHashFileName] = object.TreeEntry{
+		Name: sessionPath + paths.V2RawTranscriptHashFileName,
+		Mode: filemode.Regular,
+		Hash: hashBlob,
+	}
+	return nil
 }
 
 // validateWriteOpts validates identifiers in WriteCommittedOptions.
@@ -649,5 +703,5 @@ func (s *V2GitStore) UpdateSummary(ctx context.Context, checkpointID id.Checkpoi
 
 	authorName, authorEmail := GetGitAuthorFromRepo(s.repo)
 	commitMsg := fmt.Sprintf("Update summary for checkpoint %s (session: %s)", checkpointID, metadata.SessionID)
-	return s.updateRef(refName, newTreeHash, parentHash, commitMsg, authorName, authorEmail)
+	return s.updateRef(ctx, refName, newTreeHash, parentHash, commitMsg, authorName, authorEmail)
 }

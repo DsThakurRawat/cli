@@ -20,6 +20,7 @@ import (
 
 	"github.com/entireio/cli/cmd/entire/cli/checkpoint"
 	"github.com/entireio/cli/cmd/entire/cli/checkpoint/id"
+	"github.com/entireio/cli/cmd/entire/cli/checkpoint/remote"
 	"github.com/entireio/cli/cmd/entire/cli/gitops"
 	"github.com/entireio/cli/cmd/entire/cli/logging"
 	"github.com/entireio/cli/cmd/entire/cli/paths"
@@ -59,6 +60,13 @@ func hasTTY() bool {
 	// Like Gemini, the subprocess may inherit the user's TTY but can't respond
 	// to interactive prompts.
 	if os.Getenv("COPILOT_CLI") != "" {
+		return false
+	}
+
+	// Pi Coding Agent sets PI_CODING_AGENT=true when running shell commands.
+	// Like other agents, the subprocess may inherit the TTY but can't respond
+	// to interactive prompts.
+	if os.Getenv("PI_CODING_AGENT") != "" {
 		return false
 	}
 
@@ -223,6 +231,93 @@ func (s *ManualCommitStrategy) CommitMsg(_ context.Context, commitMsgFile string
 	return nil
 }
 
+// PostRewrite is called by the git post-rewrite hook after amend/rebase
+// operations. It keeps session linkage aligned with rewritten commit SHAs in
+// the current worktree.
+func (s *ManualCommitStrategy) PostRewrite(ctx context.Context, rewriteType string, r io.Reader) error {
+	logCtx := logging.WithComponent(ctx, "checkpoint")
+	if rewriteType != "amend" && rewriteType != "rebase" {
+		logging.Debug(logCtx, "post-rewrite: unsupported rewrite type, skipping",
+			slog.String("rewrite_type", rewriteType),
+		)
+		return nil
+	}
+
+	rewrites, err := parsePostRewritePairs(r)
+	if err != nil {
+		return err
+	}
+	if len(rewrites) == 0 {
+		return nil
+	}
+
+	worktreePath, err := paths.WorktreeRoot(ctx)
+	if err != nil {
+		return nil //nolint:nilerr // Hook must be resilient
+	}
+
+	sessions, err := s.findSessionsForWorktree(ctx, worktreePath)
+	if err != nil || len(sessions) == 0 {
+		return nil //nolint:nilerr // Hook must be resilient
+	}
+
+	repo, err := OpenRepository(ctx)
+	if err != nil {
+		return nil //nolint:nilerr // Hook must be resilient
+	}
+
+	for _, state := range sessions {
+		changed, err := s.remapSessionForRewrite(ctx, repo, state, rewrites)
+		if err != nil {
+			logging.Warn(logCtx, "post-rewrite: failed to remap session linkage",
+				slog.String("session_id", state.SessionID),
+				slog.String("error", err.Error()),
+			)
+			continue
+		}
+		if !changed {
+			continue
+		}
+		if err := s.saveSessionState(ctx, state); err != nil {
+			logging.Warn(logCtx, "post-rewrite: failed to save remapped session state",
+				slog.String("session_id", state.SessionID),
+				slog.String("error", err.Error()),
+			)
+			continue
+		}
+		logging.Info(logCtx, "post-rewrite: remapped session linkage",
+			slog.String("session_id", state.SessionID),
+			slog.String("rewrite_type", rewriteType),
+			slog.String("base_commit", truncateHash(state.BaseCommit)),
+		)
+	}
+
+	return nil
+}
+
+func parsePostRewritePairs(r io.Reader) ([]rewritePair, error) {
+	scanner := bufio.NewScanner(r)
+	var pairs []rewritePair
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			return nil, fmt.Errorf("invalid post-rewrite mapping line: %q", line)
+		}
+		pairs = append(pairs, rewritePair{
+			OldSHA: fields[0],
+			NewSHA: fields[1],
+		})
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("scan post-rewrite input: %w", err)
+	}
+	return pairs, nil
+}
+
 // hasUserContent checks if the message has any content besides comments and our trailer.
 func hasUserContent(message string) bool {
 	trailerPrefix := trailers.CheckpointTrailerKey + ":"
@@ -367,6 +462,8 @@ func (s *ManualCommitStrategy) PrepareCommitMsg(ctx context.Context, commitMsgFi
 		return nil
 	}
 	findSessionsSpan.End()
+
+	s.warnIfAttributionDiverged(ctx, sessions)
 
 	// Fast path: skip content detection for mid-turn agent commits.
 	if s.tryAgentCommitFastPath(ctx, commitMsgFile, sessions, source) {
@@ -626,6 +723,9 @@ type postCommitActionHandler struct {
 	allAgentFiles map[string]struct{} // Union of all sessions' FilesTouched for cross-session attribution
 
 	// Output: set by handler methods, read by caller after TransitionAndLog.
+	// condensed is true only when CondenseSession wrote data to the metadata branch.
+	// Both failures and skips (no transcript/files) leave condensed=false, which
+	// correctly preserves shadow branches and defers FullyCondensed marking.
 	condensed bool
 }
 
@@ -1305,13 +1405,21 @@ func (s *ManualCommitStrategy) condenseAndUpdateState(
 		return false
 	}
 
+	if result.Skipped {
+		logging.Debug(logCtx, "condensation skipped, session state unchanged",
+			slog.String("session_id", state.SessionID),
+			slog.String("checkpoint_id", checkpointID.String()),
+		)
+		return false
+	}
+
 	// Track this shadow branch for cleanup
 	shadowBranchesToDelete[shadowBranchName] = struct{}{}
 
 	// Update session state for the new base commit
 	newHead := head.Hash().String()
 	state.BaseCommit = newHead
-	state.AttributionBaseCommit = newHead
+	state.RealignAttributionBase(newHead)
 	state.StepCount = 0
 	state.CheckpointTranscriptStart = result.TotalTranscriptLines
 	state.CompactTranscriptStart += result.CompactTranscriptLines
@@ -1326,8 +1434,11 @@ func (s *ManualCommitStrategy) condenseAndUpdateState(
 	// decides whether to clear it based on carry-forward: if remaining files exist,
 	// the prompt must persist so the next condensation can read it.
 
-	// Save checkpoint ID so subsequent commits can reuse it (e.g., amend restores trailer)
+	// Save checkpoint ID so subsequent commits can reuse it (e.g., amend restores trailer).
+	// LastCheckpointCommitHash records the exact commit SHA so the reconcile path can
+	// distinguish a true reset (same SHA) from cherry-pick/rebase (same trailer, new SHA).
 	state.LastCheckpointID = checkpointID
+	state.LastCheckpointCommitHash = newHead
 
 	logging.Info(logCtx, "session condensed",
 		slog.String("strategy", "manual-commit"),
@@ -1360,7 +1471,7 @@ func (s *ManualCommitStrategy) updateBaseCommitIfChanged(ctx context.Context, st
 		// Keep AttributionBaseCommit in sync to prevent stale base drift.
 		// Without this, a subsequent condensation would diff from the old base,
 		// inflating human_added with lines from unrelated prior commits.
-		state.AttributionBaseCommit = newHead
+		state.RealignAttributionBase(newHead)
 		logging.Debug(logCtx, "post-commit: updated BaseCommit and AttributionBaseCommit",
 			slog.String("session_id", state.SessionID),
 			slog.String("new_head", truncateHash(newHead)),
@@ -1404,7 +1515,7 @@ func (s *ManualCommitStrategy) postCommitUpdateBaseCommitOnly(ctx context.Contex
 			// Keep AttributionBaseCommit in sync to prevent stale base drift.
 			// Without this, a subsequent condensation would diff from the old base,
 			// inflating human_added with lines from unrelated prior commits.
-			state.AttributionBaseCommit = newHead
+			state.RealignAttributionBase(newHead)
 			if err := s.saveSessionState(ctx, state); err != nil {
 				logging.Warn(logCtx, "failed to update session state",
 					slog.String("session_id", state.SessionID),
@@ -1897,6 +2008,38 @@ func (s *ManualCommitStrategy) extractModifiedFilesFromLiveTranscript(ctx contex
 	return modifiedFiles
 }
 
+// warnIfAttributionDiverged prints at most one stderr warning per call and
+// marks every divergent session as notified so subsequent invocations stay
+// silent until the next successful condensation (or reconcile) realigns
+// attribution and clears the flag via State.RealignAttributionBase.
+//
+// Divergence arises when the migrate path advances BaseCommit to a new HEAD
+// but intentionally leaves AttributionBaseCommit pinned (e.g., after a pull
+// or git reset to an unrelated commit). Writing to stderrWriter surfaces the
+// message in the user's terminal during prepare-commit-msg, not the agent's
+// transcript — stderr from the hook is TTY-bound to the invoking process.
+func (s *ManualCommitStrategy) warnIfAttributionDiverged(ctx context.Context, sessions []*SessionState) {
+	logCtx := logging.WithComponent(ctx, "checkpoint")
+	printed := false
+	for _, sess := range sessions {
+		if sess.AttributionBaseCommit == "" ||
+			sess.AttributionBaseCommit == sess.BaseCommit ||
+			sess.DivergenceNoticeShown {
+			continue
+		}
+		if !printed {
+			fmt.Fprintln(stderrWriter, "entire: session attribution diverged after recent history movement; figures may be off until next checkpoint")
+			printed = true
+		}
+		sess.DivergenceNoticeShown = true
+		if err := s.saveSessionState(ctx, sess); err != nil {
+			logging.Warn(logCtx, "failed to save divergence notice flag",
+				slog.String("session_id", sess.SessionID),
+				slog.String("error", err.Error()))
+		}
+	}
+}
+
 // tryAgentCommitFastPath skips content detection for mid-turn agent commits.
 // Returns true if the fast path was taken (trailer added or attempt made),
 // false if the caller should continue with normal content detection.
@@ -1919,20 +2062,44 @@ func (s *ManualCommitStrategy) tryAgentCommitFastPath(ctx context.Context, commi
 		return false
 	}
 	logCtx := logging.WithComponent(ctx, "checkpoint")
+	activeSessions := 0
+	emptyActiveSessions := 0
 	for _, state := range sessions {
-		if state.Phase.IsActive() {
-			_ = s.addTrailerForAgentCommit(logCtx, commitMsgFile, state, source) //nolint:errcheck // always returns nil; kept for signature stability
-			return true
+		if !state.Phase.IsActive() {
+			continue
 		}
+		activeSessions++
+		// Skip sessions that have no condensable content: no transcript path,
+		// no tracked files, and no shadow branch data (StepCount == 0). These
+		// would produce a Skipped result in CondenseSession, leaving the
+		// Entire-Checkpoint trailer pointing to nothing on the metadata branch.
+		// NOTE: conservative approximation of the skip gate in CondenseSession
+		// (which checks extracted data, not raw state). Keep aligned.
+		if state.TranscriptPath == "" && len(state.FilesTouched) == 0 && state.StepCount == 0 {
+			emptyActiveSessions++
+			logging.Debug(logCtx, "prepare-commit-msg: fast path skipping empty session",
+				slog.String("session_id", state.SessionID),
+				slog.String("agent_type", string(state.AgentType)),
+			)
+			continue
+		}
+		_ = s.addTrailerForAgentCommit(logCtx, commitMsgFile, state, source) //nolint:errcheck // always returns nil; kept for signature stability
+		return true
 	}
 	// Log why fast path didn't fire — collect session phases for diagnostics.
 	phases := make([]string, 0, len(sessions))
 	for _, state := range sessions {
 		phases = append(phases, string(state.Phase))
 	}
-	logging.Debug(logCtx, "prepare-commit-msg: fast path found no ACTIVE sessions",
+	message := "prepare-commit-msg: fast path found no ACTIVE sessions"
+	if activeSessions > 0 && emptyActiveSessions == activeSessions {
+		message = "prepare-commit-msg: fast path skipped all ACTIVE sessions as empty"
+	}
+	logging.Debug(logCtx, message,
 		slog.Bool("no_tty", noTTY),
 		slog.Int("sessions", len(sessions)),
+		slog.Int("active_sessions", activeSessions),
+		slog.Int("empty_active_sessions", emptyActiveSessions),
 		slog.Any("session_phases", phases),
 	)
 	return false
@@ -2086,11 +2253,18 @@ func (s *ManualCommitStrategy) InitializeSession(ctx context.Context, sessionID 
 			state.TranscriptPath = transcriptPath
 		}
 
-		// Clear checkpoint IDs on every new prompt.
-		// LastCheckpointID is set during PostCommit, cleared at new prompt.
-		// TurnCheckpointIDs tracks mid-turn checkpoints for stop-time finalization.
-		state.LastCheckpointID = ""
-		state.TurnCheckpointIDs = nil
+		// ORDERING: attribution runs BEFORE migrate to use the pre-migration
+		// BaseCommit as the base tree (preserving correct agent-line counts when
+		// HEAD moved between turns via pull/rebase). Migrate runs BEFORE the
+		// LastCheckpointID clear so the reconcile guard can read the checkpoint ID.
+		//
+		// Sequence: attribution → migrate → clear
+		//
+		// 1. Attribution uses state.BaseCommit to locate the shadow branch and
+		//    base tree. Running it before migrate ensures it diffs against the
+		//    original base, not the post-migration HEAD.
+		// 2. Migrate/reconcile reads state.LastCheckpointID — clearing it first
+		//    would prevent the reconcile path from ever firing at turn start.
 
 		// Calculate attribution at prompt start (BEFORE agent makes any changes)
 		// This captures user edits since the last checkpoint (or base commit for first prompt).
@@ -2102,9 +2276,25 @@ func (s *ManualCommitStrategy) InitializeSession(ctx context.Context, sessionID 
 
 		// Check if HEAD has moved (user pulled/rebased or committed)
 		// migrateShadowBranchIfNeeded handles renaming the shadow branch and updating state.BaseCommit
-		if _, err := s.migrateShadowBranchIfNeeded(ctx, repo, state); err != nil {
+		_, reconciled, err := s.migrateShadowBranchIfNeeded(ctx, repo, state)
+		if err != nil {
 			return fmt.Errorf("failed to check/migrate shadow branch: %w", err)
 		}
+		if reconciled {
+			// Reconcile advanced BaseCommit + AttributionBaseCommit to HEAD (the
+			// known checkpoint we reset to). The attribution just computed is
+			// against the stale pre-reset base and would count discarded-history
+			// edits as churn. Recompute against the new base so the next
+			// checkpoint sees accurate user-delta.
+			recomputed := s.calculatePromptAttributionAtStart(ctx, repo, state)
+			state.PendingPromptAttribution = &recomputed
+		}
+
+		// Clear checkpoint IDs on every new prompt.
+		// LastCheckpointID is set during PostCommit, cleared at new prompt.
+		// TurnCheckpointIDs tracks mid-turn checkpoints for stop-time finalization.
+		state.LastCheckpointID = ""
+		state.TurnCheckpointIDs = nil
 
 		if err := s.saveSessionState(ctx, state); err != nil {
 			return fmt.Errorf("failed to update session state: %w", err)
@@ -2436,6 +2626,29 @@ func (s *ManualCommitStrategy) HandleTurnEnd(ctx context.Context, state *Session
 	return nil
 }
 
+// precomputeTranscriptBlobsForFinalize chunks + zlib-compresses the redacted
+// transcript once for reuse across every checkpoint in the turn. Returns nil
+// (without error) when the transcript is empty — downstream stores skip
+// transcript updates in that case, so precompute would only write a wasted
+// empty-chunk blob to the object store. On failure, logs a warning and
+// returns nil so the loop falls back to per-checkpoint chunking.
+func precomputeTranscriptBlobsForFinalize(ctx context.Context, repo *git.Repository, transcript redact.RedactedBytes, state *SessionState) *checkpoint.PrecomputedTranscriptBlobs {
+	if transcript.Len() == 0 {
+		return nil
+	}
+	_, span := perf.Start(ctx, "precompute_transcript_blobs")
+	defer span.End()
+	precomputed, err := checkpoint.PrecomputeTranscriptBlobs(ctx, repo, transcript, state.AgentType)
+	if err != nil {
+		logging.Warn(ctx, "finalize: precompute transcript blobs failed, falling back to per-checkpoint work",
+			slog.String("session_id", state.SessionID),
+			slog.String("error", err.Error()),
+		)
+		return nil
+	}
+	return precomputed
+}
+
 // finalizeAllTurnCheckpoints replaces the provisional transcript in each checkpoint
 // created during this turn with the full session transcript.
 //
@@ -2532,11 +2745,31 @@ func (s *ManualCommitStrategy) finalizeAllTurnCheckpoints(ctx context.Context, s
 	}
 
 	store := checkpoint.NewGitStore(repo)
+	v2 := settings.CheckpointsVersion(logCtx) == 2
 
 	// Evaluate v2 flag once before the loop to avoid re-reading settings per checkpoint
 	var v2Store *checkpoint.V2GitStore
 	if settings.IsCheckpointsV2Enabled(logCtx) {
-		v2Store = checkpoint.NewV2GitStore(repo, ResolveCheckpointURL(logCtx, "origin"))
+		v2URL, err := remote.FetchURL(logCtx)
+		if err != nil {
+			logging.Debug(logCtx, "finalize: using origin for v2 store fetch remote",
+				slog.String("error", err.Error()),
+			)
+			v2URL = originRemote
+		}
+		v2Store = checkpoint.NewV2GitStore(repo, v2URL)
+	}
+
+	precomputed := precomputeTranscriptBlobsForFinalize(logCtx, repo, redactedTranscript, state)
+
+	// Resolve the agent and try external compaction once before the loop —
+	// external compaction is invariant across checkpoints (same session/transcript).
+	// Internal compaction must remain per-checkpoint due to per-checkpoint startLine.
+	finalAg, _ := agent.GetByAgentType(state.AgentType) //nolint:errcheck // ag may be nil; compactTranscriptForV2 handles nil
+	var externalCompact []byte
+	var isExternalAgent bool
+	if v2Store != nil {
+		externalCompact, isExternalAgent = compactAndRedactExternalTranscript(logCtx, finalAg, state)
 	}
 
 	// Update each checkpoint with the full transcript
@@ -2552,50 +2785,47 @@ func (s *ManualCommitStrategy) finalizeAllTurnCheckpoints(ctx context.Context, s
 		}
 
 		updateOpts := checkpoint.UpdateCommittedOptions{
-			CheckpointID: cpID,
-			SessionID:    state.SessionID,
-			Transcript:   redactedTranscript,
-			Prompts:      prompts,
-			Agent:        state.AgentType,
+			CheckpointID:     cpID,
+			SessionID:        state.SessionID,
+			Transcript:       redactedTranscript,
+			Prompts:          prompts,
+			Agent:            state.AgentType,
+			PrecomputedBlobs: precomputed,
 		}
 
 		// Generate compact transcript for v2 /main
-		if v2Store != nil && redactedTranscript.Len() > 0 {
-			finalAg, _ := agent.GetByAgentType(state.AgentType) //nolint:errcheck // ag may be nil for unknown agent types; compactTranscriptForV2 handles nil
-			startLine := 0
-			if content, readErr := store.ReadSessionContentByID(ctx, cpID, state.SessionID); readErr == nil && content != nil {
-				startLine = content.Metadata.GetTranscriptStart()
-			} else {
-				errMsg := "unknown"
-				if readErr != nil {
-					errMsg = readErr.Error()
-				}
-				logging.Debug(logCtx, "finalize: failed to read checkpoint metadata, using full transcript for compact output",
-					slog.String("checkpoint_id", cpIDStr),
-					slog.String("session_id", state.SessionID),
-					slog.String("error", errMsg),
-				)
+		if v2Store != nil {
+			if isExternalAgent {
+				updateOpts.CompactTranscript = externalCompact
+			} else if redactedTranscript.Len() > 0 {
+				updateOpts.CompactTranscript = finalizeInternalCompactTranscript(logCtx, finalAg, cpID, state, redactedTranscript, store, v2Store, v2)
 			}
-			updateOpts.CompactTranscript = compactTranscriptForV2(logCtx, finalAg, redactedTranscript, startLine)
 		}
 
-		updateErr := store.UpdateCommitted(ctx, updateOpts)
-		if updateErr != nil {
-			logging.Warn(logCtx, "finalize: failed to update checkpoint",
-				slog.String("checkpoint_id", cpIDStr),
-				slog.String("error", updateErr.Error()),
-			)
-			errCount++
-			continue
+		if !v2 {
+			updateErr := store.UpdateCommitted(ctx, updateOpts)
+			if updateErr != nil {
+				logging.Warn(logCtx, "finalize: failed to update checkpoint",
+					slog.String("checkpoint_id", cpIDStr),
+					slog.String("error", updateErr.Error()),
+				)
+				errCount++
+				continue
+			}
 		}
 
-		// Dual-write: update v2 refs when enabled
 		if v2Store != nil {
 			if v2Err := v2Store.UpdateCommitted(logCtx, updateOpts); v2Err != nil {
-				logging.Warn(logCtx, "v2 dual-write update failed",
+				attrs := []any{
 					slog.String("checkpoint_id", cpIDStr),
 					slog.String("error", v2Err.Error()),
-				)
+				}
+				if v2 {
+					logging.Warn(logCtx, "finalize: failed to update checkpoint in v2", attrs...)
+					errCount++
+					continue
+				}
+				logging.Warn(logCtx, "v2 dual-write update failed", attrs...)
 			}
 		}
 
@@ -2613,6 +2843,44 @@ func (s *ManualCommitStrategy) finalizeAllTurnCheckpoints(ctx context.Context, s
 	state.TurnCheckpointIDs = nil
 
 	return errCount
+}
+
+// finalizeInternalCompactTranscript resolves the per-checkpoint startLine and
+// produces the compact transcript for built-in agents during finalization.
+func finalizeInternalCompactTranscript(
+	ctx context.Context,
+	ag agent.Agent,
+	cpID id.CheckpointID,
+	state *SessionState,
+	redactedTranscript redact.RedactedBytes,
+	store *checkpoint.GitStore,
+	v2Store *checkpoint.V2GitStore,
+	v2 bool,
+) []byte {
+	var (
+		content *checkpoint.SessionContent
+		readErr error
+	)
+	if v2 {
+		content, readErr = v2Store.ReadSessionContentByID(ctx, cpID, state.SessionID)
+	} else {
+		content, readErr = store.ReadSessionContentByID(ctx, cpID, state.SessionID)
+	}
+	startLine := 0
+	if readErr == nil && content != nil {
+		startLine = content.Metadata.GetTranscriptStart()
+	} else {
+		errMsg := "unknown"
+		if readErr != nil {
+			errMsg = readErr.Error()
+		}
+		logging.Debug(ctx, "finalize: failed to read checkpoint metadata, using full transcript for compact output",
+			slog.String("checkpoint_id", cpID.String()),
+			slog.String("session_id", state.SessionID),
+			slog.String("error", errMsg),
+		)
+	}
+	return compactTranscriptForV2(ctx, ag, redactedTranscript, startLine)
 }
 
 // filesChangedInCommit returns the set of files changed in a commit using git diff-tree.

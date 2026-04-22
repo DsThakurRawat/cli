@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/entireio/cli/cmd/entire/cli/checkpoint/remote"
 	"github.com/entireio/cli/cmd/entire/cli/logging"
 	"github.com/entireio/cli/cmd/entire/cli/paths"
 	"github.com/entireio/cli/cmd/entire/cli/strategy"
@@ -21,7 +22,7 @@ import (
 func formatFilteredFetchError(prefix, fetchTarget string, output []byte, fetchErr error) error {
 	redactedTarget := fetchTarget
 	if isFetchTargetURL(fetchTarget) {
-		redactedTarget = strategy.RedactURL(fetchTarget)
+		redactedTarget = remote.RedactURL(fetchTarget)
 	}
 
 	msg := strings.TrimSpace(string(output))
@@ -392,14 +393,28 @@ func FetchAndCheckoutRemoteBranch(ctx context.Context, branchName string) error 
 
 // FetchMetadataBranch fetches the entire/checkpoints/v1 branch from origin and creates/updates the local branch.
 // This is used when the metadata branch exists on remote but not locally.
-// The fetch is treeless (--filter=blob:none) because checkpoint metadata reads
-// support on-demand blob retrieval.
 // Uses git CLI instead of go-git for fetch because go-git doesn't use credential helpers,
 // which breaks HTTPS URLs that require authentication.
 func FetchMetadataBranch(ctx context.Context) error {
+	return fetchMetadataFromOrigin(ctx, false /* shallow */)
+}
+
+// FetchMetadataTreeOnly fetches the tip of the entire/checkpoints/v1 branch
+// from origin with --depth=1 --filter=blob:none, downloading only the latest
+// commit and its tree objects (no blobs, no history).
+// After this call, tree navigation via go-git works but blob reads will fail
+// for objects that weren't previously fetched.
+func FetchMetadataTreeOnly(ctx context.Context) error {
+	return fetchMetadataFromOrigin(ctx, true /* shallow */)
+}
+
+// fetchMetadataFromOrigin fetches the v1 metadata branch from origin into the
+// remote-tracking ref refs/remotes/origin/<branch>, then safely advances the
+// local branch to match. When shallow is true, --depth=1 is added so only
+// the tip is downloaded.
+func fetchMetadataFromOrigin(ctx context.Context, shallow bool) error {
 	branchName := paths.MetadataBranchName
 
-	// Use git CLI for fetch (go-git's fetch can be tricky with auth)
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
 
@@ -409,8 +424,13 @@ func FetchMetadataBranch(ctx context.Context) error {
 	}
 
 	refSpec := fmt.Sprintf("+refs/heads/%s:refs/remotes/origin/%s", branchName, branchName)
+	args := []string{"fetch", "--no-tags"}
+	if shallow {
+		args = append(args, "--depth=1")
+	}
+	args = append(args, fetchTarget, refSpec)
 
-	fetchArgs := strategy.AppendFetchFilterArgs(ctx, []string{"fetch", "--no-tags", fetchTarget, refSpec})
+	fetchArgs := strategy.AppendFetchFilterArgs(ctx, args)
 	fetchCmd := strategy.CheckpointGitCommand(ctx, fetchTarget, fetchArgs...)
 	if output, fetchErr := fetchCmd.CombinedOutput(); fetchErr != nil {
 		if ctx.Err() == context.DeadlineExceeded {
@@ -424,66 +444,13 @@ func FetchMetadataBranch(ctx context.Context) error {
 		return fmt.Errorf("failed to open repository: %w", err)
 	}
 
-	// Get the remote branch reference
 	remoteRef, err := repo.Reference(plumbing.NewRemoteReferenceName("origin", branchName), true)
 	if err != nil {
 		return fmt.Errorf("branch '%s' not found on origin: %w", branchName, err)
 	}
-
-	// Create or update local branch pointing to the same commit
-	localRef := plumbing.NewHashReference(plumbing.NewBranchReferenceName(branchName), remoteRef.Hash())
-	if err := repo.Storer.SetReference(localRef); err != nil {
-		return fmt.Errorf("failed to create local %s branch: %w", branchName, err)
+	if err := strategy.SafelyAdvanceLocalRef(ctx, repo, plumbing.NewBranchReferenceName(branchName), remoteRef.Hash()); err != nil {
+		return fmt.Errorf("failed to advance local %s branch: %w", branchName, err)
 	}
-
-	return nil
-}
-
-// FetchMetadataTreeOnly fetches the tip of the entire/checkpoints/v1 branch
-// from origin with --depth=1 --filter=blob:none, downloading only the latest
-// commit and its tree objects (no blobs, no history).
-// After this call, tree navigation via go-git works but blob reads will fail
-// for objects that weren't previously fetched.
-// Uses git CLI for credential helper support.
-func FetchMetadataTreeOnly(ctx context.Context) error {
-	branchName := paths.MetadataBranchName
-
-	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
-	defer cancel()
-
-	fetchTarget, err := strategy.ResolveFetchTarget(ctx, "origin")
-	if err != nil {
-		return fmt.Errorf("failed to resolve fetch target: %w", err)
-	}
-
-	refSpec := fmt.Sprintf("+refs/heads/%s:refs/remotes/origin/%s", branchName, branchName)
-
-	fetchArgs := strategy.AppendFetchFilterArgs(ctx, []string{"fetch", "--no-tags", "--depth=1", fetchTarget, refSpec})
-	fetchCmd := strategy.CheckpointGitCommand(ctx, fetchTarget, fetchArgs...)
-	if output, fetchErr := fetchCmd.CombinedOutput(); fetchErr != nil {
-		if ctx.Err() == context.DeadlineExceeded {
-			return errors.New("treeless fetch timed out after 2 minutes")
-		}
-		return formatFilteredFetchError("failed to treeless-fetch "+branchName, fetchTarget, output, fetchErr)
-	}
-
-	repo, err := openRepository(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to open repository: %w", err)
-	}
-
-	// Get the remote branch reference
-	remoteRef, err := repo.Reference(plumbing.NewRemoteReferenceName("origin", branchName), true)
-	if err != nil {
-		return fmt.Errorf("branch '%s' not found on origin: %w", branchName, err)
-	}
-
-	// Create or update local branch pointing to the same commit
-	localRef := plumbing.NewHashReference(plumbing.NewBranchReferenceName(branchName), remoteRef.Hash())
-	if err := repo.Storer.SetReference(localRef); err != nil {
-		return fmt.Errorf("failed to create local %s branch: %w", branchName, err)
-	}
-
 	return nil
 }
 
@@ -492,26 +459,7 @@ func FetchMetadataTreeOnly(ctx context.Context) error {
 // tree objects (no blobs, no history).
 // Uses explicit refspec since v2 refs are under refs/entire/, not refs/heads/.
 func FetchV2MainTreeOnly(ctx context.Context) error {
-	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
-	defer cancel()
-
-	fetchTarget, err := strategy.ResolveFetchTarget(ctx, "origin")
-	if err != nil {
-		return fmt.Errorf("failed to resolve fetch target: %w", err)
-	}
-
-	refSpec := fmt.Sprintf("+%s:%s", paths.V2MainRefName, paths.V2MainRefName)
-
-	fetchArgs := strategy.AppendFetchFilterArgs(ctx, []string{"fetch", "--no-tags", "--depth=1", fetchTarget, refSpec})
-	fetchCmd := strategy.CheckpointGitCommand(ctx, fetchTarget, fetchArgs...)
-	if output, fetchErr := fetchCmd.CombinedOutput(); fetchErr != nil {
-		if ctx.Err() == context.DeadlineExceeded {
-			return errors.New("v2 treeless fetch timed out after 2 minutes")
-		}
-		return formatFilteredFetchError("failed to treeless-fetch v2 /main", fetchTarget, output, fetchErr)
-	}
-
-	return nil
+	return fetchV2MainFromOrigin(ctx, true /* shallow */)
 }
 
 // FetchV2MainRef fetches the v2 /main ref from origin.
@@ -519,6 +467,13 @@ func FetchV2MainTreeOnly(ctx context.Context) error {
 // v2 checkpoint reads handle transcript retrieval separately.
 // Uses explicit refspec since v2 refs are under refs/entire/, not refs/heads/.
 func FetchV2MainRef(ctx context.Context) error {
+	return fetchV2MainFromOrigin(ctx, false /* shallow */)
+}
+
+// fetchV2MainFromOrigin fetches the v2 /main ref from origin into the shared
+// staging ref, then promotes it via strategy.PromoteTmpRefSafely. When
+// shallow is true, --depth=1 is added so only the tip is downloaded.
+func fetchV2MainFromOrigin(ctx context.Context, shallow bool) error {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
 
@@ -527,9 +482,14 @@ func FetchV2MainRef(ctx context.Context) error {
 		return fmt.Errorf("failed to resolve fetch target: %w", err)
 	}
 
-	refSpec := fmt.Sprintf("+%s:%s", paths.V2MainRefName, paths.V2MainRefName)
+	refSpec := fmt.Sprintf("+%s:%s", paths.V2MainRefName, strategy.V2MainFetchTmpRef)
+	args := []string{"fetch", "--no-tags"}
+	if shallow {
+		args = append(args, "--depth=1")
+	}
+	args = append(args, fetchTarget, refSpec)
 
-	fetchArgs := strategy.AppendFetchFilterArgs(ctx, []string{"fetch", "--no-tags", fetchTarget, refSpec})
+	fetchArgs := strategy.AppendFetchFilterArgs(ctx, args)
 	fetchCmd := strategy.CheckpointGitCommand(ctx, fetchTarget, fetchArgs...)
 	if output, fetchErr := fetchCmd.CombinedOutput(); fetchErr != nil {
 		if ctx.Err() == context.DeadlineExceeded {
@@ -538,6 +498,9 @@ func FetchV2MainRef(ctx context.Context) error {
 		return formatFilteredFetchError("failed to fetch v2 /main", fetchTarget, output, fetchErr)
 	}
 
+	if err := strategy.PromoteTmpRefSafely(ctx, strategy.V2MainFetchTmpRef, paths.V2MainRefName, "v2 /main"); err != nil {
+		return fmt.Errorf("origin v2 /main fetch: %w", err)
+	}
 	return nil
 }
 
@@ -545,12 +508,13 @@ func FetchV2MainRef(ctx context.Context) error {
 // configured checkpoint_remote URL.
 // Returns an error if the fetch fails or no checkpoint_remote is configured.
 func FetchV2MetadataFromCheckpointRemote(ctx context.Context) error {
-	checkpointURL, hasCheckpointRemote, resolveErr := strategy.ResolveCheckpointRemoteURL(ctx)
-	if !hasCheckpointRemote {
+	configured := remote.Configured(ctx)
+	if !configured {
 		return errors.New("no checkpoint_remote configured")
 	}
-	if resolveErr != nil {
-		return fmt.Errorf("checkpoint_remote configured but could not resolve URL: %w", resolveErr)
+	checkpointURL, err := remote.FetchURL(ctx)
+	if err != nil {
+		return fmt.Errorf("checkpoint_remote configured but could not resolve URL: %w", err)
 	}
 
 	if err := strategy.FetchV2MainFromURL(ctx, checkpointURL); err != nil {
@@ -563,12 +527,13 @@ func FetchV2MetadataFromCheckpointRemote(ctx context.Context) error {
 // configured checkpoint_remote URL and updates the local branch.
 // Returns an error if the fetch fails or no checkpoint_remote is configured.
 func FetchMetadataFromCheckpointRemote(ctx context.Context) error {
-	checkpointURL, hasCheckpointRemote, resolveErr := strategy.ResolveCheckpointRemoteURL(ctx)
-	if !hasCheckpointRemote {
+	configured := remote.Configured(ctx)
+	if !configured {
 		return errors.New("no checkpoint_remote configured")
 	}
-	if resolveErr != nil {
-		return fmt.Errorf("checkpoint_remote configured but could not resolve URL: %w", resolveErr)
+	checkpointURL, err := remote.FetchURL(ctx)
+	if err != nil {
+		return fmt.Errorf("checkpoint_remote configured but could not resolve URL: %w", err)
 	}
 
 	if err := strategy.FetchMetadataBranch(ctx, checkpointURL); err != nil {
@@ -577,10 +542,25 @@ func FetchMetadataFromCheckpointRemote(ctx context.Context) error {
 	return nil
 }
 
+// resolveCheckpointFetchTarget returns the fetch target for checkpoint data.
+// It prefers the effective URL resolved by checkpoint/remote.FetchURL, which is
+// the source of truth for checkpoint fetch location. If URL resolution fails, it
+// falls back to the origin remote name so callers can still attempt a fetch.
+func resolveCheckpointFetchTarget(ctx context.Context) string {
+	url, err := remote.FetchURL(ctx)
+	if err == nil && url != "" {
+		return url
+	}
+	return "origin"
+}
+
 // FetchBlobsByHash fetches specific blob objects from the remote by their SHA-1 hashes.
-// Uses "git fetch origin <hash>" which goes through normal credential helpers,
+// Uses "git fetch <target> <hash>" which goes through normal credential helpers,
 // unlike fetch-pack which bypasses them. Requires the server to support
 // uploadpack.allowReachableSHA1InWant (GitHub, GitLab, Bitbucket all do).
+//
+// The fetch target is resolved via resolveCheckpointFetchTarget, which defers to
+// checkpoint/remote.FetchURL for the effective remote URL when available.
 //
 // If fetching by hash fails, falls back to a full metadata branch fetch.
 func FetchBlobsByHash(ctx context.Context, hashes []plumbing.Hash) error {
@@ -591,23 +571,26 @@ func FetchBlobsByHash(ctx context.Context, hashes []plumbing.Hash) error {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
 
-	// Build fetch args: "git fetch --no-tags origin <hash1> <hash2> ..."
-	// This uses the normal transport + credential helpers, unlike fetch-pack.
-	args := []string{"fetch", "--no-tags", "--no-write-fetch-head", "origin"}
+	fetchTarget := resolveCheckpointFetchTarget(ctx)
+
+	args := []string{"fetch", "--no-tags", "--no-write-fetch-head", fetchTarget}
 	for _, h := range hashes {
 		args = append(args, h.String())
 	}
 
-	fetchCmd := strategy.CheckpointGitCommand(ctx, "origin", args...)
+	fetchCmd := strategy.CheckpointGitCommand(ctx, fetchTarget, args...)
 	if _, fetchErr := fetchCmd.CombinedOutput(); fetchErr != nil {
 		logging.Debug(ctx, "fetch-by-hash failed, falling back to full metadata fetch",
 			slog.Int("blob_count", len(hashes)),
+			slog.String("fetch_target", fetchTarget),
 			slog.String("error", fetchErr.Error()),
 		)
-		// Fallback: full metadata branch fetch (pack negotiation skips already-local objects)
-		if fallbackErr := FetchMetadataBranch(ctx); fallbackErr != nil {
-			return fmt.Errorf("fetch-by-hash failed: %w; fallback fetch also failed: %w",
-				fetchErr, fallbackErr)
+		// Fallback: try checkpoint remote first (if configured), then origin
+		if cpErr := FetchMetadataFromCheckpointRemote(ctx); cpErr != nil {
+			if fallbackErr := FetchMetadataBranch(ctx); fallbackErr != nil {
+				return fmt.Errorf("fetch-by-hash failed: %w; fallback fetch also failed: %w",
+					fetchErr, fallbackErr)
+			}
 		}
 	}
 
