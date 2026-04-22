@@ -133,6 +133,17 @@ func ExplainCommit(dir, ref string) (string, error) {
 	return runOutput(dir, "explain", "--commit", ref)
 }
 
+// Attach runs `entire attach <session-id> --agent <agent> --force`.
+func Attach(dir, sessionID, agent string) (string, error) {
+	return runOutput(dir, "attach", sessionID, "--agent", agent, "--force")
+}
+
+// AttachWithEnv runs `entire attach <session-id> --agent <agent> --force`
+// with extra env vars.
+func AttachWithEnv(dir string, extraEnv []string, sessionID, agent string) (string, error) {
+	return runOutputEnv(dir, extraEnv, "attach", sessionID, "--agent", agent, "--force")
+}
+
 // Resume runs `entire resume <branch> --force` and returns the output.
 func Resume(dir, branch string) (string, error) {
 	return runOutput(dir, "resume", branch, "--force")

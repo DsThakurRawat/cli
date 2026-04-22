@@ -86,3 +86,51 @@ func (v *Vogon) StartSession(_ context.Context, dir string) (Session, error) {
 
 	return s, nil
 }
+
+// WriteSessionTranscript creates a deterministic vogon session transcript
+// without firing hooks or mutating the repository. Attach E2E tests use this
+// to prepare a session that `entire attach` can import.
+func (v *Vogon) WriteSessionTranscript(ctx context.Context, dir string, extraEnv []string, sessionID, userPrompt, assistantMessage string) (Output, error) {
+	args := []string{
+		"--write-session",
+		"--session-id", sessionID,
+		"--user-prompt", userPrompt,
+		"--assistant-message", assistantMessage,
+	}
+	displayArgs := []string{
+		"--write-session",
+		"--session-id", sessionID,
+		"--user-prompt", fmt.Sprintf("%q", userPrompt),
+		"--assistant-message", fmt.Sprintf("%q", assistantMessage),
+	}
+
+	cmd := exec.CommandContext(ctx, v.Binary(), args...)
+	cmd.Dir = dir
+	cmd.Stdin = nil
+	cmd.Env = filterEnv(os.Environ(), "ENTIRE_TEST_TTY")
+	cmd.Env = append(cmd.Env, extraEnv...)
+	setupProcessGroup(cmd)
+	cmd.WaitDelay = 5 * time.Second
+
+	var stdout, stderr strings.Builder
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	err := cmd.Run()
+	exitCode := 0
+	if err != nil {
+		exitErr := &exec.ExitError{}
+		if errors.As(err, &exitErr) {
+			exitCode = exitErr.ExitCode()
+		} else {
+			exitCode = -1
+		}
+	}
+
+	return Output{
+		Command:  v.Binary() + " " + strings.Join(displayArgs, " "),
+		Stdout:   stdout.String(),
+		Stderr:   stderr.String(),
+		ExitCode: exitCode,
+	}, err
+}
