@@ -2,10 +2,13 @@ package agents
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -44,6 +47,7 @@ func (v *Vogon) RunPrompt(ctx context.Context, dir string, prompt string, opts .
 	cmd.Dir = dir
 	cmd.Stdin = nil
 	cmd.Env = filterEnv(os.Environ(), "ENTIRE_TEST_TTY")
+	cmd.Env = append(cmd.Env, "HOME="+vogonHomeDir(dir))
 	setupProcessGroup(cmd)
 	cmd.WaitDelay = 5 * time.Second
 
@@ -72,7 +76,7 @@ func (v *Vogon) RunPrompt(ctx context.Context, dir string, prompt string, opts .
 
 func (v *Vogon) StartSession(_ context.Context, dir string) (Session, error) {
 	name := fmt.Sprintf("vogon-test-%d", time.Now().UnixNano())
-	s, err := NewTmuxSession(name, dir, []string{"ENTIRE_TEST_TTY"}, v.Binary())
+	s, err := NewTmuxSession(name, dir, []string{"ENTIRE_TEST_TTY", "HOME=" + vogonHomeDir(dir)}, v.Binary())
 	if err != nil {
 		return nil, err
 	}
@@ -109,6 +113,9 @@ func (v *Vogon) WriteSessionTranscript(ctx context.Context, dir string, extraEnv
 	cmd.Stdin = nil
 	cmd.Env = filterEnv(os.Environ(), "ENTIRE_TEST_TTY")
 	cmd.Env = append(cmd.Env, extraEnv...)
+	if !hasEnvVar(extraEnv, "HOME") {
+		cmd.Env = append(cmd.Env, "HOME="+vogonHomeDir(dir))
+	}
 	setupProcessGroup(cmd)
 	cmd.WaitDelay = 5 * time.Second
 
@@ -133,4 +140,22 @@ func (v *Vogon) WriteSessionTranscript(ctx context.Context, dir string, extraEnv
 		Stderr:   stderr.String(),
 		ExitCode: exitCode,
 	}, err
+}
+
+func vogonHomeDir(dir string) string {
+	sum := sha256.Sum256([]byte(dir))
+	homeDir := filepath.Join(os.TempDir(), "vogon-e2e-home-"+hex.EncodeToString(sum[:6]))
+	if err := os.MkdirAll(homeDir, 0o755); err != nil {
+		panic(fmt.Sprintf("create vogon home %s: %v", homeDir, err))
+	}
+	return homeDir
+}
+
+func hasEnvVar(env []string, key string) bool {
+	for _, entry := range env {
+		if strings.HasPrefix(entry, key+"=") {
+			return true
+		}
+	}
+	return false
 }

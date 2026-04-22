@@ -50,6 +50,18 @@ func Doctor(t *testing.T, dir string) string {
 	return run(t, dir, "doctor", "--force")
 }
 
+// CleanDryRun runs `entire clean --dry-run` and returns the output.
+func CleanDryRun(t *testing.T, dir string) string {
+	t.Helper()
+	return run(t, dir, "clean", "--dry-run")
+}
+
+// CleanForce runs `entire clean --force` and returns the output.
+func CleanForce(t *testing.T, dir string) string {
+	t.Helper()
+	return run(t, dir, "clean", "--force")
+}
+
 // RewindList runs `entire rewind --list` and parses the JSON output.
 func RewindList(t *testing.T, dir string) []RewindPoint {
 	t.Helper()
