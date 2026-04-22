@@ -15,7 +15,6 @@ type candidate struct {
 	RepoFullName      string
 	Branch            string
 	CreatedAt         time.Time
-	FilesTouched      []string
 	CommitSubject     string
 	LocalSummaryTitle string
 }
@@ -26,8 +25,7 @@ type repoBullet struct {
 }
 
 type fallbackResult struct {
-	Used     []repoBullet
-	Warnings Warnings
+	Used []repoBullet
 }
 
 func applyFallbackChain(candidates []candidate) fallbackResult {
@@ -61,8 +59,6 @@ func applyFallbackChain(candidates []candidate) fallbackResult {
 			})
 			continue
 		}
-
-		result.Warnings.UncategorizedCount++
 	}
 
 	return result

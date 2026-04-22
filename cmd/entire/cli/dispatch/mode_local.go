@@ -76,26 +76,22 @@ func runLocal(ctx context.Context, opts Options) (*Dispatch, error) {
 	dispatch := &Dispatch{
 		CoveredRepos: coveredRepos(allCandidates),
 		Repos:        groupBulletsByRepo(fallback.Used),
-		Totals:       computeTotals(allCandidates, fallback.Used),
-		Warnings:     fallback.Warnings,
 		Window: Window{
 			NormalizedSince:   normalizedSince,
 			NormalizedUntil:   normalizedUntil,
 			FirstCheckpointAt: firstAt(fallback.Used),
 			LastCheckpointAt:  lastAt(fallback.Used),
 		},
-		RequestedGenerate: opts.Generate,
 	}
 
 	text, err := generateLocalDispatch(ctx, dispatch, opts.Voice)
 	if err != nil {
 		return nil, err
 	}
-	dispatch.GeneratedText = text
-	dispatch.Generated = strings.TrimSpace(text) != ""
-	if !dispatch.Generated {
+	if strings.TrimSpace(text) == "" {
 		return nil, errDispatchMissingMarkdown
 	}
+	dispatch.GeneratedText = text
 
 	return dispatch, nil
 }
@@ -206,7 +202,6 @@ func enumerateRepoCandidates(ctx context.Context, repoRoot string, opts Options,
 			RepoFullName:      repoFullName,
 			Branch:            summary.Branch,
 			CreatedAt:         info.CreatedAt,
-			FilesTouched:      append([]string(nil), info.FilesTouched...),
 			CommitSubject:     commitSubject,
 			LocalSummaryTitle: localSummary,
 		})
@@ -331,26 +326,6 @@ func groupBulletsByRepo(used []repoBullet) []RepoGroup {
 	}
 
 	return out
-}
-
-func computeTotals(candidates []candidate, used []repoBullet) Totals {
-	branches := make(map[string]struct{})
-	filesTouched := make(map[string]struct{})
-	for _, candidate := range candidates {
-		if candidate.Branch != "" {
-			branches[candidate.Branch] = struct{}{}
-		}
-		for _, file := range candidate.FilesTouched {
-			filesTouched[file] = struct{}{}
-		}
-	}
-
-	return Totals{
-		Checkpoints:         len(candidates),
-		UsedCheckpointCount: len(used),
-		Branches:            len(branches),
-		FilesTouched:        len(filesTouched),
-	}
 }
 
 func firstAt(used []repoBullet) time.Time {

@@ -65,13 +65,11 @@ type CreateDispatchRequest struct {
 }
 
 type CreateDispatchResponse struct {
-	Window            APIWindow   `json:"window"`
-	CoveredRepos      []string    `json:"covered_repos,omitempty"`
-	Repos             []APIRepo   `json:"repos,omitempty"`
-	Totals            APITotals   `json:"totals"`
-	Warnings          APIWarnings `json:"warnings"`
-	GeneratedText     string      `json:"generated_text,omitempty"`
-	GeneratedMarkdown string      `json:"generated_markdown,omitempty"`
+	Window            APIWindow `json:"window"`
+	CoveredRepos      []string  `json:"covered_repos,omitempty"`
+	Repos             []APIRepo `json:"repos,omitempty"`
+	GeneratedText     string    `json:"generated_text,omitempty"`
+	GeneratedMarkdown string    `json:"generated_markdown,omitempty"`
 }
 
 type APIWindow struct {
@@ -98,21 +96,6 @@ type APIBullet struct {
 	Branch       string   `json:"branch"`
 	CreatedAt    string   `json:"created_at"`
 	Labels       []string `json:"labels"`
-}
-
-type APITotals struct {
-	Checkpoints         int `json:"checkpoints"`
-	UsedCheckpointCount int `json:"used_checkpoint_count"`
-	Branches            int `json:"branches"`
-	FilesTouched        int `json:"files_touched"`
-}
-
-type APIWarnings struct {
-	AccessDeniedCount  int `json:"access_denied_count"`
-	PendingCount       int `json:"pending_count"`
-	FailedCount        int `json:"failed_count"`
-	UnknownCount       int `json:"unknown_count"`
-	UncategorizedCount int `json:"uncategorized_count"`
 }
 
 func (c *CloudClient) CreateDispatch(ctx context.Context, reqBody CreateDispatchRequest) (*CreateDispatchResponse, error) {

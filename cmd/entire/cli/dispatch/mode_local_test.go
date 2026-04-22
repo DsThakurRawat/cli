@@ -50,12 +50,6 @@ func TestLocalMode_EnumeratesCheckpoints(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Totals.Checkpoints != 1 {
-		t.Fatalf("expected 1 candidate, got %d", got.Totals.Checkpoints)
-	}
-	if got.Totals.UsedCheckpointCount != 1 {
-		t.Fatalf("expected 1 used checkpoint, got %d", got.Totals.UsedCheckpointCount)
-	}
 	if len(got.Repos) != 1 {
 		t.Fatalf("expected 1 repo group, got %d", len(got.Repos))
 	}
@@ -104,9 +98,6 @@ func TestLocalMode_UsesUntilWindow(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatal(err)
-	}
-	if got.Totals.Checkpoints != 0 {
-		t.Fatalf("expected 0 candidates, got %d", got.Totals.Checkpoints)
 	}
 	if len(got.Repos) != 0 {
 		t.Fatalf("expected no repo groups, got %d", len(got.Repos))
@@ -210,9 +201,6 @@ func TestLocalMode_GenerateProducesInlineText(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatal(err)
-	}
-	if !got.Generated {
-		t.Fatal("expected generated=true")
 	}
 	if got.GeneratedText != "generated inline dispatch" {
 		t.Fatalf("expected generated text, got %q", got.GeneratedText)
@@ -325,9 +313,6 @@ func TestLocalMode_ImplicitCurrentBranchUsesHEADReachability(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Totals.Checkpoints != 1 {
-		t.Fatalf("expected 1 candidate, got %d", got.Totals.Checkpoints)
-	}
 	if len(got.Repos) != 1 || got.Repos[0].Sections[0].Bullets[0].Text != "local fallback summary" {
 		t.Fatalf("unexpected dispatch payload: %+v", got)
 	}
@@ -394,8 +379,8 @@ func TestLocalMode_ExplicitBranchesRemainExact(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Totals.Checkpoints != 0 {
-		t.Fatalf("expected 0 candidates with explicit branch filter, got %d", got.Totals.Checkpoints)
+	if len(got.Repos) != 0 {
+		t.Fatalf("expected 0 repo groups with explicit branch filter, got %d", len(got.Repos))
 	}
 }
 
@@ -435,9 +420,6 @@ func TestLocalMode_ImplicitCurrentBranchUsesCheckpointBranchWithoutTrailerReacha
 	})
 	if err != nil {
 		t.Fatal(err)
-	}
-	if got.Totals.Checkpoints != 1 {
-		t.Fatalf("expected 1 candidate, got %d", got.Totals.Checkpoints)
 	}
 	if len(got.Repos) != 1 || got.Repos[0].Sections[0].Bullets[0].Text != "local fallback summary" {
 		t.Fatalf("unexpected dispatch payload: %+v", got)

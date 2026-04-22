@@ -38,17 +38,6 @@ func TestNewDispatchWizardState_Defaults(t *testing.T) {
 	}
 }
 
-func TestDispatchWizardState_DefaultLocalBranchesPreselectCurrentBranch(t *testing.T) {
-	t.Parallel()
-
-	state := newDispatchWizardState()
-	state.applyCurrentBranchDefault("feature/current")
-
-	if got := state.branchMode; got != dispatchWizardBranchCurrent {
-		t.Fatalf("expected current branch mode to remain selected, got %q", got)
-	}
-}
-
 func TestDispatchWizardState_ResolveOrgDefaultsToDefaultBranches(t *testing.T) {
 	t.Parallel()
 
@@ -417,46 +406,6 @@ func TestDiscoverDispatchWizardChoices_UsesAuthenticatedRepos(t *testing.T) {
 	}
 	if got := strings.Join(optionValues(choices.repoOptions), ","); got != "entireio/cli,entireio/entire.io" {
 		t.Fatalf("unexpected repo options: %v", optionValues(choices.repoOptions))
-	}
-}
-
-func TestDiscoverBranchOptions_HidesEntireBranchesKeepsClaudeBranches(t *testing.T) {
-	t.Parallel()
-
-	dir := t.TempDir()
-	testutil.InitRepo(t, dir)
-	testutil.WriteFile(t, dir, "a.txt", "x")
-	testutil.GitAdd(t, dir, "a.txt")
-	testutil.GitCommit(t, dir, "initial")
-	initialBranch := currentTestBranchName(t, dir)
-
-	testutil.GitCheckoutNewBranch(t, dir, "claude/awesome-swanson")
-	testutil.GitCheckoutNewBranch(t, dir, "feature/dispatch")
-	testutil.CreateBranch(t, dir, "entire/checkpoints/v1")
-	testutil.CreateBranch(t, dir, "entire/abc1234-8b2257")
-
-	cmd := exec.Command("git", "checkout", initialBranch) //nolint:noctx // test helper
-	cmd.Dir = dir
-	cmd.Env = testutil.GitIsolatedEnv()
-	if output, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("failed to checkout %s: %v\nOutput: %s", initialBranch, err, output)
-	}
-
-	options := discoverBranchOptions(context.Background(), dir)
-	values := optionValues(options)
-	got := strings.Join(values, ",")
-
-	if strings.Contains(got, "entire/checkpoints/v1") {
-		t.Fatalf("did not expect metadata branch in options: %v", values)
-	}
-	if strings.Contains(got, "entire/abc1234-8b2257") {
-		t.Fatalf("did not expect shadow branch in options: %v", values)
-	}
-	if !strings.Contains(got, "claude/awesome-swanson") {
-		t.Fatalf("expected claude branch to remain visible, got %v", values)
-	}
-	if !strings.Contains(got, "feature/dispatch") {
-		t.Fatalf("expected normal branch to remain visible, got %v", values)
 	}
 }
 

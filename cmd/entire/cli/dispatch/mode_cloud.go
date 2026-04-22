@@ -81,7 +81,6 @@ func runServer(ctx context.Context, opts Options) (*Dispatch, error) {
 	}
 
 	dispatch := apiToDispatch(response)
-	dispatch.RequestedGenerate = opts.Generate
 	if strings.TrimSpace(dispatch.GeneratedText) == "" {
 		return nil, errDispatchMissingMarkdown
 	}
@@ -134,20 +133,6 @@ func apiToDispatch(response *CreateDispatchResponse) *Dispatch {
 		CoveredRepos:  append([]string(nil), response.CoveredRepos...),
 		Repos:         repos,
 		GeneratedText: generatedText,
-		Generated:     generatedText != "",
-		Totals: Totals{
-			Checkpoints:         response.Totals.Checkpoints,
-			UsedCheckpointCount: response.Totals.UsedCheckpointCount,
-			Branches:            response.Totals.Branches,
-			FilesTouched:        response.Totals.FilesTouched,
-		},
-		Warnings: Warnings{
-			AccessDeniedCount:  response.Warnings.AccessDeniedCount,
-			PendingCount:       response.Warnings.PendingCount,
-			FailedCount:        response.Warnings.FailedCount,
-			UnknownCount:       response.Warnings.UnknownCount,
-			UncategorizedCount: response.Warnings.UncategorizedCount,
-		},
 	}
 }
 

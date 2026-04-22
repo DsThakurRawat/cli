@@ -137,14 +137,6 @@ func (s dispatchWizardState) showOrganizationPicker(choices dispatchWizardChoice
 	return !s.isLocal() && s.effectiveScopeType(choices) == dispatchWizardScopeOrganization
 }
 
-func (s *dispatchWizardState) applyCurrentBranchDefault(branch string) {
-	branch = strings.TrimSpace(branch)
-	if branch == "" {
-		return
-	}
-	s.branchMode = dispatchWizardBranchCurrent
-}
-
 func (s dispatchWizardState) orgValue(choices dispatchWizardChoices) string {
 	if s.isLocal() || s.effectiveScopeType(choices) != dispatchWizardScopeOrganization {
 		return ""
@@ -292,9 +284,6 @@ func runDispatchWizard(cmd *cobra.Command) (dispatchpkg.Options, error) {
 
 	currentBranch := func() (string, error) {
 		return GetCurrentBranch(cmd.Context())
-	}
-	if branch, branchErr := currentBranch(); branchErr == nil {
-		state.applyCurrentBranchDefault(branch)
 	}
 
 	form := NewAccessibleForm(
@@ -577,35 +566,6 @@ func resolveGitTopLevel(ctx context.Context, path string) (string, error) {
 		return "", err
 	}
 	return strings.TrimSpace(string(output)), nil
-}
-
-func discoverBranchOptions(ctx context.Context, repoRoot string) []huh.Option[string] {
-	cmd := exec.CommandContext(ctx, "git", "-C", repoRoot, "for-each-ref", "--format=%(refname:short)", "refs/heads")
-	output, err := cmd.Output()
-	if err != nil {
-		return nil
-	}
-
-	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
-	branches := make([]string, 0, len(lines))
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if line != "" && !shouldHideDispatchWizardBranch(line) {
-			branches = append(branches, line)
-		}
-	}
-	sort.Strings(branches)
-
-	options := make([]huh.Option[string], 0, len(branches))
-	for _, branch := range branches {
-		options = append(options, huh.NewOption(branch, branch))
-	}
-	return options
-}
-
-func shouldHideDispatchWizardBranch(branch string) bool {
-	branch = strings.TrimSpace(branch)
-	return strings.HasPrefix(branch, "entire/")
 }
 
 func discoverAuthenticatedDispatchWizardOrgs(ctx context.Context) ([]string, error) {

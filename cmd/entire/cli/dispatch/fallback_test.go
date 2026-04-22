@@ -39,14 +39,11 @@ func TestApplyFallbackChain_FallsBackToCommitMessage(t *testing.T) {
 	}
 }
 
-func TestApplyFallbackChain_UncategorizedWhenNoFallback(t *testing.T) {
+func TestApplyFallbackChain_DropsCandidatesWithNoTextSource(t *testing.T) {
 	t.Parallel()
 
 	got := applyFallbackChain([]candidate{{CheckpointID: "cp1"}})
 	if len(got.Used) != 0 {
 		t.Fatalf("expected no bullets, got %d", len(got.Used))
-	}
-	if got.Warnings.UncategorizedCount != 1 {
-		t.Fatalf("unexpected warnings: %+v", got.Warnings)
 	}
 }

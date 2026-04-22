@@ -32,9 +32,6 @@ func TestParseDispatchFlags_OrgDefaultsToAllBranches(t *testing.T) {
 	if opts.Branches != nil {
 		t.Fatalf("expected nil branches, got %v", opts.Branches)
 	}
-	if !opts.Generate {
-		t.Fatal("expected dispatch generation to default on")
-	}
 }
 
 func TestParseDispatchFlags_ServerReposAreAllowed(t *testing.T) {
@@ -64,9 +61,6 @@ func TestParseDispatchFlags_ServerReposAreAllowed(t *testing.T) {
 	}
 	if opts.AllBranches {
 		t.Fatal("did not expect all branches for server repo default-branch mode")
-	}
-	if !opts.Generate {
-		t.Fatal("expected dispatch generation to default on")
 	}
 }
 
@@ -208,11 +202,8 @@ func TestNewDispatchCmd_NonTerminalPrintsPlainMarkdown(t *testing.T) {
 	oldRunDispatch := runDispatch
 	oldTerminalMode := dispatchTerminalMode
 	oldMarkdown := renderDispatchMarkdown
-	runDispatch = func(_ context.Context, opts dispatchpkg.Options) (*dispatchpkg.Dispatch, error) {
-		if !opts.Generate {
-			t.Fatal("expected generate flag to propagate")
-		}
-		return &dispatchpkg.Dispatch{GeneratedText: "generated dispatch", Generated: true}, nil
+	runDispatch = func(_ context.Context, _ dispatchpkg.Options) (*dispatchpkg.Dispatch, error) {
+		return &dispatchpkg.Dispatch{GeneratedText: "generated dispatch"}, nil
 	}
 	dispatchTerminalMode = func(_ io.Writer) bool { return false }
 	renderDispatchMarkdown = func(dispatch *dispatchpkg.Dispatch) string {
@@ -251,10 +242,7 @@ func TestNewDispatchCmd_TerminalUsesInteractiveRenderer(t *testing.T) {
 	oldInteractive := runInteractiveDispatch
 	oldGlow := renderTerminalMarkdown
 	dispatchTerminalMode = func(_ io.Writer) bool { return true }
-	runInteractiveDispatch = func(_ context.Context, _ io.Writer, opts dispatchpkg.Options) (string, error) {
-		if !opts.Generate {
-			t.Fatal("expected generation to be on by default")
-		}
+	runInteractiveDispatch = func(_ context.Context, _ io.Writer, _ dispatchpkg.Options) (string, error) {
 		return "# generated dispatch\n", nil
 	}
 	renderTerminalMarkdown = func(_ io.Writer, markdown string) (string, error) {

@@ -185,7 +185,6 @@ func resolveDispatchOptions(
 		Branches:              branches,
 		AllBranches:           allBranches,
 		ImplicitCurrentBranch: implicitCurrentBranch,
-		Generate:              true,
 		Voice:                 flagVoice,
 	}, nil
 }

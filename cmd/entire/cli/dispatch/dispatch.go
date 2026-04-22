@@ -18,7 +18,6 @@ type Options struct {
 	Branches              []string
 	AllBranches           bool
 	ImplicitCurrentBranch bool
-	Generate              bool
 	Voice                 string
 }
 

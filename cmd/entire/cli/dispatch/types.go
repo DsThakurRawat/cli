@@ -11,12 +11,7 @@ type Dispatch struct {
 	Window        Window
 	CoveredRepos  []string
 	Repos         []RepoGroup
-	Totals        Totals
-	Warnings      Warnings
 	GeneratedText string
-
-	RequestedGenerate bool
-	Generated         bool
 }
 
 type Window struct {
@@ -43,19 +38,4 @@ type Bullet struct {
 	Branch       string
 	CreatedAt    time.Time
 	Labels       []string
-}
-
-type Totals struct {
-	Checkpoints         int
-	UsedCheckpointCount int
-	Branches            int
-	FilesTouched        int
-}
-
-type Warnings struct {
-	AccessDeniedCount  int
-	PendingCount       int
-	FailedCount        int
-	UnknownCount       int
-	UncategorizedCount int
 }
