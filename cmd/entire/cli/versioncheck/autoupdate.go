@@ -62,7 +62,8 @@ func MaybeAutoUpdate(ctx context.Context, w io.Writer, currentVersion string) {
 }
 
 func realConfirmUpdate() (bool, error) {
-	var confirmed bool
+	// Pre-select "Yes" so pressing Enter accepts — matches the (Y/n) UX.
+	confirmed := true
 	form := huh.NewForm(
 		huh.NewGroup(
 			huh.NewConfirm().
