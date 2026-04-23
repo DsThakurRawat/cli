@@ -15,6 +15,7 @@ func TestResolveOptions_NormalizesScopeValues(t *testing.T) {
 		false,
 		[]string{" entireio/cli ", "", "entireio/cli"},
 		"",
+		false,
 		func() (string, error) { return "main", nil },
 	)
 	if err != nil {
@@ -38,6 +39,7 @@ func TestResolveOptions_CloudRejectsAllBranches(t *testing.T) {
 		true,
 		[]string{"entireio/cli"},
 		"",
+		false,
 		func() (string, error) { return "main", nil },
 	)
 	if err == nil || !strings.Contains(err.Error(), "--all-branches only applies to --local") {
@@ -56,6 +58,7 @@ func TestResolveOptions_CloudCapsReposAtFive(t *testing.T) {
 		false,
 		repos,
 		"",
+		false,
 		func() (string, error) { return "main", nil },
 	)
 	if err == nil || !strings.Contains(err.Error(), "supports at most 5") {
@@ -73,6 +76,7 @@ func TestResolveOptions_LocalSetsImplicitCurrentBranch(t *testing.T) {
 		false,
 		nil,
 		"",
+		false,
 		func() (string, error) { return "my-feature", nil },
 	)
 	if err != nil {
@@ -86,6 +90,27 @@ func TestResolveOptions_LocalSetsImplicitCurrentBranch(t *testing.T) {
 	}
 }
 
+func TestResolveOptions_ForwardsInsecureHTTPAuth(t *testing.T) {
+	t.Parallel()
+
+	opts, err := ResolveOptions(
+		false,
+		"7d",
+		"",
+		false,
+		[]string{"entireio/cli"},
+		"",
+		true,
+		func() (string, error) { return "main", nil },
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !opts.InsecureHTTPAuth {
+		t.Fatal("expected InsecureHTTPAuth=true to propagate into Options")
+	}
+}
+
 func TestResolveOptions_LocalAllBranchesSkipsImplicit(t *testing.T) {
 	t.Parallel()
 
@@ -96,6 +121,7 @@ func TestResolveOptions_LocalAllBranchesSkipsImplicit(t *testing.T) {
 		true,
 		nil,
 		"",
+		false,
 		func() (string, error) { return "", nil },
 	)
 	if err != nil {

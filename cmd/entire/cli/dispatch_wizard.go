@@ -103,6 +103,7 @@ func (s dispatchWizardState) resolve(currentBranch func() (string, error)) (disp
 		allBranches,
 		s.resolveCloudRepos(),
 		s.voiceValue(),
+		false,
 		currentBranch,
 	)
 	if err != nil {

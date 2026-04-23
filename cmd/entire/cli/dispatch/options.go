@@ -13,6 +13,7 @@ func ResolveOptions(
 	flagAllBranches bool,
 	flagRepos []string,
 	flagVoice string,
+	flagInsecureHTTPAuth bool,
 	currentBranch func() (string, error),
 ) (Options, error) {
 	flagRepos = normalizeScopeValues(flagRepos)
@@ -52,6 +53,7 @@ func ResolveOptions(
 		AllBranches:           flagAllBranches,
 		ImplicitCurrentBranch: implicitCurrentBranch,
 		Voice:                 flagVoice,
+		InsecureHTTPAuth:      flagInsecureHTTPAuth,
 	}, nil
 }
 

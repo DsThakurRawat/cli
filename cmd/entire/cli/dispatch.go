@@ -20,12 +20,13 @@ var renderTerminalMarkdown = defaultRenderTerminalMarkdown
 
 func newDispatchCmd() *cobra.Command {
 	var (
-		flagLocal       bool
-		flagSince       string
-		flagUntil       string
-		flagAllBranches bool
-		flagRepos       []string
-		flagVoice       string
+		flagLocal            bool
+		flagSince            string
+		flagUntil            string
+		flagAllBranches      bool
+		flagRepos            []string
+		flagVoice            string
+		flagInsecureHTTPAuth bool
 	)
 
 	cmd := &cobra.Command{
@@ -47,7 +48,7 @@ Examples:
 			if shouldRunDispatchWizard(cmd.Flags().NFlag(), isTerminalStdin(os.Stdin), isTerminalWriter(cmd.OutOrStdout())) {
 				opts, err = runDispatchWizard(cmd)
 			} else {
-				opts, err = parseDispatchFlags(cmd, flagLocal, flagSince, flagUntil, flagAllBranches, flagRepos, flagVoice)
+				opts, err = parseDispatchFlags(cmd, flagLocal, flagSince, flagUntil, flagAllBranches, flagRepos, flagVoice, flagInsecureHTTPAuth)
 			}
 			if err != nil {
 				if errors.Is(err, errDispatchCancelled) {
@@ -72,6 +73,10 @@ Examples:
 	cmd.Flags().BoolVar(&flagAllBranches, "all-branches", false, "include every existing local branch (--local only; renamed or deleted branches are skipped)")
 	cmd.Flags().StringSliceVar(&flagRepos, "repos", nil, fmt.Sprintf("cloud repo slugs, up to %d (for example entireio/cli)", dispatchpkg.CloudRepoLimit))
 	cmd.Flags().StringVar(&flagVoice, "voice", "", "voice preset name or literal description")
+	cmd.Flags().BoolVar(&flagInsecureHTTPAuth, "insecure-http-auth", false, "Allow authentication over plain HTTP (insecure, for local development only)")
+	if err := cmd.Flags().MarkHidden("insecure-http-auth"); err != nil {
+		panic(fmt.Sprintf("hide insecure-http-auth flag: %v", err))
+	}
 
 	return cmd
 }
@@ -118,6 +123,7 @@ func parseDispatchFlags(
 	flagAllBranches bool,
 	flagRepos []string,
 	flagVoice string,
+	flagInsecureHTTPAuth bool,
 ) (dispatchpkg.Options, error) {
 	return resolveDispatchOptions(
 		flagLocal,
@@ -126,6 +132,7 @@ func parseDispatchFlags(
 		flagAllBranches,
 		flagRepos,
 		flagVoice,
+		flagInsecureHTTPAuth,
 		func() (string, error) {
 			return GetCurrentBranch(cmd.Context())
 		},
@@ -140,6 +147,7 @@ func resolveDispatchOptions(
 	flagAllBranches bool,
 	flagRepos []string,
 	flagVoice string,
+	flagInsecureHTTPAuth bool,
 	currentBranch func() (string, error),
 ) (dispatchpkg.Options, error) {
 	return dispatchpkg.ResolveOptions(
@@ -149,6 +157,7 @@ func resolveDispatchOptions(
 		flagAllBranches,
 		flagRepos,
 		flagVoice,
+		flagInsecureHTTPAuth,
 		currentBranch,
 	)
 }

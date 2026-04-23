@@ -83,7 +83,7 @@ func TestServerMode_HappyPath(t *testing.T) {
 				"unknown_count":       0,
 				"uncategorized_count": 0,
 			},
-			"generated_markdown": "Hello",
+			"generated_markdown": testDispatchGeneratedHello,
 		}); err != nil {
 			t.Fatal(err)
 		}
@@ -108,7 +108,7 @@ func TestServerMode_HappyPath(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.GeneratedText != "Hello" {
+	if got.GeneratedText != testDispatchGeneratedHello {
 		t.Fatalf("bad text: %q", got.GeneratedText)
 	}
 }
@@ -141,7 +141,7 @@ func TestServerMode_ExplicitReposDoNotRequireCurrentRepo(t *testing.T) {
 			},
 			"covered_repos":      []string{testRepoFullName, "entireio/entire.io"},
 			"repos":              []any{},
-			"generated_markdown": "Hello",
+			"generated_markdown": testDispatchGeneratedHello,
 			"totals": map[string]any{
 				"checkpoints":           0,
 				"used_checkpoint_count": 0,
@@ -280,7 +280,7 @@ func TestServerMode_NormalizesWindowAndSanitizesVoice(t *testing.T) {
 			},
 			"covered_repos":      []string{testRepoFullName},
 			"repos":              []any{},
-			"generated_markdown": "Hello",
+			"generated_markdown": testDispatchGeneratedHello,
 			"totals": map[string]any{
 				"checkpoints":           0,
 				"used_checkpoint_count": 0,
@@ -314,7 +314,60 @@ func TestServerMode_NormalizesWindowAndSanitizesVoice(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.GeneratedText != "Hello" {
+	if got.GeneratedText != testDispatchGeneratedHello {
+		t.Fatalf("unexpected generated text: %q", got.GeneratedText)
+	}
+}
+
+// TestServerMode_InsecureHTTPAuthBypassesSecureURLCheck confirms that setting
+// Options.InsecureHTTPAuth=true skips the real requireSecureDispatchURL check
+// and lets dispatch talk to an http:// base URL. This is the local-dev escape
+// hatch that matches the --insecure-http-auth flag on login/trail. The test
+// deliberately does not stub requireSecureDispatchURL — the flag alone must
+// bypass the guard.
+func TestServerMode_InsecureHTTPAuthBypassesSecureURLCheck(t *testing.T) {
+	mock := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != testDispatchEndpoint {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		if err := json.NewEncoder(w).Encode(map[string]any{
+			"window": map[string]any{
+				"normalized_since": "2026-04-09T00:00:00Z",
+				"normalized_until": "2026-04-16T00:00:00Z",
+			},
+			"covered_repos":      []string{testRepoFullName},
+			"repos":              []any{},
+			"generated_markdown": testDispatchGeneratedHello,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}))
+	defer mock.Close()
+
+	oldLookup := lookupCurrentToken
+	oldNow := nowUTC
+	lookupCurrentToken = func() (string, error) { return testCloudDispatchToken, nil }
+	nowUTC = func() time.Time { return time.Date(2026, 4, 16, 0, 0, 0, 0, time.UTC) }
+	t.Cleanup(func() {
+		lookupCurrentToken = oldLookup
+		nowUTC = oldNow
+	})
+
+	t.Setenv("ENTIRE_API_BASE_URL", mock.URL)
+
+	got, err := Run(context.Background(), Options{
+		Mode:             ModeServer,
+		RepoPaths:        []string{testRepoFullName},
+		Since:            "7d",
+		InsecureHTTPAuth: true,
+	})
+	if err != nil {
+		t.Fatalf("expected insecure override to bypass the HTTPS guard, got %v", err)
+	}
+	if got.GeneratedText != testDispatchGeneratedHello {
 		t.Fatalf("unexpected generated text: %q", got.GeneratedText)
 	}
 }

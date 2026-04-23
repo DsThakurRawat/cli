@@ -22,6 +22,7 @@ func TestParseDispatchFlags_ServerReposAreAllowed(t *testing.T) {
 		false,
 		[]string{"entireio/cli", "entireio/entire.io"},
 		"",
+		false,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -51,6 +52,7 @@ func TestParseDispatchFlags_NormalizesRepoScopeValues(t *testing.T) {
 		false,
 		[]string{" entireio/cli ", "", "entireio/cli", " otherco/service ", "   "},
 		"",
+		false,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -74,6 +76,7 @@ func TestParseDispatchFlags_LocalRejectsRepos(t *testing.T) {
 		false,
 		[]string{"entireio/cli"},
 		"",
+		false,
 	)
 	if err == nil {
 		t.Fatal("expected error")
@@ -94,6 +97,7 @@ func TestParseDispatchFlags_CloudRejectsAllBranches(t *testing.T) {
 		true,
 		[]string{"entireio/cli"},
 		"",
+		false,
 	)
 	if err == nil {
 		t.Fatal("expected error for --all-branches in cloud mode")
@@ -115,6 +119,7 @@ func TestParseDispatchFlags_CloudCapsReposAtFive(t *testing.T) {
 		false,
 		repos,
 		"",
+		false,
 	)
 	if err == nil {
 		t.Fatal("expected error for too many repos")
@@ -135,6 +140,7 @@ func TestParseDispatchFlags_LocalAllBranchesFlag(t *testing.T) {
 		true,
 		nil,
 		"",
+		false,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -144,6 +150,40 @@ func TestParseDispatchFlags_LocalAllBranchesFlag(t *testing.T) {
 	}
 	if opts.Branches != nil {
 		t.Fatalf("expected nil branches, got %v", opts.Branches)
+	}
+}
+
+func TestParseDispatchFlags_InsecureHTTPAuthFlag(t *testing.T) {
+	t.Parallel()
+
+	opts, err := parseDispatchFlags(
+		&cobra.Command{},
+		false,
+		"7d",
+		"",
+		false,
+		[]string{"entireio/cli"},
+		"",
+		true,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !opts.InsecureHTTPAuth {
+		t.Fatal("expected InsecureHTTPAuth=true to propagate into Options")
+	}
+}
+
+func TestNewDispatchCmd_InsecureHTTPAuthFlagIsHidden(t *testing.T) {
+	t.Parallel()
+
+	cmd := newDispatchCmd()
+	flag := cmd.Flags().Lookup("insecure-http-auth")
+	if flag == nil {
+		t.Fatal("expected --insecure-http-auth flag to be registered")
+	}
+	if !flag.Hidden {
+		t.Fatal("expected --insecure-http-auth flag to be hidden")
 	}
 }
 

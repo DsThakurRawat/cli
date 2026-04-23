@@ -32,6 +32,7 @@ type Options struct {
 	AllBranches           bool
 	ImplicitCurrentBranch bool
 	Voice                 string
+	InsecureHTTPAuth      bool
 }
 
 // CloudRepoLimit caps how many repos the cloud mode may query in one request.

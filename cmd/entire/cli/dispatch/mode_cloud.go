@@ -28,8 +28,10 @@ func runServer(ctx context.Context, opts Options) (*Dispatch, error) {
 	}
 
 	baseURL := api.BaseURL()
-	if err := requireSecureDispatchURL(baseURL); err != nil {
-		return nil, fmt.Errorf("dispatch base URL: %w", err)
+	if !opts.InsecureHTTPAuth {
+		if err := requireSecureDispatchURL(baseURL); err != nil {
+			return nil, fmt.Errorf("dispatch base URL: %w", err)
+		}
 	}
 
 	now := nowUTC()
