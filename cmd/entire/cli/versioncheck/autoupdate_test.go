@@ -126,6 +126,66 @@ func TestMaybeAutoUpdate_NonTerminalWriter(t *testing.T) {
 	assertManualHint(t, buf.String())
 }
 
+// TestMaybeAutoUpdate_WindowsUnknownInstallerNoAutoRun verifies that on
+// Windows without a detected install manager we never execute the POSIX
+// curl-pipe-bash fallback (which would error from cmd.exe). Instead the
+// user is pointed at the releases download page.
+func TestMaybeAutoUpdate_WindowsUnknownInstallerNoAutoRun(t *testing.T) {
+	f := newAutoUpdateFixture(t)
+	// Force unknown install manager: point executablePath at a plain
+	// Program Files path that matches none of the known prefixes.
+	orig := executablePath
+	executablePath = func() (string, error) {
+		return `C:\Program Files\Entire\entire.exe`, nil
+	}
+	t.Cleanup(func() { executablePath = orig })
+
+	origGOOS := goos
+	goos = goosWindows
+	t.Cleanup(func() { goos = origGOOS })
+
+	var buf bytes.Buffer
+	MaybeAutoUpdate(context.Background(), &buf, "1.0.0")
+
+	if f.installCalls != 0 {
+		t.Errorf("installer was auto-run on Windows + unknown install manager")
+	}
+	out := buf.String()
+	if !strings.Contains(out, "download the latest release") ||
+		!strings.Contains(out, "github.com/entireio/cli/releases") {
+		t.Errorf("expected download-page hint, got: %q", out)
+	}
+	if strings.Contains(out, "curl -fsSL") {
+		t.Errorf("Windows fallback must not show POSIX curl command: %q", out)
+	}
+}
+
+// TestMaybeAutoUpdate_WindowsScoopStillAutoRuns verifies that a Windows
+// scoop install still takes the interactive path — only unknown install
+// managers are blocked on Windows.
+func TestMaybeAutoUpdate_WindowsScoopStillAutoRuns(t *testing.T) {
+	f := newAutoUpdateFixture(t)
+	orig := executablePath
+	executablePath = func() (string, error) {
+		return `C:\Users\test\scoop\apps\cli\current\entire.exe`, nil
+	}
+	t.Cleanup(func() { executablePath = orig })
+
+	origGOOS := goos
+	goos = goosWindows
+	t.Cleanup(func() { goos = origGOOS })
+
+	var buf bytes.Buffer
+	MaybeAutoUpdate(context.Background(), &buf, "1.0.0")
+
+	if f.installCalls != 1 {
+		t.Fatalf("scoop install should auto-run on Windows; calls=%d", f.installCalls)
+	}
+	if f.lastCommand != "scoop update entire/cli" {
+		t.Errorf("got %q, want scoop update entire/cli", f.lastCommand)
+	}
+}
+
 func TestMaybeAutoUpdate_UserDeclines(t *testing.T) {
 	f := newAutoUpdateFixture(t)
 	useBrewExecutable(t)

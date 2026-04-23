@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -16,6 +17,12 @@ import (
 	"github.com/entireio/cli/cmd/entire/cli/versioninfo"
 	"golang.org/x/mod/semver"
 )
+
+const goosWindows = "windows"
+
+// goos is a test seam for runtime.GOOS so the Windows-specific auto-install
+// gating can be exercised from a non-Windows host.
+var goos = runtime.GOOS
 
 const (
 	installManagerBrew    = "brew"
@@ -339,6 +346,26 @@ func installManagerForCurrentBinary() string {
 		return installManagerUnknown
 	}
 }
+
+// canAutoInstall reports whether updateCommand(currentVersion) is safe to
+// execute on the current OS. Returns false on Windows when the install
+// manager is unknown, because the POSIX curl-pipe-bash fallback can't run
+// from cmd.exe and there's no Windows-native installer to substitute.
+func canAutoInstall() bool {
+	if goos != goosWindows {
+		return true
+	}
+	switch installManagerForCurrentBinary() {
+	case installManagerScoop, installManagerMise:
+		return true
+	default:
+		return false
+	}
+}
+
+// downloadsURL is the public page users visit when we can't offer an
+// auto-installable command on their platform.
+const downloadsURL = "https://github.com/entireio/cli/releases"
 
 // updateCommand returns the appropriate update instruction based on how the binary was installed.
 func updateCommand(currentVersion string) string {

@@ -39,6 +39,13 @@ var (
 // environment like CI / agent subprocess / no TTY) the installer
 // command is printed so the user still learns what to run manually.
 func MaybeAutoUpdate(ctx context.Context, w io.Writer, currentVersion string) {
+	// Windows + unknown install manager: the POSIX curl-pipe-bash fallback
+	// would error if auto-run, and there's no safe native equivalent. Point
+	// the user at the releases page so they can download manually.
+	if !canAutoInstall() {
+		fmt.Fprintf(w, "To update, download the latest release from:\n  %s\n", downloadsURL)
+		return
+	}
 	if os.Getenv(envKillSwitch) != "" || !interactive.CanPromptInteractively() || !isTerminalOut(w) {
 		fmt.Fprintf(w, "To update, run:\n  %s\n", updateCommand(currentVersion))
 		return
@@ -90,7 +97,7 @@ func realConfirmUpdate() (bool, error) {
 // so password prompts and progress output reach the user.
 func realRunInstaller(ctx context.Context, cmdStr string) error {
 	var c *exec.Cmd
-	if runtime.GOOS == "windows" {
+	if runtime.GOOS == goosWindows {
 		c = exec.CommandContext(ctx, "cmd", "/C", cmdStr)
 	} else {
 		c = exec.CommandContext(ctx, "sh", "-c", cmdStr)
