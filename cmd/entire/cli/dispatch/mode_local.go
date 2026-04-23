@@ -217,7 +217,7 @@ func reachableCheckpointIDsOnHEAD(ctx context.Context, repoRoot string, since ti
 		"-C",
 		repoRoot,
 		"log",
-		"HEAD",
+		branchLocalRevRange(ctx, repoRoot),
 		"--since="+since.UTC().Format(time.RFC3339),
 		"--grep",
 		"Entire-Checkpoint:",
@@ -235,6 +235,45 @@ func reachableCheckpointIDsOnHEAD(ctx context.Context, repoRoot string, since ti
 		}
 	}
 	return reachable, nil
+}
+
+// branchLocalRevRange returns a git log rev range that limits commits to
+// those unique to the current branch — reachable from HEAD but not from the
+// repository's default branch. Falls back to "HEAD" when no default branch
+// can be resolved (e.g. a fresh repo with no main/master ref).
+func branchLocalRevRange(ctx context.Context, repoRoot string) string {
+	base := defaultBranchRef(ctx, repoRoot)
+	if base == "" {
+		return "HEAD"
+	}
+	return base + "..HEAD"
+}
+
+// defaultBranchRef resolves the repository's default branch, preferring
+// origin/HEAD and falling back to the conventional main/master names. Returns
+// an empty string if nothing matches so callers can skip the exclusion.
+func defaultBranchRef(ctx context.Context, repoRoot string) string {
+	if out, ok := runGitOutput(ctx, repoRoot, "symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"); ok {
+		ref := strings.TrimSpace(out)
+		if strings.HasPrefix(ref, "refs/remotes/") {
+			return strings.TrimPrefix(ref, "refs/remotes/")
+		}
+	}
+	for _, candidate := range []string{"origin/main", "origin/master", "main", "master"} {
+		if _, ok := runGitOutput(ctx, repoRoot, "rev-parse", "--verify", "--quiet", candidate); ok {
+			return candidate
+		}
+	}
+	return ""
+}
+
+func runGitOutput(ctx context.Context, repoRoot string, args ...string) (string, bool) {
+	fullArgs := append([]string{"-C", repoRoot}, args...)
+	out, err := exec.CommandContext(ctx, "git", fullArgs...).Output()
+	if err != nil {
+		return "", false
+	}
+	return string(out), true
 }
 
 func resolveRepoFullName(repo *git.Repository) (string, error) {

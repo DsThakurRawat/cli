@@ -429,6 +429,67 @@ func TestLocalMode_ImplicitCurrentBranchUsesCheckpointBranchWithoutTrailerReacha
 	}
 }
 
+func TestLocalMode_ImplicitCurrentBranchExcludesDefaultBranchHistory(t *testing.T) {
+	dir := t.TempDir()
+	stubGeneratedLocalDispatch(t)
+	testutil.InitRepo(t, dir)
+	addOriginRemote(t, dir)
+
+	mainCheckpointID := "00aaaaaaaaaa"
+	testutil.WriteFile(t, dir, "a.txt", "x")
+	testutil.GitAdd(t, dir, "a.txt")
+	commitWithMessage(t, dir, trailers.FormatCheckpoint("main work", mustCheckpointID(t, mainCheckpointID)))
+
+	mainCreatedAt := time.Now().UTC()
+	seedCommittedCheckpoint(t, dir, seededCheckpoint{
+		id:           mainCheckpointID,
+		branch:       "master",
+		createdAt:    mainCreatedAt,
+		filesTouched: []string{"a.txt"},
+		outcome:      "pre-branch work on main",
+	})
+
+	testutil.GitCheckoutNewBranch(t, dir, "my-feature")
+	testutil.WriteFile(t, dir, "feature.md", "ship it")
+	testutil.GitAdd(t, dir, "feature.md")
+	commitWithMessage(t, dir, trailers.FormatCheckpoint("feature work", mustCheckpointID(t, testCheckpointID)))
+
+	featureCreatedAt := time.Now().UTC()
+	seedCommittedCheckpoint(t, dir, seededCheckpoint{
+		id:           testCheckpointID,
+		branch:       "my-feature",
+		createdAt:    featureCreatedAt,
+		filesTouched: []string{"feature.md"},
+		outcome:      testLocalFallbackText,
+	})
+
+	oldNow := nowUTC
+	nowUTC = func() time.Time { return featureCreatedAt.Add(time.Hour) }
+	t.Cleanup(func() { nowUTC = oldNow })
+
+	t.Chdir(dir)
+
+	got, err := Run(context.Background(), Options{
+		Mode:                  ModeLocal,
+		Since:                 "7d",
+		Branches:              []string{"my-feature"},
+		ImplicitCurrentBranch: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Repos) != 1 {
+		t.Fatalf("expected 1 repo group, got %d", len(got.Repos))
+	}
+	for _, section := range got.Repos[0].Sections {
+		for _, bullet := range section.Bullets {
+			if strings.Contains(bullet.Text, "pre-branch work on main") {
+				t.Fatalf("default-branch checkpoint leaked into feature-branch dispatch: %+v", bullet)
+			}
+		}
+	}
+}
+
 func TestReachableCheckpointIDsOnHEAD_LimitsLogToWindowAndCheckpointTrailers(t *testing.T) {
 	tmpDir := t.TempDir()
 	argsFile := filepath.Join(tmpDir, "git-args.txt")
