@@ -19,10 +19,12 @@ import (
 	_ "github.com/entireio/cli/cmd/entire/cli/agent/geminicli"      // register agent
 	"github.com/entireio/cli/cmd/entire/cli/agent/types"
 	cpkg "github.com/entireio/cli/cmd/entire/cli/checkpoint"
+	"github.com/entireio/cli/cmd/entire/cli/checkpoint/id"
 	"github.com/entireio/cli/cmd/entire/cli/paths"
 	"github.com/entireio/cli/cmd/entire/cli/session"
 	"github.com/entireio/cli/cmd/entire/cli/testutil"
 	"github.com/entireio/cli/cmd/entire/cli/trailers"
+	"github.com/entireio/cli/redact"
 
 	"github.com/go-git/go-git/v6"
 	"github.com/go-git/go-git/v6/plumbing"
@@ -360,6 +362,84 @@ func TestAttach_RefusesWhenCheckpointMissingFromLocalBranch(t *testing.T) {
 	}
 	if summary != nil {
 		t.Errorf("attach should NOT have created checkpoint ffffffffeeee locally; found %+v", summary)
+	}
+}
+
+// Regression for https://github.com/entireio/cli/pull/1014#pullrequestreview-copilot:
+// Bob clones a repo where Alice's checkpoint is on the remote-tracking ref
+// (refs/remotes/origin/entire/checkpoints/v1) but the local branch doesn't
+// exist yet. ReadCommitted falls back to the remote-tracking tree, so a naive
+// "read and check" guard would think all is well. But WriteCommitted would
+// then create a *fresh* orphan local branch, and Bob's push would clobber
+// Alice's data on origin. Attach must refuse in this shape.
+func TestAttach_RefusesWhenCheckpointOnlyInRemoteTrackingRef(t *testing.T) {
+	setupAttachTestRepo(t)
+
+	repoRoot := mustGetwd(t)
+	repo, err := git.PlainOpen(repoRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Seed the local branch with a checkpoint representing Alice's session.
+	alicesCheckpoint := id.MustCheckpointID("abcdef012345")
+	store := cpkg.NewGitStore(repo)
+	if writeErr := store.WriteCommitted(context.Background(), cpkg.WriteCommittedOptions{
+		CheckpointID: alicesCheckpoint,
+		SessionID:    "alice-original",
+		Strategy:     "manual-commit",
+		Transcript:   redact.AlreadyRedacted([]byte(`{"type":"user","message":"hi"}` + "\n")),
+		AuthorName:   "Alice",
+		AuthorEmail:  "alice@example.com",
+	}); writeErr != nil {
+		t.Fatalf("WriteCommitted: %v", writeErr)
+	}
+
+	// Move the populated branch to the remote-tracking ref, then delete the
+	// local ref. This is the shape `git clone` produces for a branch the user
+	// never explicitly checked out locally.
+	localRef := plumbing.NewBranchReferenceName(paths.MetadataBranchName)
+	remoteTrackingRef := plumbing.NewRemoteReferenceName("origin", paths.MetadataBranchName)
+	populated, err := repo.Reference(localRef, true)
+	if err != nil {
+		t.Fatalf("reading local ref: %v", err)
+	}
+	if setErr := repo.Storer.SetReference(plumbing.NewHashReference(remoteTrackingRef, populated.Hash())); setErr != nil {
+		t.Fatalf("SetReference remote-tracking: %v", setErr)
+	}
+	if rmErr := repo.Storer.RemoveReference(localRef); rmErr != nil {
+		t.Fatalf("RemoveReference local: %v", rmErr)
+	}
+
+	// Amend HEAD so attach treats this as an existing-checkpoint case.
+	runGitInDir(t, repoRoot, "commit", "--amend", "-m", "init\n\nEntire-Checkpoint: "+alicesCheckpoint.String())
+
+	sessionID := "bob-attempted-attach"
+	setupClaudeTranscript(t, sessionID, `{"type":"user","message":{"role":"user","content":"hi"},"uuid":"u1"}
+`)
+
+	var out bytes.Buffer
+	err = runAttach(context.Background(), &out, sessionID, agent.AgentNameClaudeCode, true)
+	if err == nil {
+		t.Fatal("expected attach to refuse when checkpoint is only in the remote-tracking ref")
+	}
+	if !strings.Contains(err.Error(), "missing from the local entire/checkpoints/v1 branch") {
+		t.Errorf("error should explain the local-branch gap; got: %v", err)
+	}
+
+	// Local branch must still not exist — attach should not have created a
+	// fresh orphan on refuse.
+	if _, refErr := repo.Reference(localRef, true); refErr == nil {
+		t.Error("local entire/checkpoints/v1 branch was created despite refuse; would clobber remote on push")
+	}
+
+	// Remote-tracking ref must still hold Alice's untouched data.
+	remoteRef, err := repo.Reference(remoteTrackingRef, true)
+	if err != nil {
+		t.Fatalf("remote-tracking ref missing: %v", err)
+	}
+	if remoteRef.Hash() != populated.Hash() {
+		t.Errorf("remote-tracking ref moved from %s to %s", populated.Hash(), remoteRef.Hash())
 	}
 }
 
