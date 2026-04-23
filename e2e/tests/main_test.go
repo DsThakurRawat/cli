@@ -83,7 +83,11 @@ func TestMain(m *testing.M) {
 
 func ensureHookEntireBinary(entireBin string) error {
 	dir := filepath.Dir(entireBin)
-	hookBin := filepath.Join(dir, "entire")
+	hookName := "entire"
+	if runtime.GOOS == "windows" {
+		hookName = "entire.exe"
+	}
+	hookBin := filepath.Join(dir, hookName)
 	if filepath.Clean(entireBin) == filepath.Clean(hookBin) {
 		return nil
 	}
