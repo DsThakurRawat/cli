@@ -114,8 +114,24 @@ func parseArgs(args []string) config {
 			fatal("--assistant-message is required with --write-session")
 		}
 	}
+	if err := validateSessionID(cfg.sessionID); err != nil {
+		fatal("invalid --session-id: %v", err)
+	}
 
 	return cfg
+}
+
+func validateSessionID(sessionID string) error {
+	if sessionID == "" {
+		return fmt.Errorf("session ID cannot be empty")
+	}
+	if filepath.Base(sessionID) != sessionID {
+		return fmt.Errorf("must not contain path separators")
+	}
+	if sessionID == "." || sessionID == ".." || strings.Contains(sessionID, "..") {
+		return fmt.Errorf("must not contain dot path elements")
+	}
+	return nil
 }
 
 func runTurn(dir, sessionID, transcriptPath, prompt string) {
