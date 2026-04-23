@@ -6,10 +6,9 @@ on:
       agent:
         description: "Agent to run"
         required: true
-        default: "vogon"
+        default: "claude-code"
         type: choice
         options:
-          - vogon
           - claude-code
           - opencode
           - gemini-cli
@@ -44,8 +43,8 @@ jobs:
 
       - uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4
 
-      - name: E2E Canary (Checkpoints V2)
+      - name: E2E Checkpoints V2
         env:
           E2E_AGENT: ${{ inputs.agent }}
           E2E_CHECKPOINTS_MODE: ${{ inputs.checkpoints_mode }}
-        run: mise run test:e2e:canary
+        run: mise run test:e2e --agent ${{ inputs.agent }}
