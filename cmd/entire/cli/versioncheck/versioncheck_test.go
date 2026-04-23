@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -510,6 +511,10 @@ func TestCheckAndNotify_InstallerFailureKeepsCacheFresh(t *testing.T) {
 	origRun := runInstaller
 	runInstaller = func(_ context.Context, _ string) error { return errors.New("boom") }
 	t.Cleanup(func() { runInstaller = origRun })
+
+	origIsTerminalOut := isTerminalOut
+	isTerminalOut = func(_ io.Writer) bool { return true }
+	t.Cleanup(func() { isTerminalOut = origIsTerminalOut })
 
 	CheckAndNotify(context.Background(), cmd.OutOrStdout(), "1.0.0")
 

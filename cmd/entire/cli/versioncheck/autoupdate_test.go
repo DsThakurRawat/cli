@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"strings"
 	"testing"
 )
@@ -34,10 +35,13 @@ func newAutoUpdateFixture(t *testing.T) *autoUpdateFixture {
 	}
 	origConfirm := confirmUpdate
 	confirmUpdate = func() (bool, error) { return f.confirmValue, f.confirmErr }
+	origIsTerminalOut := isTerminalOut
+	isTerminalOut = func(_ io.Writer) bool { return true }
 
 	t.Cleanup(func() {
 		runInstaller = origRun
 		confirmUpdate = origConfirm
+		isTerminalOut = origIsTerminalOut
 	})
 	return f
 }
@@ -104,6 +108,20 @@ func TestMaybeAutoUpdate_CIEnv(t *testing.T) {
 
 	if f.installCalls != 0 {
 		t.Errorf("installer called on CI (CI=true)")
+	}
+	assertManualHint(t, buf.String())
+}
+
+func TestMaybeAutoUpdate_NonTerminalWriter(t *testing.T) {
+	f := newAutoUpdateFixture(t)
+	useBrewExecutable(t)
+	isTerminalOut = func(_ io.Writer) bool { return false }
+
+	var buf bytes.Buffer
+	MaybeAutoUpdate(context.Background(), &buf, "1.0.0")
+
+	if f.installCalls != 0 {
+		t.Errorf("installer called with non-terminal output writer")
 	}
 	assertManualHint(t, buf.String())
 }

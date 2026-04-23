@@ -22,6 +22,7 @@ const envKillSwitch = "ENTIRE_NO_AUTO_UPDATE"
 var (
 	runInstaller  = realRunInstaller
 	confirmUpdate = realConfirmUpdate
+	isTerminalOut = interactive.IsTerminalWriter
 )
 
 // MaybeAutoUpdate offers an interactive upgrade after the standard
@@ -38,7 +39,7 @@ var (
 // environment like CI / agent subprocess / no TTY) the installer
 // command is printed so the user still learns what to run manually.
 func MaybeAutoUpdate(ctx context.Context, w io.Writer, currentVersion string) {
-	if os.Getenv(envKillSwitch) != "" || !interactive.CanPromptInteractively() {
+	if os.Getenv(envKillSwitch) != "" || !interactive.CanPromptInteractively() || !isTerminalOut(w) {
 		fmt.Fprintf(w, "To update, run:\n  %s\n", updateCommand(currentVersion))
 		return
 	}
