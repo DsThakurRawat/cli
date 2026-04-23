@@ -317,6 +317,18 @@ func (s *GitStore) writeStandardCheckpointEntries(ctx context.Context, opts Writ
 	// Determine session index: reuse existing slot if session ID matches, otherwise append
 	sessionIndex := s.findSessionIndex(ctx, basePath, existingSummary, entries, opts.SessionID)
 
+	// Capture any pre-existing session-0 metadata before writeSessionToSubdirectory
+	// clears that subtree. This is a diagnostic tripwire for a production report
+	// where session 0 was silently replaced by a different session's data.
+	var existingSessionZeroMeta *CommittedMetadata
+	if sessionIndex == 0 {
+		if entry, exists := entries[fmt.Sprintf("%s0/%s", basePath, paths.MetadataFileName)]; exists {
+			if existingMeta, readErr := s.readMetadataFromBlob(entry.Hash); readErr == nil {
+				existingSessionZeroMeta = existingMeta
+			}
+		}
+	}
+
 	// Write session files to numbered subdirectory
 	sessionPath := fmt.Sprintf("%s%d/", basePath, sessionIndex)
 	sessionFilePaths, err := s.writeSessionToSubdirectory(ctx, opts, sessionPath, entries)
@@ -340,6 +352,17 @@ func (s *GitStore) writeStandardCheckpointEntries(ctx context.Context, opts Writ
 		sessions = make([]SessionFilePaths, 1)
 	}
 	sessions[sessionIndex] = sessionFilePaths
+
+	// Tripwire: if we're writing session 0 and there was already session-0
+	// metadata for a DIFFERENT session ID, emit a loud warning so we have a
+	// log trace instead of only the overwrite symptom.
+	if existingSessionZeroMeta != nil && existingSessionZeroMeta.SessionID != opts.SessionID {
+		logging.Warn(ctx, "checkpoint write overwrites session 0 with a different sessionID — potential overwrite regression",
+			slog.String("checkpoint_id", opts.CheckpointID.String()),
+			slog.String("existing_session_id", existingSessionZeroMeta.SessionID),
+			slog.String("write_session_id", opts.SessionID),
+			slog.Bool("existing_summary_nil", existingSummary == nil))
+	}
 
 	// Update root metadata.json with CheckpointSummary
 	return s.writeCheckpointSummary(opts, basePath, entries, sessions)
