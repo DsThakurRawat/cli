@@ -25,7 +25,7 @@ import (
 //     actual environment, so tests that need a specific answer should set
 //     ENTIRE_TEST_TTY explicitly rather than assume a non-interactive host.
 func CanPromptInteractively() bool {
-	if v, ok := os.LookupEnv("ENTIRE_TEST_TTY"); ok {
+	if v := os.Getenv("ENTIRE_TEST_TTY"); v != "" {
 		return v == "1"
 	}
 
@@ -40,6 +40,15 @@ func CanPromptInteractively() bool {
 		os.Getenv("COPILOT_CLI") != "" ||
 		os.Getenv("PI_CODING_AGENT") != "" ||
 		os.Getenv("GIT_TERMINAL_PROMPT") == "0" {
+		return false
+	}
+
+	// CI=<non-empty> is the de-facto CI-provider convention (GitHub Actions,
+	// CircleCI, GitLab, Travis, Buildkite). Self-hosted runners expose /dev/tty,
+	// so the probe below isn't enough — an interactive prompt on CI hangs.
+	// CI=false is the `is-ci` escape hatch for developers who need to override
+	// an inherited value.
+	if v := os.Getenv("CI"); v != "" && v != "false" {
 		return false
 	}
 
