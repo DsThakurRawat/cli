@@ -76,7 +76,16 @@ func CheckAndNotify(ctx context.Context, w io.Writer, currentVersion string) {
 	// Show notification and offer an interactive upgrade when outdated
 	if isOutdated(currentVersion, latestVersion) {
 		printNotification(w, currentVersion, latestVersion)
-		MaybeAutoUpdate(ctx, w, currentVersion)
+		if installerFailed := MaybeAutoUpdate(ctx, w, currentVersion); installerFailed {
+			// Installer ran but failed (network mid-install, auth, etc.). Roll
+			// the cache back so the user gets re-prompted on the next invocation
+			// rather than waiting 24h for the daily check to re-arm.
+			cache.LastCheckTime = time.Time{}
+			if saveErr := saveCache(cache); saveErr != nil {
+				logging.Debug(ctx, "version check: failed to reset cache after install failure",
+					"error", saveErr.Error())
+			}
+		}
 	}
 }
 

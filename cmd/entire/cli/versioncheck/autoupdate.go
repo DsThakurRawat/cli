@@ -26,31 +26,34 @@ var (
 
 // MaybeAutoUpdate offers an interactive upgrade after the standard
 // "version available" notification has been printed. Silent on every
-// failure path — it must never interrupt the CLI.
-func MaybeAutoUpdate(ctx context.Context, w io.Writer, currentVersion string) {
+// failure path — it must never interrupt the CLI. Returns true iff the
+// installer command ran and failed, so the caller can invalidate the
+// version-check cache and re-prompt on the next invocation.
+func MaybeAutoUpdate(ctx context.Context, w io.Writer, currentVersion string) (installerFailed bool) {
 	if os.Getenv(envKillSwitch) != "" {
-		return
+		return false
 	}
 	if !interactive.CanPromptInteractively() {
-		return
+		return false
 	}
 
 	confirmed, err := confirmUpdate()
 	if err != nil {
 		logging.Debug(ctx, "auto-update: prompt failed", "error", err.Error())
-		return
+		return false
 	}
 	if !confirmed {
-		return
+		return false
 	}
 
 	cmdStr := updateCommand(currentVersion)
 	fmt.Fprintf(w, "\nUpdating Entire CLI: %s\n", cmdStr)
 	if err := runInstaller(ctx, cmdStr); err != nil {
 		fmt.Fprintf(w, "Update failed: %v\n", err)
-		return
+		return true
 	}
 	fmt.Fprintln(w, "Update complete. Re-run entire to use the new version.")
+	return false
 }
 
 func realConfirmUpdate() (bool, error) {

@@ -494,6 +494,35 @@ func TestCheckAndNotify_NoNotificationWhenUpToDate(t *testing.T) {
 	}
 }
 
+func TestCheckAndNotify_InstallerFailureInvalidatesCache(t *testing.T) {
+	server := newVersionServer(t, "v2.0.0")
+	cmd, _ := setupCheckAndNotifyTest(t, server.URL)
+
+	// Simulate an interactive user who accepts the upgrade prompt, and an
+	// installer that fails.
+	t.Setenv("ENTIRE_TEST_TTY", "1")
+	useBrewExecutable(t)
+
+	origConfirm := confirmUpdate
+	confirmUpdate = func() (bool, error) { return true, nil }
+	t.Cleanup(func() { confirmUpdate = origConfirm })
+
+	origRun := runInstaller
+	runInstaller = func(_ context.Context, _ string) error { return errors.New("boom") }
+	t.Cleanup(func() { runInstaller = origRun })
+
+	CheckAndNotify(context.Background(), cmd.OutOrStdout(), "1.0.0")
+
+	// Cache must be rolled back so the next CLI invocation re-prompts.
+	cache, err := loadCache()
+	if err != nil {
+		t.Fatalf("loadCache() error = %v", err)
+	}
+	if !cache.LastCheckTime.IsZero() {
+		t.Errorf("cache LastCheckTime not reset after installer failure: %v", cache.LastCheckTime)
+	}
+}
+
 func TestCheckAndNotify_FetchFailureUpdatesCacheToPreventRetry(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
