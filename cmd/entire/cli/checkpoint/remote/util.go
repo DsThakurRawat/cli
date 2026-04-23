@@ -163,6 +163,7 @@ func PushURL(ctx context.Context, pushRemoteName string) (string, bool, error) {
 		pushInfo = &Info{
 			Protocol: ProtocolHTTPS,
 			Host:     pushInfo.Host,
+			Port:     pushInfo.Port,
 			Owner:    pushInfo.Owner,
 			Repo:     pushInfo.Repo,
 		}
@@ -238,14 +239,14 @@ func ExtractOwnerFromRemoteURL(rawURL string) string {
 func deriveCheckpointURLFromInfo(info *Info, config *settings.CheckpointRemoteConfig) (string, error) {
 	switch info.Protocol {
 	case ProtocolSSH:
-		// SCP-style (git@host:repo) doesn't support ports. When Host includes
-		// a port (e.g., from ssh://git@host:2222/...), use the ssh:// URL form.
-		if strings.Contains(info.Host, ":") {
-			return fmt.Sprintf("ssh://git@%s/%s.git", info.Host, config.Repo), nil
+		// SCP-style (git@host:repo) doesn't support ports. When a non-default
+		// port is set (e.g., from ssh://git@host:2222/...), use the ssh:// URL form.
+		if info.Port != "" {
+			return fmt.Sprintf("ssh://git@%s/%s.git", info.HostPort(), config.Repo), nil
 		}
 		return fmt.Sprintf("git@%s:%s.git", info.Host, config.Repo), nil
 	case ProtocolHTTPS:
-		return fmt.Sprintf("https://%s/%s.git", info.Host, config.Repo), nil
+		return fmt.Sprintf("https://%s/%s.git", info.HostPort(), config.Repo), nil
 	default:
 		return "", fmt.Errorf("unsupported protocol %q in origin remote", info.Protocol)
 	}
@@ -259,7 +260,7 @@ func deriveTokenOriginURL(originURL string) (string, bool) {
 	if info.Host == "" || info.Owner == "" || info.Repo == "" {
 		return "", false
 	}
-	return fmt.Sprintf("https://%s/%s/%s.git", info.Host, info.Owner, info.Repo), true
+	return fmt.Sprintf("https://%s/%s/%s.git", info.HostPort(), info.Owner, info.Repo), true
 }
 
 func providerHost(provider string) (string, bool) {
