@@ -228,7 +228,11 @@ func PushCheckpointRefs(t *testing.T, dir string) {
 	switch CheckpointsMode() {
 	case checkpointsModeLegacy:
 		Git(t, dir, "push", "origin", checkpointRefV1+":"+checkpointRefV1)
-	case checkpointsModeV2DualWrite, checkpointsModeV2Only:
+	case checkpointsModeV2DualWrite:
+		Git(t, dir, "push", "origin", checkpointRefV1+":"+checkpointRefV1)
+		Git(t, dir, "push", "origin", checkpointRefV2Main+":"+checkpointRefV2Main)
+		Git(t, dir, "push", "origin", checkpointRefV2FullCurrent+":"+checkpointRefV2FullCurrent)
+	case checkpointsModeV2Only:
 		Git(t, dir, "push", "origin", checkpointRefV2Main+":"+checkpointRefV2Main)
 		Git(t, dir, "push", "origin", checkpointRefV2FullCurrent+":"+checkpointRefV2FullCurrent)
 	default:
