@@ -48,8 +48,9 @@ const (
 )
 
 // askConfirmTTY prompts the user via /dev/tty whether to link a commit to session context.
-// This requires a controlling terminal — callers must check interactive.CanPromptInteractively() first and handle
-// the no-TTY case (agent subprocesses, CI) themselves.
+// This requires a controlling terminal — callers must check
+// interactive.CanPromptInteractively() first and handle the no-TTY case
+// (agent subprocesses, CI) themselves.
 //
 // header is displayed as the first line (e.g., "Entire: Active Claude Code session").
 // detail lines are displayed indented below the header.
@@ -60,8 +61,9 @@ func askConfirmTTY(header string, details []string, prompt string, defaultYes bo
 	}
 
 	// In test mode, don't try to interact with the real TTY — just use the default.
-	// ENTIRE_TEST_TTY=1 simulates "a human is present" for the CanPromptInteractively() check
-	// but we can't actually read from the TTY in tests.
+	// Any non-empty ENTIRE_TEST_TTY value is treated as test mode here. Tests may use
+	// this to simulate "a human is present" for CanPromptInteractively(), but we can't
+	// actually read from the TTY in tests.
 	if os.Getenv("ENTIRE_TEST_TTY") != "" {
 		return defaultResult
 	}

@@ -3,46 +3,43 @@
 // import cli).
 package interactive
 
-import "os"
+import (
+	"io"
+	"os"
 
-// CanPromptInteractively checks if /dev/tty is available for interactive prompts.
-// Returns false when running as an agent subprocess (no controlling terminal).
+	"golang.org/x/term"
+)
+
+// CanPromptInteractively reports whether interactive confirmation prompts
+// (huh forms, yes/no questions, etc.) can be shown. Returns false in CI,
+// agent subprocesses that inherit a TTY but can't respond to prompts,
+// and other environments without a controlling TTY.
 //
-// In test environments, ENTIRE_TEST_TTY overrides the real check:
-//   - ENTIRE_TEST_TTY=1 → simulate human (TTY available)
-//   - ENTIRE_TEST_TTY=0 → simulate agent (no TTY)
+// When ENTIRE_TEST_TTY is set (to any value, including empty) it is treated
+// as a test override and the result is determined solely by whether the
+// value equals "1":
+//   - ENTIRE_TEST_TTY=1 forces interactive mode on
+//   - any other value (including empty) forces interactive mode off
+//   - ENTIRE_TEST_TTY unset falls through to agent-env guards and
+//     /dev/tty probing. In that case the return value depends on the
+//     actual environment, so tests that need a specific answer should set
+//     ENTIRE_TEST_TTY explicitly rather than assume a non-interactive host.
 func CanPromptInteractively() bool {
 	if v := os.Getenv("ENTIRE_TEST_TTY"); v != "" {
 		return v == "1"
 	}
 
-	// Gemini CLI sets GEMINI_CLI=1 when running shell commands.
-	// Gemini subprocesses may have access to the user's TTY, but they can't
-	// actually respond to interactive prompts. Treat them as non-TTY.
-	// See: https://geminicli.com/docs/tools/shell/
-	if os.Getenv("GEMINI_CLI") != "" {
-		return false
-	}
-
-	// Copilot CLI sets COPILOT_CLI=1 when running hook subprocesses (v0.0.421+).
-	// Like Gemini, the subprocess may inherit the user's TTY but can't respond
-	// to interactive prompts.
-	if os.Getenv("COPILOT_CLI") != "" {
-		return false
-	}
-
-	// Pi Coding Agent sets PI_CODING_AGENT=true when running shell commands.
-	// Like other agents, the subprocess may inherit the TTY but can't respond
-	// to interactive prompts.
-	if os.Getenv("PI_CODING_AGENT") != "" {
-		return false
-	}
-
-	// GIT_TERMINAL_PROMPT=0 disables git's own terminal prompts.
-	// Factory AI Droid (and other non-interactive environments like CI) set this.
-	// Since we run as a git hook, respect it — if the environment doesn't want
-	// git prompting, our hook shouldn't prompt either.
-	if os.Getenv("GIT_TERMINAL_PROMPT") == "0" {
+	// Agent subprocesses may inherit the user's TTY but can't respond to
+	// interactive prompts. Treat them as non-TTY.
+	//   - GEMINI_CLI=1: Gemini CLI shell tool (https://geminicli.com/docs/tools/shell/)
+	//   - COPILOT_CLI=1: Copilot CLI hook subprocesses (v0.0.421+)
+	//   - PI_CODING_AGENT=true: Pi Coding Agent shell tool
+	//   - GIT_TERMINAL_PROMPT=0: caller (CI, Factory AI Droid, etc.) asked
+	//     git to stop prompting; respect it from git-hook context too.
+	if os.Getenv("GEMINI_CLI") != "" ||
+		os.Getenv("COPILOT_CLI") != "" ||
+		os.Getenv("PI_CODING_AGENT") != "" ||
+		os.Getenv("GIT_TERMINAL_PROMPT") == "0" {
 		return false
 	}
 
@@ -60,4 +57,15 @@ func CanPromptInteractively() bool {
 	}
 	_ = tty.Close()
 	return true
+}
+
+// IsTerminalWriter reports whether w is an *os.File backed by a terminal.
+// Use for deciding on color, pager, progress bars, or other writer-scoped
+// TTY formatting. For "can I prompt the user?" use CanPromptInteractively.
+func IsTerminalWriter(w io.Writer) bool {
+	f, ok := w.(*os.File)
+	if !ok {
+		return false
+	}
+	return term.IsTerminal(int(f.Fd())) //nolint:gosec // G115: uintptr->int is safe for fd
 }
