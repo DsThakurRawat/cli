@@ -201,7 +201,7 @@ func AssertHasCheckpointTrailer(t *testing.T, dir string, ref string) string {
 func AssertCheckpointInLastN(t *testing.T, dir string, checkpointID string, n int) {
 	t.Helper()
 	out := GitOutput(t, dir, "log", "--grep="+checkpointID,
-		"--format=%s", "entire/checkpoints/v1")
+		"--format=%s", checkpointMetadataRef())
 	var lines []string
 	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
 		if line != "" {
@@ -217,11 +217,11 @@ func AssertCheckpointInLastN(t *testing.T, dir string, checkpointID string, n in
 // the checkpoint branch and that its metadata.json exists in the tree.
 func AssertCheckpointExists(t *testing.T, dir string, checkpointID string) {
 	t.Helper()
-	out := GitOutput(t, dir, "log", "entire/checkpoints/v1", "--grep="+checkpointID, "--oneline")
+	out := GitOutput(t, dir, "log", checkpointMetadataRef(), "--grep="+checkpointID, "--oneline")
 	assert.NotEmpty(t, out, "checkpoint %s not found on checkpoint branch", checkpointID)
 
 	path := CheckpointPath(checkpointID) + "/metadata.json"
-	blob := "entire/checkpoints/v1:" + path
+	blob := checkpointMetadataRef() + ":" + path
 	raw := gitOutputSafe(dir, "show", blob)
 	assert.NotEmpty(t, raw,
 		"checkpoint %s metadata not found at %s", checkpointID, path)
@@ -233,10 +233,10 @@ func WaitForCheckpointExists(t *testing.T, dir string, checkpointID string, time
 	t.Helper()
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		out := gitOutputSafe(dir, "log", "entire/checkpoints/v1", "--grep="+checkpointID, "--oneline")
+		out := gitOutputSafe(dir, "log", checkpointMetadataRef(), "--grep="+checkpointID, "--oneline")
 		if out != "" {
 			path := CheckpointPath(checkpointID) + "/metadata.json"
-			blob := "entire/checkpoints/v1:" + path
+			blob := checkpointMetadataRef() + ":" + path
 			raw := gitOutputSafe(dir, "show", blob)
 			if raw != "" {
 				return

@@ -201,6 +201,10 @@ func primaryCheckpointRef() string {
 	}
 }
 
+func checkpointMetadataRef() string {
+	return primaryCheckpointRef()
+}
+
 // CurrentCheckpointRef returns the current hash of the primary checkpoint ref
 // for the active suite mode. It fails if the ref does not exist.
 func CurrentCheckpointRef(t *testing.T, dir string) string {
@@ -212,7 +216,7 @@ func CurrentCheckpointRef(t *testing.T, dir string) string {
 // mode. Tests use this to verify local fetch-on-demand behavior without
 // hardcoding v1-only assumptions.
 func CheckpointMetadataRef() string {
-	return primaryCheckpointRef()
+	return checkpointMetadataRef()
 }
 
 // PushCheckpointRefs pushes the checkpoint refs used by the active suite mode
@@ -708,7 +712,7 @@ func GitOutput(t *testing.T, dir string, args ...string) string {
 func NewCheckpointCommits(t *testing.T, s *RepoState) []string {
 	t.Helper()
 
-	log := GitOutput(t, s.Dir, "log", "--reverse", "--format=%H", s.CheckpointBefore+"..entire/checkpoints/v1")
+	log := GitOutput(t, s.Dir, "log", "--reverse", "--format=%H", s.CheckpointBefore+".."+checkpointMetadataRef())
 	if log == "" {
 		return nil
 	}
@@ -720,7 +724,7 @@ func NewCheckpointCommits(t *testing.T, s *RepoState) []string {
 // ({prefix}/{suffix}/metadata.json) and returns the concatenated IDs.
 func CheckpointIDs(t *testing.T, dir string) []string {
 	t.Helper()
-	out := gitOutputSafe(dir, "ls-tree", "-r", "--name-only", "entire/checkpoints/v1")
+	out := gitOutputSafe(dir, "ls-tree", "-r", "--name-only", checkpointMetadataRef())
 	if out == "" {
 		return nil
 	}
@@ -746,7 +750,7 @@ func ReadCheckpointMetadata(t *testing.T, dir string, checkpointID string) Check
 	t.Helper()
 
 	path := CheckpointPath(checkpointID) + "/metadata.json"
-	blob := "entire/checkpoints/v1:" + path
+	blob := checkpointMetadataRef() + ":" + path
 
 	raw := GitOutput(t, dir, "show", blob)
 
@@ -764,7 +768,7 @@ func ReadSessionMetadata(t *testing.T, dir string, checkpointID string, sessionI
 	t.Helper()
 
 	path := fmt.Sprintf("%s/%d/metadata.json", CheckpointPath(checkpointID), sessionIndex)
-	blob := "entire/checkpoints/v1:" + path
+	blob := checkpointMetadataRef() + ":" + path
 
 	raw := GitOutput(t, dir, "show", blob)
 
@@ -784,7 +788,7 @@ func WaitForSessionMetadata(t *testing.T, dir string, checkpointID string, sessi
 	t.Helper()
 
 	path := fmt.Sprintf("%s/%d/metadata.json", CheckpointPath(checkpointID), sessionIndex)
-	blob := "entire/checkpoints/v1:" + path
+	blob := checkpointMetadataRef() + ":" + path
 
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
