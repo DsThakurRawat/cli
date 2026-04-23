@@ -3,8 +3,11 @@ package dispatch
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -15,7 +18,7 @@ func TestCloudClient_CreateDispatch_Happy(t *testing.T) {
 
 	ctx := context.Background()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/v1/dispatch" {
+		if r.URL.Path != "/api/v1/dispatches/generate" {
 			http.NotFound(w, r)
 			return
 		}
@@ -50,11 +53,11 @@ func TestCloudClient_CreateDispatch_Happy(t *testing.T) {
 
 	client := NewCloudClient(CloudConfig{BaseURL: srv.URL, Token: "t"})
 	got, err := client.CreateDispatch(ctx, CreateDispatchRequest{
-		Repos:    []string{"entireio/cli"},
-		Since:    "2026-04-09T00:00:00Z",
-		Until:    "2026-04-16T00:00:00Z",
-		Branches: []string{"all"},
-		Generate: true,
+		Repos:       []string{"entireio/cli"},
+		Since:       "2026-04-09T00:00:00Z",
+		Until:       "2026-04-16T00:00:00Z",
+		AllBranches: true,
+		Generate:    true,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -69,7 +72,7 @@ func TestCloudClient_CreateDispatch_MultipleOrgs(t *testing.T) {
 
 	ctx := context.Background()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/v1/dispatch" {
+		if r.URL.Path != "/api/v1/dispatches/generate" {
 			http.NotFound(w, r)
 			return
 		}
@@ -124,15 +127,15 @@ func TestCloudClient_CreateDispatch_Unauthorized(t *testing.T) {
 	}
 }
 
-func TestNewCloudClient_DefaultHTTPClientHasNoTimeout(t *testing.T) {
+func TestNewCloudClient_DefaultHTTPClientUsesLongTimeout(t *testing.T) {
 	t.Parallel()
 
 	client := NewCloudClient(CloudConfig{BaseURL: "http://example.com", Token: "t"})
 	if client.http == nil {
 		t.Fatal("expected http client")
 	}
-	if client.http.Timeout != 0 {
-		t.Fatalf("expected no default http timeout, got %s", client.http.Timeout)
+	if client.http.Timeout != 120*time.Second {
+		t.Fatalf("expected default http timeout %s, got %s", 120*time.Second, client.http.Timeout)
 	}
 }
 
@@ -150,5 +153,211 @@ func TestNewCloudClient_ConfiguredTimeoutStillApplies(t *testing.T) {
 	}
 	if client.http.Timeout != timeout {
 		t.Fatalf("expected configured timeout %s, got %s", timeout, client.http.Timeout)
+	}
+}
+
+func TestCloudClient_CreateDispatch_EscapesErrorBody(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+		if _, err := w.Write([]byte("\x1b[31mboom\x1b[0m")); err != nil {
+			t.Fatal(err)
+		}
+	}))
+	defer srv.Close()
+
+	client := NewCloudClient(CloudConfig{BaseURL: srv.URL, Token: "t"})
+	_, err := client.CreateDispatch(ctx, CreateDispatchRequest{Repos: []string{"x/y"}})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), strconv.Quote("\x1b[31mboom\x1b[0m")) {
+		t.Fatalf("expected quoted error body, got %v", err)
+	}
+}
+
+func TestCloudClient_CreateDispatch_IgnoresUnknownResponseFields(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"window":{"normalized_since":"2026-04-09T00:00:00Z","normalized_until":"2026-04-16T00:00:00Z"},"covered_repos":["entireio/cli"],"repos":[],"generated_markdown":"hi","unexpected":true}`)) //nolint:errcheck // test fixture response
+	}))
+	defer srv.Close()
+
+	client := NewCloudClient(CloudConfig{BaseURL: srv.URL, Token: "t"})
+	got, err := client.CreateDispatch(ctx, CreateDispatchRequest{
+		Repos:    []string{"entireio/cli"},
+		Since:    "2026-04-09T00:00:00Z",
+		Until:    "2026-04-16T00:00:00Z",
+		Branches: []string{"main"},
+		Generate: true,
+	})
+	if err != nil {
+		t.Fatalf("expected forward-compatible decode, got error: %v", err)
+	}
+	if got.GeneratedMarkdown != "hi" {
+		t.Fatalf("expected known fields to decode, got %q", got.GeneratedMarkdown)
+	}
+}
+
+func TestCloudClient_CreateDispatch_AcceptsBranchesResponseField(t *testing.T) {
+	t.Parallel()
+
+	client := NewCloudClient(CloudConfig{
+		BaseURL: "http://example.com",
+		Token:   "t",
+		HTTP: &http.Client{
+			Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+				return &http.Response{
+					StatusCode: http.StatusCreated,
+					Header:     http.Header{"Content-Type": []string{"application/json"}},
+					Body: io.NopCloser(strings.NewReader(
+						`{"window":{"normalized_since":"2026-04-09T00:00:00Z","normalized_until":"2026-04-16T00:00:00Z"},"covered_repos":["entireio/cli"],"branches":["main","release"],"repos":[],"generated_markdown":"hi","totals":{"checkpoints":0,"used_checkpoint_count":0,"branches":2,"files_touched":0},"warnings":{"access_denied_count":0,"pending_count":0,"failed_count":0,"unknown_count":0,"uncategorized_count":0}}`,
+					)),
+				}, nil
+			}),
+		},
+	})
+	got, err := client.CreateDispatch(context.Background(), CreateDispatchRequest{
+		Repos:    []string{"entireio/cli"},
+		Since:    "2026-04-09T00:00:00Z",
+		Until:    "2026-04-16T00:00:00Z",
+		Branches: []string{"main"},
+		Generate: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(got.Branches.Values, []string{"main", "release"}) {
+		t.Fatalf("unexpected branches response: %+v", got.Branches)
+	}
+	if got.Branches.All {
+		t.Fatalf("did not expect all-branches sentinel: %+v", got.Branches)
+	}
+}
+
+func TestCloudClient_CreateDispatch_AcceptsAllBranchesSentinelInResponseField(t *testing.T) {
+	t.Parallel()
+
+	client := NewCloudClient(CloudConfig{
+		BaseURL: "http://example.com",
+		Token:   "t",
+		HTTP: &http.Client{
+			Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+				return &http.Response{
+					StatusCode: http.StatusCreated,
+					Header:     http.Header{"Content-Type": []string{"application/json"}},
+					Body: io.NopCloser(strings.NewReader(
+						`{"window":{"normalized_since":"2026-04-09T00:00:00Z","normalized_until":"2026-04-16T00:00:00Z"},"covered_repos":["entireio/cli"],"branches":"all","repos":[],"generated_markdown":"hi","totals":{"checkpoints":0,"used_checkpoint_count":0,"branches":2,"files_touched":0},"warnings":{"access_denied_count":0,"pending_count":0,"failed_count":0,"unknown_count":0,"uncategorized_count":0}}`,
+					)),
+				}, nil
+			}),
+		},
+	})
+	got, err := client.CreateDispatch(context.Background(), CreateDispatchRequest{
+		Repos:    []string{"entireio/cli"},
+		Since:    "2026-04-09T00:00:00Z",
+		Until:    "2026-04-16T00:00:00Z",
+		Generate: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.Branches.All {
+		t.Fatalf("expected all-branches sentinel, got %+v", got.Branches)
+	}
+	if len(got.Branches.Values) != 0 {
+		t.Fatalf("did not expect explicit branch values, got %+v", got.Branches)
+	}
+}
+
+func TestCloudClient_CreateDispatch_AcceptsVoiceResponseField(t *testing.T) {
+	t.Parallel()
+
+	client := NewCloudClient(CloudConfig{
+		BaseURL: "http://example.com",
+		Token:   "t",
+		HTTP: &http.Client{
+			Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+				return &http.Response{
+					StatusCode: http.StatusCreated,
+					Header:     http.Header{"Content-Type": []string{"application/json"}},
+					Body: io.NopCloser(strings.NewReader(
+						`{"window":{"normalized_since":"2026-04-09T00:00:00Z","normalized_until":"2026-04-16T00:00:00Z"},"covered_repos":["entireio/cli"],"branches":["main"],"voice":"calm and direct","repos":[],"generated_markdown":"hi","totals":{"checkpoints":0,"used_checkpoint_count":0,"branches":1,"files_touched":0},"warnings":{"access_denied_count":0,"pending_count":0,"failed_count":0,"unknown_count":0,"uncategorized_count":0}}`,
+					)),
+				}, nil
+			}),
+		},
+	})
+	got, err := client.CreateDispatch(context.Background(), CreateDispatchRequest{
+		Repos:    []string{"entireio/cli"},
+		Since:    "2026-04-09T00:00:00Z",
+		Until:    "2026-04-16T00:00:00Z",
+		Generate: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Voice == nil || *got.Voice != "calm and direct" {
+		t.Fatalf("unexpected voice response: %v", got.Voice)
+	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
+}
+
+func TestCreateDispatchRequest_MarshalJSON_AllBranchesUsesStringSentinel(t *testing.T) {
+	t.Parallel()
+
+	data, err := json.Marshal(CreateDispatchRequest{
+		Repos:       []string{"entireio/cli"},
+		Since:       "2026-04-09T00:00:00Z",
+		Until:       "2026-04-16T00:00:00Z",
+		AllBranches: true,
+		Generate:    true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var body map[string]any
+	if err := json.Unmarshal(data, &body); err != nil {
+		t.Fatal(err)
+	}
+	if body["branches"] != "all" {
+		t.Fatalf("expected branches sentinel, got %v", body["branches"])
+	}
+	if _, ok := body["all_branches"]; ok {
+		t.Fatalf("did not expect internal all_branches field in payload: %v", body)
+	}
+}
+
+func TestCreateDispatchRequest_MarshalJSON_NilBranchesEncodesNull(t *testing.T) {
+	t.Parallel()
+
+	data, err := json.Marshal(CreateDispatchRequest{
+		Repos:    []string{"entireio/cli"},
+		Since:    "2026-04-09T00:00:00Z",
+		Until:    "2026-04-16T00:00:00Z",
+		Generate: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var body map[string]any
+	if err := json.Unmarshal(data, &body); err != nil {
+		t.Fatal(err)
+	}
+	if value, ok := body["branches"]; !ok || value != nil {
+		t.Fatalf("expected branches=null, got %v (present=%t)", value, ok)
 	}
 }

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -27,6 +28,8 @@ type CloudClient struct {
 	http    *http.Client
 }
 
+const defaultCloudHTTPTimeout = 120 * time.Second
+
 func NewCloudClient(cfg CloudConfig) *CloudClient {
 	baseURL := cfg.BaseURL
 	if baseURL == "" {
@@ -35,9 +38,12 @@ func NewCloudClient(cfg CloudConfig) *CloudClient {
 
 	httpClient := cfg.HTTP
 	if httpClient == nil {
-		httpClient = &http.Client{}
-	}
-	if cfg.Timeout > 0 && httpClient.Timeout == 0 {
+		timeout := cfg.Timeout
+		if timeout <= 0 {
+			timeout = defaultCloudHTTPTimeout
+		}
+		httpClient = &http.Client{Timeout: timeout}
+	} else if cfg.Timeout > 0 && httpClient.Timeout == 0 {
 		httpClient.Timeout = cfg.Timeout
 	}
 
@@ -49,21 +55,32 @@ func NewCloudClient(cfg CloudConfig) *CloudClient {
 }
 
 type CreateDispatchRequest struct {
-	Repos    []string `json:"repos,omitempty"`
-	Orgs     []string `json:"orgs,omitempty"`
-	Since    string   `json:"since"`
-	Until    string   `json:"until"`
-	Branches any      `json:"branches"`
-	Generate bool     `json:"generate"`
-	Voice    string   `json:"voice,omitempty"`
+	Repos       []string `json:"repos,omitempty"`
+	Orgs        []string `json:"orgs,omitempty"`
+	Since       string   `json:"since"`
+	Until       string   `json:"until"`
+	Branches    []string `json:"-"`
+	AllBranches bool     `json:"-"`
+	Generate    bool     `json:"generate"`
+	Voice       string   `json:"voice,omitempty"`
 }
 
 type CreateDispatchResponse struct {
-	Window            APIWindow `json:"window"`
-	CoveredRepos      []string  `json:"covered_repos,omitempty"`
-	Repos             []APIRepo `json:"repos,omitempty"`
-	GeneratedText     string    `json:"generated_text,omitempty"`
-	GeneratedMarkdown string    `json:"generated_markdown,omitempty"`
+	Window            APIWindow   `json:"window"`
+	Title             string      `json:"title,omitempty"`
+	CoveredRepos      []string    `json:"covered_repos,omitempty"`
+	Branches          APIBranches `json:"branches,omitempty"`
+	Voice             *string     `json:"voice"`
+	Repos             []APIRepo   `json:"repos,omitempty"`
+	Totals            APITotals   `json:"totals"`
+	Warnings          APIWarnings `json:"warnings"`
+	GeneratedText     string      `json:"generated_text,omitempty"`
+	GeneratedMarkdown string      `json:"generated_markdown,omitempty"`
+}
+
+type APIBranches struct {
+	Values []string
+	All    bool
 }
 
 type APIWindow struct {
@@ -92,12 +109,82 @@ type APIBullet struct {
 	Labels       []string `json:"labels"`
 }
 
+type APITotals struct {
+	Checkpoints         int `json:"checkpoints"`
+	UsedCheckpointCount int `json:"used_checkpoint_count"`
+	Branches            int `json:"branches"`
+	FilesTouched        int `json:"files_touched"`
+}
+
+type APIWarnings struct {
+	AccessDeniedCount  int `json:"access_denied_count"`
+	PendingCount       int `json:"pending_count"`
+	FailedCount        int `json:"failed_count"`
+	UnknownCount       int `json:"unknown_count"`
+	UncategorizedCount int `json:"uncategorized_count"`
+	TruncatedCount     int `json:"truncated_count"`
+}
+
+func (b *APIBranches) UnmarshalJSON(data []byte) error {
+	if bytes.Equal(data, []byte("null")) {
+		*b = APIBranches{}
+		return nil
+	}
+
+	var values []string
+	if err := json.Unmarshal(data, &values); err == nil {
+		*b = APIBranches{Values: values}
+		return nil
+	}
+
+	var sentinel string
+	if err := json.Unmarshal(data, &sentinel); err != nil {
+		return fmt.Errorf("decode branches: %w", err)
+	}
+	if sentinel != "all" {
+		return fmt.Errorf("decode branches: unexpected sentinel %q", sentinel)
+	}
+	*b = APIBranches{All: true}
+	return nil
+}
+
 func (c *CloudClient) CreateDispatch(ctx context.Context, reqBody CreateDispatchRequest) (*CreateDispatchResponse, error) {
 	var out CreateDispatchResponse
-	if err := c.doJSON(ctx, http.MethodPost, "/api/v1/dispatch", reqBody, &out); err != nil {
+	if err := c.doJSON(ctx, http.MethodPost, "/api/v1/dispatches/generate", reqBody, &out); err != nil {
 		return nil, err
 	}
 	return &out, nil
+}
+
+func (r CreateDispatchRequest) MarshalJSON() ([]byte, error) {
+	type requestPayload struct {
+		Repos    []string `json:"repos,omitempty"`
+		Orgs     []string `json:"orgs,omitempty"`
+		Since    string   `json:"since"`
+		Until    string   `json:"until"`
+		Branches any      `json:"branches"`
+		Generate bool     `json:"generate"`
+		Voice    string   `json:"voice,omitempty"`
+	}
+
+	branches := any(r.Branches)
+	if r.AllBranches {
+		branches = "all"
+	}
+
+	data, err := json.Marshal(requestPayload{
+		Repos:    r.Repos,
+		Orgs:     r.Orgs,
+		Since:    r.Since,
+		Until:    r.Until,
+		Branches: branches,
+		Generate: r.Generate,
+		Voice:    r.Voice,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("marshal dispatch request: %w", err)
+	}
+	return data, nil
 }
 
 func (c *CloudClient) doJSON(ctx context.Context, method, path string, reqBody, out any) error {
@@ -137,7 +224,7 @@ func (c *CloudClient) doJSON(ctx context.Context, method, path string, reqBody, 
 		if trimmed == "" {
 			return fmt.Errorf("%s %s: unexpected status %d", method, path, resp.StatusCode)
 		}
-		return fmt.Errorf("%s %s: unexpected status %d: %s", method, path, resp.StatusCode, trimmed)
+		return fmt.Errorf("%s %s: unexpected status %d: %s", method, path, resp.StatusCode, strconv.Quote(trimmed))
 	}
 	if out == nil {
 		return nil
