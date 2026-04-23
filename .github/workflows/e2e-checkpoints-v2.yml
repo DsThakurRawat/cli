@@ -6,9 +6,10 @@ on:
       agent:
         description: "Agent to run"
         required: true
-        default: "claude-code"
+        default: "vogon"
         type: choice
         options:
+          - vogon
           - claude-code
           - opencode
           - gemini-cli
@@ -56,7 +57,12 @@ jobs:
       - name: Build entire CLI
         run: go build -o /usr/local/bin/entire ./cmd/entire
 
+      - name: Build vogon binary
+        if: inputs.agent == 'vogon'
+        run: go build -o /usr/local/bin/vogon ./e2e/vogon
+
       - name: Install agent CLI
+        if: inputs.agent != 'vogon'
         run: |
           case "${{ inputs.agent }}" in
             claude-code) curl -fsSL https://claude.ai/install.sh | bash ;;
