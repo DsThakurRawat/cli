@@ -76,7 +76,7 @@ func (v *Vogon) RunPrompt(ctx context.Context, dir string, prompt string, opts .
 
 func (v *Vogon) StartSession(_ context.Context, dir string) (Session, error) {
 	name := fmt.Sprintf("vogon-test-%d", time.Now().UnixNano())
-	s, err := NewTmuxSession(name, dir, []string{"ENTIRE_TEST_TTY", "HOME=" + vogonHomeDir(dir)}, v.Binary())
+	s, err := NewTmuxSession(name, dir, []string{"ENTIRE_TEST_TTY"}, "env", "HOME="+vogonHomeDir(dir), v.Binary())
 	if err != nil {
 		return nil, err
 	}
