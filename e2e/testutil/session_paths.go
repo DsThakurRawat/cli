@@ -1,9 +1,11 @@
 package testutil
 
 import (
+	"context"
 	"testing"
 
 	cliagent "github.com/entireio/cli/cmd/entire/cli/agent"
+	"github.com/entireio/cli/cmd/entire/cli/agent/external"
 	"github.com/entireio/cli/cmd/entire/cli/agent/types"
 
 	_ "github.com/entireio/cli/cmd/entire/cli/agent/claudecode"
@@ -20,6 +22,8 @@ import (
 // the transcript for the given checkpoint session metadata in this repo.
 func RestoredSessionTranscriptPath(t *testing.T, repoDir string, meta SessionMetadata) string {
 	t.Helper()
+
+	external.DiscoverAndRegisterAlways(context.Background())
 
 	ag, err := cliagent.GetByAgentType(types.AgentType(meta.Agent))
 	if err != nil {
