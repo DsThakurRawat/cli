@@ -435,7 +435,6 @@ func (e *Agent) run(ctx context.Context, stdin []byte, args ...string) ([]byte, 
 	// so cmd.Run() doesn't block waiting for pipe reads.
 	cmd.WaitDelay = 3 * time.Second
 
-	// Set environment: repo root + protocol version + CLI version
 	cmd.Env = append(cmd.Environ(),
 		"ENTIRE_PROTOCOL_VERSION="+strconv.Itoa(ProtocolVersion),
 		"ENTIRE_CLI_VERSION="+versioninfo.Version,
