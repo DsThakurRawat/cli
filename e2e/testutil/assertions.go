@@ -110,13 +110,13 @@ func WaitForCheckpoint(t *testing.T, s *RepoState, timeout time.Duration) {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		after := strings.TrimSpace(gitOutputSafe(s.Dir, "rev-parse", primaryCheckpointRef()))
+		after := strings.TrimSpace(gitOutputSafe(s.Dir, "rev-parse", checkpointReadRef()))
 		if after != s.CheckpointBefore {
 			return
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
-	t.Fatalf("checkpoint ref %s did not advance within %s", primaryCheckpointRef(), timeout)
+	t.Fatalf("checkpoint ref %s did not advance within %s", checkpointReadRef(), timeout)
 }
 
 // ShadowBranches returns all shadow branches (entire/*) excluding entire/checkpoints/*.
@@ -166,14 +166,14 @@ func AssertHasShadowBranches(t *testing.T, dir string) {
 // AssertCheckpointAdvanced asserts the checkpoint branch moved forward.
 func AssertCheckpointAdvanced(t *testing.T, s *RepoState) {
 	t.Helper()
-	after := strings.TrimSpace(gitOutputSafe(s.Dir, "rev-parse", primaryCheckpointRef()))
+	after := strings.TrimSpace(gitOutputSafe(s.Dir, "rev-parse", checkpointReadRef()))
 	assert.NotEqual(t, s.CheckpointBefore, after, "checkpoint branch did not advance")
 }
 
 // AssertCheckpointNotAdvanced asserts the checkpoint branch has NOT moved.
 func AssertCheckpointNotAdvanced(t *testing.T, s *RepoState) {
 	t.Helper()
-	after := strings.TrimSpace(gitOutputSafe(s.Dir, "rev-parse", primaryCheckpointRef()))
+	after := strings.TrimSpace(gitOutputSafe(s.Dir, "rev-parse", checkpointReadRef()))
 	assert.Equal(t, s.CheckpointBefore, after, "checkpoint branch advanced unexpectedly")
 }
 
@@ -201,7 +201,7 @@ func AssertHasCheckpointTrailer(t *testing.T, dir string, ref string) string {
 func AssertCheckpointInLastN(t *testing.T, dir string, checkpointID string, n int) {
 	t.Helper()
 	out := GitOutput(t, dir, "log", "--grep="+checkpointID,
-		"--format=%s", checkpointMetadataRef())
+		"--format=%s", checkpointReadRef())
 	var lines []string
 	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
 		if line != "" {
@@ -217,11 +217,11 @@ func AssertCheckpointInLastN(t *testing.T, dir string, checkpointID string, n in
 // the checkpoint branch and that its metadata.json exists in the tree.
 func AssertCheckpointExists(t *testing.T, dir string, checkpointID string) {
 	t.Helper()
-	out := GitOutput(t, dir, "log", checkpointMetadataRef(), "--grep="+checkpointID, "--oneline")
+	out := GitOutput(t, dir, "log", checkpointReadRef(), "--grep="+checkpointID, "--oneline")
 	assert.NotEmpty(t, out, "checkpoint %s not found on checkpoint branch", checkpointID)
 
 	path := CheckpointPath(checkpointID) + "/metadata.json"
-	blob := checkpointMetadataRef() + ":" + path
+	blob := checkpointReadRef() + ":" + path
 	raw := gitOutputSafe(dir, "show", blob)
 	assert.NotEmpty(t, raw,
 		"checkpoint %s metadata not found at %s", checkpointID, path)
@@ -233,10 +233,10 @@ func WaitForCheckpointExists(t *testing.T, dir string, checkpointID string, time
 	t.Helper()
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		out := gitOutputSafe(dir, "log", checkpointMetadataRef(), "--grep="+checkpointID, "--oneline")
+		out := gitOutputSafe(dir, "log", checkpointReadRef(), "--grep="+checkpointID, "--oneline")
 		if out != "" {
 			path := CheckpointPath(checkpointID) + "/metadata.json"
-			blob := checkpointMetadataRef() + ":" + path
+			blob := checkpointReadRef() + ":" + path
 			raw := gitOutputSafe(dir, "show", blob)
 			if raw != "" {
 				return
@@ -281,7 +281,7 @@ func WaitForCheckpointAdvanceFrom(t *testing.T, dir string, fromRef string, time
 	t.Helper()
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		after := strings.TrimSpace(gitOutputSafe(dir, "rev-parse", primaryCheckpointRef()))
+		after := strings.TrimSpace(gitOutputSafe(dir, "rev-parse", checkpointReadRef()))
 		if after != fromRef {
 			return
 		}
@@ -291,7 +291,7 @@ func WaitForCheckpointAdvanceFrom(t *testing.T, dir string, fromRef string, time
 	if len(displayRef) > 8 {
 		displayRef = displayRef[:8]
 	}
-	t.Fatalf("checkpoint ref %s did not advance from %s within %s", primaryCheckpointRef(), displayRef, timeout)
+	t.Fatalf("checkpoint ref %s did not advance from %s within %s", checkpointReadRef(), displayRef, timeout)
 }
 
 // WaitForSessionIdle polls the session state files in .git/entire-sessions/
@@ -395,7 +395,7 @@ func ValidateCheckpointDeep(t *testing.T, dir string, v DeepCheckpointValidation
 	}
 
 	path := CheckpointPath(v.CheckpointID)
-	checkpointRef := checkpointMetadataRef()
+	checkpointRef := checkpointReadRef()
 
 	// Validate session metadata exists and has checkpoint_id
 	sessionBlob := fmt.Sprintf("%s:%s/0/metadata.json", checkpointRef, path)

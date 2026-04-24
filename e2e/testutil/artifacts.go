@@ -49,7 +49,7 @@ func artifactDir(t *testing.T) string {
 func CaptureArtifacts(t *testing.T, s *RepoState) {
 	t.Helper()
 	dir := s.ArtifactDir
-	checkpointRef := checkpointMetadataRef()
+	checkpointRef := checkpointReadRef()
 
 	writeArtifact(t, dir, "git-log.txt",
 		gitOutputSafe(s.Dir, "log", "--decorate", "--graph", "--all"))

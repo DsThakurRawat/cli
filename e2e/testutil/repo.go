@@ -28,6 +28,7 @@ const (
 	checkpointRefV1            = "entire/checkpoints/v1"
 	checkpointRefV2Main        = "refs/entire/checkpoints/v2/main"
 	checkpointRefV2FullCurrent = "refs/entire/checkpoints/v2/full/current"
+	checkpointRefV2FullPrefix  = "refs/entire/checkpoints/v2/full/"
 )
 
 // RepoState holds the working state for a single test's cloned repository.
@@ -150,7 +151,7 @@ func SetupRepo(t *testing.T, agent agents.Agent) *RepoState {
 		Dir:              dir,
 		ArtifactDir:      artDir,
 		HeadBefore:       GitOutput(t, dir, "rev-parse", "HEAD"),
-		CheckpointBefore: strings.TrimSpace(gitOutputSafe(dir, "rev-parse", primaryCheckpointRef())),
+		CheckpointBefore: strings.TrimSpace(gitOutputSafe(dir, "rev-parse", checkpointReadRef())),
 		ConsoleLog:       consoleLog,
 	}
 
@@ -192,7 +193,7 @@ func CheckpointsMode() string {
 	return mode
 }
 
-func primaryCheckpointRef() string {
+func checkpointReadRef() string {
 	switch CheckpointsMode() {
 	case checkpointsModeV2DualWrite, checkpointsModeV2Only:
 		return checkpointRefV2Main
@@ -201,22 +202,22 @@ func primaryCheckpointRef() string {
 	}
 }
 
-func checkpointMetadataRef() string {
-	return primaryCheckpointRef()
-}
-
-// CurrentCheckpointRef returns the current hash of the primary checkpoint ref
-// for the active suite mode. It fails if the ref does not exist.
+// CurrentCheckpointRef returns the current hash of the checkpoint ref used for
+// reads in the active suite mode. It fails if the ref does not exist.
 func CurrentCheckpointRef(t *testing.T, dir string) string {
 	t.Helper()
-	return GitOutput(t, dir, "rev-parse", primaryCheckpointRef())
+	return GitOutput(t, dir, "rev-parse", checkpointReadRef())
 }
 
-// CheckpointMetadataRef returns the metadata ref name used by the active suite
-// mode. Tests use this to verify local fetch-on-demand behavior without
-// hardcoding v1-only assumptions.
-func CheckpointMetadataRef() string {
-	return checkpointMetadataRef()
+// CheckpointVerifyRef returns the exact local metadata ref name tests should
+// use for presence checks such as rev-parse --verify.
+func CheckpointVerifyRef() string {
+	switch CheckpointsMode() {
+	case checkpointsModeLegacy:
+		return "refs/heads/" + checkpointRefV1
+	default:
+		return checkpointReadRef()
+	}
 }
 
 // PushCheckpointRefs pushes the checkpoint refs used by the active suite mode
@@ -238,6 +239,29 @@ func PushCheckpointRefs(t *testing.T, dir string) {
 	default:
 		t.Fatalf("unsupported E2E_CHECKPOINTS_MODE %q", CheckpointsMode())
 	}
+
+	if latestArchived := latestArchivedCheckpointFullRef(dir); latestArchived != "" {
+		Git(t, dir, "push", "origin", latestArchived+":"+latestArchived)
+	}
+}
+
+func latestArchivedCheckpointFullRef(dir string) string {
+	out := strings.TrimSpace(gitOutputSafe(dir, "for-each-ref", "--format=%(refname)", checkpointRefV2FullPrefix))
+	if out == "" {
+		return ""
+	}
+
+	var latest string
+	for _, ref := range strings.Split(out, "\n") {
+		ref = strings.TrimSpace(ref)
+		if ref == "" || ref == checkpointRefV2FullCurrent {
+			continue
+		}
+		if latest == "" || ref > latest {
+			latest = ref
+		}
+	}
+	return latest
 }
 
 func setupGeminiTestHome(t *testing.T, repoDir string) {
@@ -716,7 +740,7 @@ func GitOutput(t *testing.T, dir string, args ...string) string {
 func NewCheckpointCommits(t *testing.T, s *RepoState) []string {
 	t.Helper()
 
-	log := GitOutput(t, s.Dir, "log", "--reverse", "--format=%H", s.CheckpointBefore+".."+checkpointMetadataRef())
+	log := GitOutput(t, s.Dir, "log", "--reverse", "--format=%H", s.CheckpointBefore+".."+checkpointReadRef())
 	if log == "" {
 		return nil
 	}
@@ -728,7 +752,7 @@ func NewCheckpointCommits(t *testing.T, s *RepoState) []string {
 // ({prefix}/{suffix}/metadata.json) and returns the concatenated IDs.
 func CheckpointIDs(t *testing.T, dir string) []string {
 	t.Helper()
-	out := gitOutputSafe(dir, "ls-tree", "-r", "--name-only", checkpointMetadataRef())
+	out := gitOutputSafe(dir, "ls-tree", "-r", "--name-only", checkpointReadRef())
 	if out == "" {
 		return nil
 	}
@@ -754,7 +778,7 @@ func ReadCheckpointMetadata(t *testing.T, dir string, checkpointID string) Check
 	t.Helper()
 
 	path := CheckpointPath(checkpointID) + "/metadata.json"
-	blob := checkpointMetadataRef() + ":" + path
+	blob := checkpointReadRef() + ":" + path
 
 	raw := GitOutput(t, dir, "show", blob)
 
@@ -772,7 +796,7 @@ func ReadSessionMetadata(t *testing.T, dir string, checkpointID string, sessionI
 	t.Helper()
 
 	path := fmt.Sprintf("%s/%d/metadata.json", CheckpointPath(checkpointID), sessionIndex)
-	blob := checkpointMetadataRef() + ":" + path
+	blob := checkpointReadRef() + ":" + path
 
 	raw := GitOutput(t, dir, "show", blob)
 
@@ -792,7 +816,7 @@ func WaitForSessionMetadata(t *testing.T, dir string, checkpointID string, sessi
 	t.Helper()
 
 	path := fmt.Sprintf("%s/%d/metadata.json", CheckpointPath(checkpointID), sessionIndex)
-	blob := checkpointMetadataRef() + ":" + path
+	blob := checkpointReadRef() + ":" + path
 
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
