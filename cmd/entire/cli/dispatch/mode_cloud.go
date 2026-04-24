@@ -62,7 +62,7 @@ func runServer(ctx context.Context, opts Options) (*Dispatch, error) {
 		if err != nil {
 			return nil, fmt.Errorf("open repository: %w", err)
 		}
-		repoFullName, err := resolveRepoFullName(repo)
+		repoFullName, err := resolveRepoFullName(ctx, repo)
 		if err != nil {
 			return nil, err
 		}

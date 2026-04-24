@@ -41,6 +41,7 @@ type dispatchWizardState struct {
 	timeWindowPreset string
 	localBranchMode  string
 	currentBranch    string
+	currentBranchErr error
 	selectedRepos    []string
 	voicePreset      string
 	voiceCustom      string
@@ -98,6 +99,9 @@ func (s dispatchWizardState) showLocalBranchMode() bool {
 
 func (s dispatchWizardState) resolve() (dispatchpkg.Options, error) {
 	allBranches := s.isLocal() && s.localBranchMode == dispatchWizardBranchAll
+	if s.isLocal() && !allBranches && s.currentBranchErr != nil {
+		return dispatchpkg.Options{}, fmt.Errorf("resolve current branch for local dispatch: %w", s.currentBranchErr)
+	}
 	opts, err := resolveDispatchOptions(
 		s.isLocal(),
 		s.timeWindowPreset,
@@ -230,11 +234,7 @@ func runDispatchWizard(cmd *cobra.Command) (dispatchpkg.Options, error) {
 	})
 
 	state := newDispatchWizardState()
-	currentBranch, err := getDispatchWizardCurrentBranch(ctx)
-	if err != nil {
-		return dispatchpkg.Options{}, fmt.Errorf("resolve current branch for local dispatch: %w", err)
-	}
-	state.currentBranch = currentBranch
+	state.currentBranch, state.currentBranchErr = getDispatchWizardCurrentBranch(ctx)
 
 	form := NewAccessibleForm(
 		huh.NewGroup(

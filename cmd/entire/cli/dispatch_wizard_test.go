@@ -45,7 +45,7 @@ func TestDispatchWizardState_ResolveLocalAllBranches(t *testing.T) {
 	t.Parallel()
 
 	state := newDispatchWizardState()
-	state.currentBranch = testDispatchPreviewBranch
+	state.currentBranchErr = errors.New("not on a branch (detached HEAD)")
 	state.localBranchMode = dispatchWizardBranchAll
 
 	opts, err := state.resolve()
@@ -355,11 +355,25 @@ func TestRunDispatchWizard_FailsEarlyWhenCurrentBranchCannotBeResolved(t *testin
 	cmd.SetContext(context.Background())
 
 	_, err := runDispatchWizard(cmd)
-	if err == nil {
-		t.Fatal("expected current-branch resolution error")
+	if err == nil || !strings.Contains(err.Error(), "run dispatch wizard") {
+		t.Fatalf("expected form execution error instead of eager branch failure, got %v", err)
 	}
-	if !strings.Contains(err.Error(), "resolve current branch for local dispatch: not on a branch (detached HEAD)") {
-		t.Fatalf("unexpected error: %v", err)
+}
+
+func TestDispatchWizardState_CloudIgnoresCurrentBranchResolutionError(t *testing.T) {
+	t.Parallel()
+
+	state := newDispatchWizardState()
+	state.modeChoice = dispatchWizardModeServer
+	state.currentBranchErr = errors.New("not on a branch (detached HEAD)")
+	state.selectedRepos = []string{"entireio/cli"}
+
+	opts, err := state.resolve()
+	if err != nil {
+		t.Fatalf("expected cloud mode to ignore current branch resolution error, got %v", err)
+	}
+	if got := strings.Join(opts.RepoPaths, ","); got != "entireio/cli" {
+		t.Fatalf("expected selected repo path to propagate, got %q", got)
 	}
 }
 

@@ -129,7 +129,7 @@ func enumerateRepoCandidates(ctx context.Context, repoRoot string, opts Options,
 		return nil, fmt.Errorf("open repository %s: %w", repoRoot, err)
 	}
 
-	repoFullName, err := resolveRepoFullName(repo)
+	repoFullName, err := resolveRepoFullName(ctx, repo)
 	if err != nil {
 		return nil, fmt.Errorf("resolve repo name for %s: %w", repoRoot, err)
 	}
@@ -298,10 +298,11 @@ func runGitOutput(ctx context.Context, repoRoot string, args ...string) (string,
 	return string(out), true
 }
 
-func resolveRepoFullName(repo *git.Repository) (string, error) {
+func resolveRepoFullName(ctx context.Context, repo *git.Repository) (string, error) {
 	remote, err := repo.Remote("origin")
 	if err != nil {
-		return "", errors.New("dispatch currently supports GitHub repositories with an origin remote")
+		logging.Warn(ctx, "dispatch repo resolution failed", "step", "origin_remote", "error", err)
+		return "", fmt.Errorf("dispatch currently supports GitHub repositories with an origin remote: %w", err)
 	}
 	if len(remote.Config().URLs) == 0 {
 		return "", errors.New("dispatch currently supports GitHub repositories with an origin remote URL")
@@ -309,7 +310,8 @@ func resolveRepoFullName(repo *git.Repository) (string, error) {
 
 	owner, repoName, err := search.ParseGitHubRemote(remote.Config().URLs[0])
 	if err != nil {
-		return "", errors.New("dispatch currently supports GitHub origin remotes only")
+		logging.Warn(ctx, "dispatch repo resolution failed", "step", "parse_origin_remote", "error", err)
+		return "", fmt.Errorf("dispatch currently supports GitHub origin remotes only: %w", err)
 	}
 	return owner + "/" + repoName, nil
 }
