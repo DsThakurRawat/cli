@@ -6,6 +6,7 @@ package interactive
 import (
 	"io"
 	"os"
+	"testing"
 
 	"golang.org/x/term"
 )
@@ -15,18 +16,23 @@ import (
 // agent subprocesses that inherit a TTY but can't respond to prompts,
 // and other environments without a controlling TTY.
 //
-// When ENTIRE_TEST_TTY is set (to any value, including empty) it is treated
-// as a test override and the result is determined solely by whether the
-// value equals "1":
-//   - ENTIRE_TEST_TTY=1 forces interactive mode on
-//   - any other value (including empty) forces interactive mode off
-//   - ENTIRE_TEST_TTY unset falls through to agent-env guards and
-//     /dev/tty probing. In that case the return value depends on the
-//     actual environment, so tests that need a specific answer should set
-//     ENTIRE_TEST_TTY explicitly rather than assume a non-interactive host.
+// Precedence (first match wins):
+//  1. ENTIRE_TEST_TTY=1 forces interactive ON (simulate human at terminal).
+//     Any other non-empty value forces interactive OFF (simulate no TTY).
+//  2. testing.Testing() — when running under `go test`, default to OFF so
+//     in-process tests don't hang on developer terminals that happen to have
+//     a real /dev/tty. Subprocess tests spawning the real entire binary must
+//     set ENTIRE_TEST_TTY=0 explicitly since the subprocess isn't a test binary.
+//  3. Agent sentinels (GEMINI_CLI, COPILOT_CLI, PI_CODING_AGENT,
+//     GIT_TERMINAL_PROMPT=0) — vendor-set by agent subprocesses.
+//  4. CI=<non-empty-non-false> — de-facto CI convention.
+//  5. /dev/tty probe — the real check.
 func CanPromptInteractively() bool {
 	if v := os.Getenv("ENTIRE_TEST_TTY"); v != "" {
 		return v == "1"
+	}
+	if testing.Testing() {
+		return false
 	}
 
 	// Agent subprocesses may inherit the user's TTY but can't respond to

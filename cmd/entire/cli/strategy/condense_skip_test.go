@@ -211,7 +211,6 @@ func TestCondenseAndMarkFullyCondensed_SkippedMarksFullyCondensed(t *testing.T) 
 }
 
 func TestTryAgentCommitFastPath_SkipsEmptySession(t *testing.T) {
-	t.Setenv("ENTIRE_TEST_TTY", "0")
 	dir := setupGitRepo(t)
 	t.Chdir(dir)
 
@@ -242,7 +241,6 @@ func TestTryAgentCommitFastPath_SkipsEmptySession(t *testing.T) {
 }
 
 func TestTryAgentCommitFastPath_AcceptsSessionWithContent(t *testing.T) {
-	t.Setenv("ENTIRE_TEST_TTY", "0")
 	dir := setupGitRepo(t)
 	t.Chdir(dir)
 
@@ -270,7 +268,6 @@ func TestTryAgentCommitFastPath_AcceptsSessionWithContent(t *testing.T) {
 }
 
 func TestTryAgentCommitFastPath_SkipsEmptyButAcceptsContentSession(t *testing.T) {
-	t.Setenv("ENTIRE_TEST_TTY", "0")
 	dir := setupGitRepo(t)
 	t.Chdir(dir)
 

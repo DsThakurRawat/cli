@@ -3,6 +3,7 @@
 package integration
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -20,6 +21,7 @@ import (
 	"github.com/entireio/cli/cmd/entire/cli/agent/types"
 	"github.com/entireio/cli/cmd/entire/cli/checkpoint"
 	"github.com/entireio/cli/cmd/entire/cli/checkpoint/id"
+	"github.com/entireio/cli/cmd/entire/cli/execx"
 	"github.com/entireio/cli/cmd/entire/cli/jsonutil"
 	"github.com/entireio/cli/cmd/entire/cli/paths"
 	"github.com/entireio/cli/cmd/entire/cli/testutil"
@@ -125,7 +127,6 @@ func (env *TestEnv) cliEnv() []string {
 		"ENTIRE_TEST_CLAUDE_PROJECT_DIR="+env.ClaudeProjectDir,
 		"ENTIRE_TEST_GEMINI_PROJECT_DIR="+env.GeminiProjectDir,
 		"ENTIRE_TEST_OPENCODE_PROJECT_DIR="+env.OpenCodeProjectDir,
-		"ENTIRE_TEST_TTY=0", // Prevent interactive prompts from blocking in tests
 	)
 	return append(base, env.ExtraEnv...)
 }
@@ -144,8 +145,9 @@ func (env *TestEnv) RunCLI(args ...string) string {
 func (env *TestEnv) RunCLIWithError(args ...string) (string, error) {
 	env.T.Helper()
 
-	// Run CLI using the shared binary
-	cmd := exec.Command(getTestBinary(), args...)
+	// Run CLI using the shared binary, detached from any controlling TTY
+	// so interactive.CanPromptInteractively() returns false in the child.
+	cmd := execx.NonInteractive(context.Background(), getTestBinary(), args...)
 	cmd.Dir = env.RepoDir
 	cmd.Env = env.cliEnv()
 
@@ -157,8 +159,8 @@ func (env *TestEnv) RunCLIWithError(args ...string) (string, error) {
 func (env *TestEnv) RunCLIWithStdin(stdin string, args ...string) string {
 	env.T.Helper()
 
-	// Run CLI with stdin using the shared binary
-	cmd := exec.Command(getTestBinary(), args...)
+	// Run CLI with stdin using the shared binary, detached from controlling TTY.
+	cmd := execx.NonInteractive(context.Background(), getTestBinary(), args...)
 	cmd.Dir = env.RepoDir
 	cmd.Env = env.cliEnv()
 	cmd.Stdin = strings.NewReader(stdin)
@@ -1085,7 +1087,8 @@ func (env *TestEnv) GitCommitWithShadowHooksAsAgent(message string, files ...str
 
 // gitCommitWithShadowHooks is the shared implementation for committing with shadow hooks.
 // When simulateTTY is true, sets ENTIRE_TEST_TTY=1 to simulate a human at the terminal.
-// When false, filters it out to simulate an agent subprocess (no controlling terminal).
+// When false, spawns the hook detached from the controlling TTY so
+// interactive.CanPromptInteractively() returns false (agent-subprocess semantics).
 func (env *TestEnv) gitCommitWithShadowHooks(message string, simulateTTY bool, files ...string) {
 	env.T.Helper()
 
@@ -1102,19 +1105,21 @@ func (env *TestEnv) gitCommitWithShadowHooks(message string, simulateTTY bool, f
 
 	// Run prepare-commit-msg hook using the shared binary.
 	// Pass source="message" to match real `git commit -m` behavior.
-	prepCmd := exec.Command(getTestBinary(), "hooks", "git", "prepare-commit-msg", msgFile, "message")
-	prepCmd.Dir = env.RepoDir
+	var prepCmd *exec.Cmd
 	if simulateTTY {
 		// Simulate human at terminal: ENTIRE_TEST_TTY=1 makes
 		// interactive.CanPromptInteractively() return true and askConfirmTTY()
 		// return defaultYes without reading from /dev/tty.
+		prepCmd = exec.Command(getTestBinary(), "hooks", "git", "prepare-commit-msg", msgFile, "message")
 		prepCmd.Env = env.gitHookEnv("ENTIRE_TEST_TTY=1")
 	} else {
-		// Simulate agent: ENTIRE_TEST_TTY=0 makes
-		// interactive.CanPromptInteractively() return false, triggering the
-		// fast path that adds trailers for ACTIVE sessions.
-		prepCmd.Env = env.gitHookEnv("ENTIRE_TEST_TTY=0")
+		// Simulate agent subprocess via OS-level TTY detachment: the child
+		// runs in a new session without a controlling terminal, so its
+		// /dev/tty probe fails and CanPromptInteractively() returns false.
+		prepCmd = execx.NonInteractive(context.Background(), getTestBinary(), "hooks", "git", "prepare-commit-msg", msgFile, "message")
+		prepCmd.Env = env.gitHookEnv()
 	}
+	prepCmd.Dir = env.RepoDir
 	if output, err := prepCmd.CombinedOutput(); err != nil {
 		env.T.Logf("prepare-commit-msg output: %s", output)
 		// Don't fail - hook may silently succeed
@@ -1367,13 +1372,15 @@ func (env *TestEnv) gitCommitStagedWithShadowHooks(message string, simulateTTY b
 	}
 
 	// Run prepare-commit-msg hook using the shared binary.
-	prepCmd := exec.Command(getTestBinary(), "hooks", "git", "prepare-commit-msg", msgFile, "message")
-	prepCmd.Dir = env.RepoDir
+	var prepCmd *exec.Cmd
 	if simulateTTY {
+		prepCmd = exec.Command(getTestBinary(), "hooks", "git", "prepare-commit-msg", msgFile, "message")
 		prepCmd.Env = env.gitHookEnv("ENTIRE_TEST_TTY=1")
 	} else {
-		prepCmd.Env = env.gitHookEnv("ENTIRE_TEST_TTY=0")
+		prepCmd = execx.NonInteractive(context.Background(), getTestBinary(), "hooks", "git", "prepare-commit-msg", msgFile, "message")
+		prepCmd.Env = env.gitHookEnv()
 	}
+	prepCmd.Dir = env.RepoDir
 	if output, err := prepCmd.CombinedOutput(); err != nil {
 		env.T.Logf("prepare-commit-msg output: %s", output)
 	}
