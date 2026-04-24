@@ -47,7 +47,22 @@ func SetupRepo(t *testing.T, agent agents.Agent) *RepoState {
 	// Always use os.MkdirTemp instead of t.TempDir(). Go's t.TempDir()
 	// creates nested subdirectories (TestName.../001/) whose structure
 	// confuses some agents' (e.g. opencode) working-directory resolution.
-	dir, err := os.MkdirTemp("", "e2e-repo-*")
+	//
+	// Codex refuses to operate from /tmp (e.g. "Refusing to create helper
+	// binaries under temporary dir"), so for codex we place the repo under
+	// $HOME/.cache/entire-e2e-repos/ instead.
+	root := ""
+	if agent.Name() == "codex" {
+		home, herr := os.UserHomeDir()
+		if herr != nil {
+			t.Fatalf("resolve user home dir: %v", herr)
+		}
+		root = filepath.Join(home, ".cache", "entire-e2e-repos")
+		if err := os.MkdirAll(root, 0o755); err != nil {
+			t.Fatalf("create e2e repo root %q: %v", root, err)
+		}
+	}
+	dir, err := os.MkdirTemp(root, "e2e-repo-*")
 	if err != nil {
 		t.Fatalf("create temp dir: %v", err)
 	}
