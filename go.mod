@@ -9,6 +9,7 @@ require (
 	github.com/charmbracelet/lipgloss v1.1.0
 	github.com/creack/pty v1.1.24
 	github.com/denisbrodbeck/machineid v1.0.1
+	github.com/go-git/go-billy/v6 v6.0.0-20260328065524-593ae452e14d
 	github.com/go-git/go-git/v6 v6.0.0-alpha.2
 	github.com/go-git/x/plugin/objectsigner/auto v0.0.0-20260330134459-33df49246da9
 	github.com/google/uuid v1.6.0
@@ -21,6 +22,7 @@ require (
 	github.com/zricethezav/gitleaks/v8 v8.30.1
 	golang.org/x/crypto v0.50.0
 	golang.org/x/mod v0.35.0
+	golang.org/x/sync v0.20.0
 	golang.org/x/sys v0.43.0
 	golang.org/x/term v0.42.0
 )
@@ -61,7 +63,6 @@ require (
 	github.com/fsnotify/fsnotify v1.8.0 // indirect
 	github.com/gitleaks/go-gitdiff v0.9.1 // indirect
 	github.com/go-git/gcfg/v2 v2.0.2 // indirect
-	github.com/go-git/go-billy/v6 v6.0.0-20260328065524-593ae452e14d // indirect
 	github.com/go-git/x/plugin/objectsigner/gpg v0.1.0 // indirect
 	github.com/go-git/x/plugin/objectsigner/ssh v0.1.0 // indirect
 	github.com/goccy/go-json v0.10.5 // indirect
@@ -121,7 +122,6 @@ require (
 	go4.org v0.0.0-20230225012048-214862532bf5 // indirect
 	golang.org/x/exp v0.0.0-20250218142911-aa4b98e5adaa // indirect
 	golang.org/x/net v0.53.0 // indirect
-	golang.org/x/sync v0.20.0 // indirect
 	golang.org/x/text v0.36.0 // indirect
 	gopkg.in/check.v1 v1.0.0-20201130134442-10cb98267c6c // indirect
 	gopkg.in/ini.v1 v1.67.0 // indirect
