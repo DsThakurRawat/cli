@@ -5,7 +5,6 @@ package tests
 import (
 	"context"
 	"os"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -49,15 +48,7 @@ func TestResumeFromClonedRepo(t *testing.T) {
 		testutil.PushCheckpointRefs(t, s.Dir)
 
 		// Clone the repo to a new directory (simulating a teammate).
-		cloneDir := t.TempDir()
-		if resolved, symErr := filepath.EvalSymlinks(cloneDir); symErr == nil {
-			cloneDir = resolved
-		}
-		// Remove the dir because git clone wants to create it
-		require.NoError(t, os.RemoveAll(cloneDir))
-		testutil.Git(t, "", "clone", bareDir, cloneDir)
-		testutil.Git(t, cloneDir, "config", "user.name", "E2E Clone")
-		testutil.Git(t, cloneDir, "config", "user.email", "e2e-clone@test.local")
+		cloneDir := testutil.CloneAndEnableEntire(t, bareDir, s.Agent.EntireAgent())
 
 		// Verify the checkpoint metadata ref does NOT exist locally in the clone.
 		_, err = testutil.GitOutputErr(cloneDir, "rev-parse", "--verify", testutil.CheckpointVerifyRef())
@@ -68,11 +59,6 @@ func TestResumeFromClonedRepo(t *testing.T) {
 		mainClone := testutil.GitOutput(t, cloneDir, "branch", "--show-current")
 		testutil.Git(t, cloneDir, "checkout", "feature")
 		testutil.Git(t, cloneDir, "checkout", mainClone)
-
-		// Enable entire in the cloned repo and commit the enable files.
-		entire.Enable(t, cloneDir, s.Agent.EntireAgent())
-		testutil.ApplySuiteCheckpointsMode(t, cloneDir)
-		testutil.CommitIfDirty(t, cloneDir, "Enable entire in clone")
 
 		// Run resume from the clone — should fetch metadata and succeed.
 		out, err := entire.Resume(cloneDir, "feature")
