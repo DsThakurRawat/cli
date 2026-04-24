@@ -465,6 +465,35 @@ func ForEachAgent(t *testing.T, timeout time.Duration, fn func(t *testing.T, s *
 	if len(all) == 0 {
 		t.Skip("no agents registered (check E2E_AGENT filter)")
 	}
+	runForAgents(t, all, timeout, fn)
+}
+
+// ForEachNamedAgent runs fn as a parallel subtest for each registered agent
+// whose name matches one of the provided names.
+func ForEachNamedAgent(t *testing.T, timeout time.Duration, names []string, fn func(t *testing.T, s *RepoState, ctx context.Context)) {
+	t.Helper()
+	t.Parallel()
+
+	allowed := make(map[string]struct{}, len(names))
+	for _, name := range names {
+		allowed[name] = struct{}{}
+	}
+
+	var selected []agents.Agent
+	for _, agent := range agents.All() {
+		if _, ok := allowed[agent.Name()]; ok {
+			selected = append(selected, agent)
+		}
+	}
+	if len(selected) == 0 {
+		t.Skip("no matching agents registered (check E2E_AGENT filter)")
+	}
+
+	runForAgents(t, selected, timeout, fn)
+}
+
+func runForAgents(t *testing.T, all []agents.Agent, timeout time.Duration, fn func(t *testing.T, s *RepoState, ctx context.Context)) {
+	t.Helper()
 	for _, agent := range all {
 		t.Run(agent.Name(), func(t *testing.T) {
 			// Use the global test deadline for slot wait so we don't

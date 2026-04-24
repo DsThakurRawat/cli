@@ -41,6 +41,8 @@ func TestResumeFromClonedRepo(t *testing.T) {
 		s.Git(t, "add", ".")
 		s.Git(t, "commit", "-m", "Add hello doc")
 		testutil.WaitForCheckpoint(t, s, 30*time.Second)
+		checkpointID := testutil.AssertHasCheckpointTrailer(t, s.Dir, "HEAD")
+		sessionMeta := testutil.WaitForSessionMetadata(t, s.Dir, checkpointID, 0, 30*time.Second)
 
 		// Push feature branch and checkpoint refs to the bare remote.
 		s.Git(t, "push", "-u", "origin", "feature")
@@ -83,6 +85,10 @@ func TestResumeFromClonedRepo(t *testing.T) {
 		// Verify the checkpoint metadata ref now exists locally.
 		_, err = testutil.GitOutputErr(cloneDir, "rev-parse", "--verify", testutil.CheckpointVerifyRef())
 		assert.NoError(t, err, "checkpoint metadata ref should exist locally after resume")
+
+		restoredTranscript := testutil.RestoredSessionTranscriptPath(t, cloneDir, sessionMeta)
+		_, err = os.Stat(restoredTranscript)
+		assert.NoError(t, err, "restored session transcript should exist at %s after resume", restoredTranscript)
 	})
 }
 

@@ -15,11 +15,7 @@ import (
 )
 
 func TestAttachSessionCreatesCheckpoint(t *testing.T) {
-	testutil.ForEachAgent(t, 2*time.Minute, func(t *testing.T, s *testutil.RepoState, ctx context.Context) {
-		if s.Agent.Name() != "vogon" {
-			t.Skip("attach E2E coverage currently uses the deterministic vogon session storage")
-		}
-
+	testutil.ForEachNamedAgent(t, 2*time.Minute, []string{"vogon"}, func(t *testing.T, s *testutil.RepoState, ctx context.Context) {
 		homeDir := t.TempDir()
 		extraEnv := []string{"HOME=" + homeDir}
 		vogon := requireVogonAgent(t, s)
@@ -52,11 +48,7 @@ func TestAttachSessionCreatesCheckpoint(t *testing.T) {
 }
 
 func TestAttachSessionAddsToExistingCheckpoint(t *testing.T) {
-	testutil.ForEachAgent(t, 3*time.Minute, func(t *testing.T, s *testutil.RepoState, ctx context.Context) {
-		if s.Agent.Name() != "vogon" {
-			t.Skip("attach E2E coverage currently uses the deterministic vogon session storage")
-		}
-
+	testutil.ForEachNamedAgent(t, 3*time.Minute, []string{"vogon"}, func(t *testing.T, s *testutil.RepoState, ctx context.Context) {
 		homeDir := t.TempDir()
 		extraEnv := []string{"HOME=" + homeDir}
 		vogon := requireVogonAgent(t, s)
