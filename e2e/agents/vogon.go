@@ -43,13 +43,21 @@ func (v *Vogon) RunPrompt(ctx context.Context, dir string, prompt string, opts .
 	args := []string{"-p", prompt}
 	displayArgs := []string{"-p", fmt.Sprintf("%q", prompt)}
 	env := filterEnv(os.Environ(), "ENTIRE_TEST_TTY")
-	env = append(env, "HOME="+vogonHomeDir(dir))
+	homeDir, err := vogonHomeDir(dir)
+	if err != nil {
+		return Output{}, err
+	}
+	env = append(env, "HOME="+homeDir)
 	return v.run(ctx, dir, args, displayArgs, env)
 }
 
 func (v *Vogon) StartSession(_ context.Context, dir string) (Session, error) {
 	name := fmt.Sprintf("vogon-test-%d", time.Now().UnixNano())
-	s, err := NewTmuxSession(name, dir, []string{"ENTIRE_TEST_TTY"}, "env", "HOME="+vogonHomeDir(dir), v.Binary())
+	homeDir, err := vogonHomeDir(dir)
+	if err != nil {
+		return nil, err
+	}
+	s, err := NewTmuxSession(name, dir, []string{"ENTIRE_TEST_TTY"}, "env", "HOME="+homeDir, v.Binary())
 	if err != nil {
 		return nil, err
 	}
@@ -83,7 +91,11 @@ func (v *Vogon) WriteSessionTranscript(ctx context.Context, dir string, extraEnv
 	env := filterEnv(os.Environ(), "ENTIRE_TEST_TTY")
 	env = append(env, extraEnv...)
 	if !hasEnvVar(extraEnv, "HOME") {
-		env = append(env, "HOME="+vogonHomeDir(dir))
+		homeDir, err := vogonHomeDir(dir)
+		if err != nil {
+			return Output{}, err
+		}
+		env = append(env, "HOME="+homeDir)
 	}
 	return v.run(ctx, dir, args, displayArgs, env)
 }
@@ -119,13 +131,13 @@ func (v *Vogon) run(ctx context.Context, dir string, args, displayArgs []string,
 	}, err
 }
 
-func vogonHomeDir(dir string) string {
+func vogonHomeDir(dir string) (string, error) {
 	sum := sha256.Sum256([]byte(dir))
 	homeDir := filepath.Join(os.TempDir(), "vogon-e2e-home-"+hex.EncodeToString(sum[:6]))
 	if err := os.MkdirAll(homeDir, 0o755); err != nil {
-		panic(fmt.Sprintf("create vogon home %s: %v", homeDir, err))
+		return "", fmt.Errorf("create vogon home %s: %w", homeDir, err)
 	}
-	return homeDir
+	return homeDir, nil
 }
 
 func hasEnvVar(env []string, key string) bool {
