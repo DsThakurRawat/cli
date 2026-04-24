@@ -338,7 +338,7 @@ func TestDiscoverLocalRepoRoots_LimitsConcurrentResolution(t *testing.T) {
 	}
 }
 
-func TestRunDispatchWizard_FailsEarlyWhenCurrentBranchCannotBeResolved(t *testing.T) {
+func TestRunDispatchWizard_ProceedsWhenCurrentBranchCannotBeResolved(t *testing.T) {
 	dir := t.TempDir()
 	testutil.InitRepo(t, dir)
 	t.Chdir(dir)
