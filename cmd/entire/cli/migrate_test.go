@@ -745,9 +745,11 @@ func TestMigrateCheckpointsV2_PreservesCombinedAttribution(t *testing.T) {
 	require.NotNil(t, v2Summary)
 	require.NotNil(t, v2Summary.CombinedAttribution,
 		"v2 root summary should preserve combined_attribution from v1")
+	assert.Equal(t, combined.CalculatedAt, v2Summary.CombinedAttribution.CalculatedAt)
 	assert.Equal(t, combined.AgentLines, v2Summary.CombinedAttribution.AgentLines)
 	assert.Equal(t, combined.AgentRemoved, v2Summary.CombinedAttribution.AgentRemoved)
 	assert.Equal(t, combined.HumanAdded, v2Summary.CombinedAttribution.HumanAdded)
+	assert.Equal(t, combined.HumanModified, v2Summary.CombinedAttribution.HumanModified)
 	assert.Equal(t, combined.HumanRemoved, v2Summary.CombinedAttribution.HumanRemoved)
 	assert.Equal(t, combined.TotalCommitted, v2Summary.CombinedAttribution.TotalCommitted)
 	assert.Equal(t, combined.TotalLinesChanged, v2Summary.CombinedAttribution.TotalLinesChanged)
