@@ -86,9 +86,10 @@ func TestResumeFromClonedRepo(t *testing.T) {
 		_, err = testutil.GitOutputErr(cloneDir, "rev-parse", "--verify", testutil.CheckpointVerifyRef())
 		assert.NoError(t, err, "checkpoint metadata ref should exist locally after resume")
 
-		restoredTranscript := testutil.RestoredSessionTranscriptPath(t, cloneDir, sessionMeta)
-		_, err = os.Stat(restoredTranscript)
-		assert.NoError(t, err, "restored session transcript should exist at %s after resume", restoredTranscript)
+		if restoredTranscript, ok := testutil.RestoredSessionTranscriptPath(t, cloneDir, sessionMeta); ok {
+			_, err = os.Stat(restoredTranscript)
+			assert.NoError(t, err, "restored session transcript should exist at %s after resume", restoredTranscript)
+		}
 	})
 }
 

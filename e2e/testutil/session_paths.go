@@ -19,13 +19,20 @@ import (
 )
 
 // RestoredSessionTranscriptPath returns the path where resume should restore
-// the transcript for the given checkpoint session metadata in this repo.
-func RestoredSessionTranscriptPath(t *testing.T, repoDir string, meta SessionMetadata) string {
+// the transcript for agents that use file-backed restored sessions.
+func RestoredSessionTranscriptPath(t *testing.T, repoDir string, meta SessionMetadata) (string, bool) {
 	t.Helper()
 
 	external.DiscoverAndRegisterAlways(context.Background())
 
-	ag, err := cliagent.GetByAgentType(types.AgentType(meta.Agent))
+	agentType := types.AgentType(meta.Agent)
+	if agentType == cliagent.AgentTypeOpenCode {
+		// OpenCode restores by importing the session into its database, not by
+		// writing the transcript path returned by ResolveSessionFile.
+		return "", false
+	}
+
+	ag, err := cliagent.GetByAgentType(agentType)
 	if err != nil {
 		t.Fatalf("resolve agent %q for restored transcript path: %v", meta.Agent, err)
 	}
@@ -35,5 +42,5 @@ func RestoredSessionTranscriptPath(t *testing.T, repoDir string, meta SessionMet
 		t.Fatalf("get session dir for agent %q: %v", meta.Agent, err)
 	}
 
-	return ag.ResolveSessionFile(sessionDir, meta.SessionID)
+	return ag.ResolveSessionFile(sessionDir, meta.SessionID), true
 }

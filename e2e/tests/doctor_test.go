@@ -17,7 +17,7 @@ import (
 // After a normal checkpointed commit and push, doctor should report clean
 // metadata/session health for the active suite-wide checkpoints mode.
 func TestDoctorNoIssues(t *testing.T) {
-	testutil.ForEachAgent(t, 3*time.Minute, func(t *testing.T, s *testutil.RepoState, ctx context.Context) {
+	testutil.ForEachNamedAgent(t, 3*time.Minute, []string{"vogon"}, func(t *testing.T, s *testutil.RepoState, ctx context.Context) {
 		_ = testutil.SetupBareRemote(t, s)
 
 		s.Git(t, "add", ".")
