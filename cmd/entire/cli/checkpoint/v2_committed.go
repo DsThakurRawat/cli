@@ -737,7 +737,10 @@ func (s *V2GitStore) CleanupV1TranscriptFiles(ctx context.Context, checkpointID 
 	refName := plumbing.ReferenceName(paths.V2FullCurrentRefName)
 	parentHash, rootTreeHash, err := s.GetRefState(refName)
 	if err != nil {
-		return nil //nolint:nilerr // /full/current doesn't exist yet — nothing to clean
+		if errors.Is(err, plumbing.ErrReferenceNotFound) {
+			return nil // /full/current doesn't exist yet — nothing to clean
+		}
+		return err
 	}
 
 	checkpointPath := checkpointID.Path()
@@ -745,7 +748,7 @@ func (s *V2GitStore) CleanupV1TranscriptFiles(ctx context.Context, checkpointID 
 
 	entries, err := s.gs.flattenCheckpointEntries(rootTreeHash, checkpointPath)
 	if err != nil {
-		return nil //nolint:nilerr // Checkpoint not in tree — nothing to clean
+		return err
 	}
 
 	changed := false

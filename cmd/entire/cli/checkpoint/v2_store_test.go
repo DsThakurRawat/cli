@@ -1156,3 +1156,17 @@ func TestV2GitStore_CleanupV1TranscriptFiles_NoopWhenClean(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, treeBefore, treeAfter, "tree should be unchanged when no v1 files exist")
 }
+
+func TestV2GitStore_CleanupV1TranscriptFiles_ReturnsCorruptRefError(t *testing.T) {
+	t.Parallel()
+	repo := initTestRepo(t)
+	store := NewV2GitStore(repo, "origin")
+
+	refName := plumbing.ReferenceName(paths.V2FullCurrentRefName)
+	missingCommit := plumbing.NewHash("1111111111111111111111111111111111111111")
+	require.NoError(t, repo.Storer.SetReference(plumbing.NewHashReference(refName, missingCommit)))
+
+	err := store.CleanupV1TranscriptFiles(context.Background(), id.MustCheckpointID("962fcec4a874"), 1)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to get commit")
+}
