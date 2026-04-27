@@ -1085,10 +1085,26 @@ func (env *TestEnv) GitCommitWithShadowHooksAsAgent(message string, files ...str
 	env.gitCommitWithShadowHooks(message, false, files...)
 }
 
+// prepareCommitMsgCmd builds the prepare-commit-msg hook command. When
+// simulateTTY is true, ENTIRE_TEST_TTY=1 forces interactive=true (an in-test
+// stand-in for a real terminal — Setsid can't synthesize a TTY). When false,
+// the child runs in a new session without a controlling terminal so its
+// /dev/tty probe fails and CanPromptInteractively() returns false.
+func (env *TestEnv) prepareCommitMsgCmd(simulateTTY bool, hookArgs ...string) *exec.Cmd {
+	args := append([]string{"hooks", "git", "prepare-commit-msg"}, hookArgs...)
+	var cmd *exec.Cmd
+	if simulateTTY {
+		cmd = exec.Command(getTestBinary(), args...)
+		cmd.Env = env.gitHookEnv("ENTIRE_TEST_TTY=1")
+	} else {
+		cmd = execx.NonInteractive(context.Background(), getTestBinary(), args...)
+		cmd.Env = env.gitHookEnv()
+	}
+	cmd.Dir = env.RepoDir
+	return cmd
+}
+
 // gitCommitWithShadowHooks is the shared implementation for committing with shadow hooks.
-// When simulateTTY is true, sets ENTIRE_TEST_TTY=1 to simulate a human at the terminal.
-// When false, spawns the hook detached from the controlling TTY so
-// interactive.CanPromptInteractively() returns false (agent-subprocess semantics).
 func (env *TestEnv) gitCommitWithShadowHooks(message string, simulateTTY bool, files ...string) {
 	env.T.Helper()
 
@@ -1105,21 +1121,7 @@ func (env *TestEnv) gitCommitWithShadowHooks(message string, simulateTTY bool, f
 
 	// Run prepare-commit-msg hook using the shared binary.
 	// Pass source="message" to match real `git commit -m` behavior.
-	var prepCmd *exec.Cmd
-	if simulateTTY {
-		// Simulate human at terminal: ENTIRE_TEST_TTY=1 makes
-		// interactive.CanPromptInteractively() return true and askConfirmTTY()
-		// return defaultYes without reading from /dev/tty.
-		prepCmd = exec.Command(getTestBinary(), "hooks", "git", "prepare-commit-msg", msgFile, "message")
-		prepCmd.Env = env.gitHookEnv("ENTIRE_TEST_TTY=1")
-	} else {
-		// Simulate agent subprocess via OS-level TTY detachment: the child
-		// runs in a new session without a controlling terminal, so its
-		// /dev/tty probe fails and CanPromptInteractively() returns false.
-		prepCmd = execx.NonInteractive(context.Background(), getTestBinary(), "hooks", "git", "prepare-commit-msg", msgFile, "message")
-		prepCmd.Env = env.gitHookEnv()
-	}
-	prepCmd.Dir = env.RepoDir
+	prepCmd := env.prepareCommitMsgCmd(simulateTTY, msgFile, "message")
 	if output, err := prepCmd.CombinedOutput(); err != nil {
 		env.T.Logf("prepare-commit-msg output: %s", output)
 		// Don't fail - hook may silently succeed
@@ -1372,15 +1374,7 @@ func (env *TestEnv) gitCommitStagedWithShadowHooks(message string, simulateTTY b
 	}
 
 	// Run prepare-commit-msg hook using the shared binary.
-	var prepCmd *exec.Cmd
-	if simulateTTY {
-		prepCmd = exec.Command(getTestBinary(), "hooks", "git", "prepare-commit-msg", msgFile, "message")
-		prepCmd.Env = env.gitHookEnv("ENTIRE_TEST_TTY=1")
-	} else {
-		prepCmd = execx.NonInteractive(context.Background(), getTestBinary(), "hooks", "git", "prepare-commit-msg", msgFile, "message")
-		prepCmd.Env = env.gitHookEnv()
-	}
-	prepCmd.Dir = env.RepoDir
+	prepCmd := env.prepareCommitMsgCmd(simulateTTY, msgFile, "message")
 	if output, err := prepCmd.CombinedOutput(); err != nil {
 		env.T.Logf("prepare-commit-msg output: %s", output)
 	}

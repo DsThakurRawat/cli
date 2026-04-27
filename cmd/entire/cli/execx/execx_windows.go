@@ -2,9 +2,19 @@
 
 package execx
 
-import "os/exec"
+import (
+	"os/exec"
+	"syscall"
 
-// detachFromTTY is a no-op on Windows. Windows has no /dev/tty concept;
-// interactive.CanPromptInteractively() already returns false there because
-// the /dev/tty probe fails.
-func detachFromTTY(_ *exec.Cmd) {}
+	"golang.org/x/sys/windows"
+)
+
+// detachFromTTY configures cmd to run without an inherited console so any
+// /dev/tty-style probe in the child fails. Sets CREATE_NEW_PROCESS_GROUP and
+// DETACHED_PROCESS so the child has no console and no signal coupling.
+func detachFromTTY(cmd *exec.Cmd) {
+	if cmd.SysProcAttr == nil {
+		cmd.SysProcAttr = &syscall.SysProcAttr{}
+	}
+	cmd.SysProcAttr.CreationFlags |= windows.CREATE_NEW_PROCESS_GROUP | windows.DETACHED_PROCESS
+}

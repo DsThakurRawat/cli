@@ -21,8 +21,8 @@ func Interactive(ctx context.Context, name string, args ...string) *exec.Cmd {
 // TTY. In the child, /dev/tty cannot be opened, so
 // interactive.CanPromptInteractively() returns false — no env var required.
 //
-// On platforms without a controlling-TTY concept (Windows), this is a no-op;
-// the CLI's TTY probe already fails there.
+// On Windows the child runs with DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
+// so it has no inherited console.
 func NonInteractive(ctx context.Context, name string, args ...string) *exec.Cmd {
 	cmd := exec.CommandContext(ctx, name, args...)
 	detachFromTTY(cmd)

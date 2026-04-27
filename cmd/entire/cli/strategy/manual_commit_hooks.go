@@ -12,7 +12,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"testing"
 	"time"
 
 	"github.com/entireio/cli/cmd/entire/cli/agent"
@@ -61,10 +60,8 @@ func askConfirmTTY(header string, details []string, prompt string, defaultYes bo
 		defaultResult = ttyResultLink
 	}
 
-	// In test mode, don't try to interact with the real TTY — just use the default.
-	// testing.Testing() covers in-process `go test` runs; ENTIRE_TEST_TTY covers
-	// subprocess tests spawning the real entire binary. Either signal is enough.
-	if testing.Testing() || os.Getenv("ENTIRE_TEST_TTY") != "" {
+	// In test mode, don't try to interact with the real TTY — use the default.
+	if interactive.UnderTest() {
 		return defaultResult
 	}
 
