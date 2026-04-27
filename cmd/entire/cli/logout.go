@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"io"
 
@@ -9,23 +10,50 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// tokenDeleter abstracts token removal so runLogout can be unit-tested
+// logoutTokenStore abstracts keyring access so runLogout can be unit-tested
 // without hitting the real OS keyring.
-type tokenDeleter interface {
+type logoutTokenStore interface {
+	GetToken(baseURL string) (string, error)
 	DeleteToken(baseURL string) error
 }
+
+// logoutRevokeFunc revokes the supplied token server-side. It mirrors the
+// openURL injection pattern in login.go so tests can replace the real HTTP call.
+type logoutRevokeFunc func(ctx context.Context, token string) error
 
 func newLogoutCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "logout",
 		Short: "Log out of Entire",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return runLogout(cmd.OutOrStdout(), auth.NewStore(), api.BaseURL())
+			return runLogout(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(),
+				auth.NewStore(), defaultRevokeCurrentToken, api.BaseURL())
 		},
 	}
 }
 
-func runLogout(outW io.Writer, store tokenDeleter, baseURL string) error {
+func defaultRevokeCurrentToken(ctx context.Context, token string) error {
+	if err := api.NewClient(token).RevokeCurrentToken(ctx); err != nil {
+		return fmt.Errorf("revoke current token: %w", err)
+	}
+	return nil
+}
+
+func runLogout(ctx context.Context, outW, errW io.Writer, store logoutTokenStore, revoke logoutRevokeFunc, baseURL string) error {
+	token, err := store.GetToken(baseURL)
+	if err != nil {
+		// Fall through to the local delete: we still want the keyring entry
+		// gone, even if we couldn't read it well enough to revoke server-side.
+		fmt.Fprintf(errW, "Warning: failed to read token before revocation: %v\n", err)
+	}
+	if token != "" {
+		if err := revoke(ctx, token); err != nil {
+			// Best-effort: a transient network error or a server-side 401 for
+			// an already-invalid token shouldn't block local logout.
+			fmt.Fprintf(errW, "Warning: server-side token revocation failed: %v\n", err)
+		}
+	}
+
 	if err := store.DeleteToken(baseURL); err != nil {
 		return fmt.Errorf("remove auth token: %w", err)
 	}
