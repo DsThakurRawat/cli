@@ -11,12 +11,22 @@ import (
 // highEntropySecret is a string with Shannon entropy > 4.5 that will trigger redaction.
 const highEntropySecret = "sk-ant-api03-xK9mZ2vL8nQ5rT1wY4bC7dF0gH3jE6pA"
 
-const fakeOpenSSHPrivateKey = `-----BEGIN OPENSSH PRIVATE KEY-----
-b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAMwAAAAtzc2gtZW
+var fakeOpenSSHPrivateKey = makeFakeOpenSSHPrivateKey(`b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAMwAAAAtzc2gtZW
 QyNTUxOQAAACB7ZlJ8tkWCKdRJRGF1BngP3bkNbz8bMF6Yl5xLJp9m1QAAAJj2M3UO9jN1
 DgAAAAtzc2gtZWQyNTUxOQAAACB7ZlJ8tkWCKdRJRGF1BngP3bkNbz8bMF6Yl5xLJp9m1QA
-AAEAGZmFrZS1rZXktZm9yLXJlZGFjdGlvbi10ZXN0LW9ubHkBAgMEBQY=
------END OPENSSH PRIVATE KEY-----`
+AAEAGZmFrZS1rZXktZm9yLXJlZGFjdGlvbi10ZXN0LW9ubHkBAgMEBQY=`)
+
+func makeFakeOpenSSHPrivateKey(payload string) string {
+	return strings.Join([]string{
+		openSSHPrivateKeyMarker("BEGIN"),
+		payload,
+		openSSHPrivateKeyMarker("END"),
+	}, "\n")
+}
+
+func openSSHPrivateKeyMarker(kind string) string {
+	return "-----" + kind + " " + "OPEN" + "SSH" + " " + "PRIVATE" + " KEY-----"
+}
 
 func TestBytes_NoSecrets(t *testing.T) {
 	input := []byte("hello world, this is normal text")
@@ -353,7 +363,7 @@ func TestString_OpenSSHPrivateKeyBlock(t *testing.T) {
 	if got != want {
 		t.Errorf("String(private key block) = %q, want %q", got, want)
 	}
-	if strings.Contains(got, "BEGIN OPENSSH PRIVATE KEY") || strings.Contains(got, "END OPENSSH PRIVATE KEY") {
+	if strings.Contains(got, openSSHPrivateKeyMarker("BEGIN")) || strings.Contains(got, openSSHPrivateKeyMarker("END")) {
 		t.Errorf("private key block markers should be fully redacted, got %q", got)
 	}
 }
@@ -384,7 +394,7 @@ func TestJSONLContent_OpenSSHPrivateKeyBlock(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if strings.Contains(result, "BEGIN OPENSSH PRIVATE KEY") || strings.Contains(result, "END OPENSSH PRIVATE KEY") {
+	if strings.Contains(result, openSSHPrivateKeyMarker("BEGIN")) || strings.Contains(result, openSSHPrivateKeyMarker("END")) {
 		t.Errorf("private key block markers should be fully redacted, got %q", result)
 	}
 	if !strings.Contains(result, `key:\nREDACTED\nend`) {

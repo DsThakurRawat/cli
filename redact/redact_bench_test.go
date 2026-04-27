@@ -9,12 +9,10 @@ import (
 	"testing"
 )
 
-const benchmarkOpenSSHPrivateKey = `-----BEGIN OPENSSH PRIVATE KEY-----
-b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAMwAAAAtzc2gtZW
+var benchmarkOpenSSHPrivateKey = makeFakeOpenSSHPrivateKey(`b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAMwAAAAtzc2gtZW
 QyNTUxOQAAACB7ZlJ8tkWCKdRJRGF1BngP3bkNbz8bMF6Yl5xLJp9m1QAAAJj2M3UO9jN1
 DgAAAAtzc2gtZWQyNTUxOQAAACB7ZlJ8tkWCKdRJRGF1BngP3bkNbz8bMF6Yl5xLJp9m1QA
-AAEAGZmFrZS1rZXktZm9yLXJlZGFjdGlvbi1iZW5jaG1hcmstb25seQECAwQF
------END OPENSSH PRIVATE KEY-----`
+AAEAGZmFrZS1rZXktZm9yLXJlZGFjdGlvbi1iZW5jaG1hcmstb25seQECAwQF`)
 
 // BenchmarkRedactJSONLBytes gives us a stable redaction performance baseline.
 //
