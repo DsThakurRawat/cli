@@ -23,14 +23,20 @@ type logoutTokenStore interface {
 type logoutRevokeFunc func(ctx context.Context, token string) error
 
 func newLogoutCmd() *cobra.Command {
-	return &cobra.Command{
+	var insecureHTTPAuth bool
+	cmd := &cobra.Command{
 		Use:   "logout",
 		Short: "Log out of Entire",
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if err := requireSecureBaseURL(insecureHTTPAuth); err != nil {
+				return err
+			}
 			return runLogout(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(),
 				auth.NewStore(), defaultRevokeCurrentToken, api.BaseURL())
 		},
 	}
+	addInsecureHTTPAuthFlag(cmd, &insecureHTTPAuth)
+	return cmd
 }
 
 func defaultRevokeCurrentToken(ctx context.Context, token string) error {

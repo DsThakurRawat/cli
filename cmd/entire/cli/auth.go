@@ -31,6 +31,29 @@ const (
 	lastUsedJustNow = "just now"
 )
 
+// requireSecureBaseURL enforces TLS unless insecureHTTPAuth is set. Every
+// command that sends a bearer token over the network (login, logout,
+// auth status/list/revoke) must call this so credentials don't leak over
+// plaintext HTTP without explicit opt-in.
+func requireSecureBaseURL(insecureHTTPAuth bool) error {
+	if insecureHTTPAuth {
+		return nil
+	}
+	if err := api.RequireSecureURL(api.BaseURL()); err != nil {
+		return fmt.Errorf("base URL check: %w", err)
+	}
+	return nil
+}
+
+// addInsecureHTTPAuthFlag attaches the hidden --insecure-http-auth flag used
+// by every authenticated command for local development.
+func addInsecureHTTPAuthFlag(cmd *cobra.Command, target *bool) {
+	cmd.Flags().BoolVar(target, "insecure-http-auth", false, "Allow authentication over plain HTTP (insecure, for local development only)")
+	if err := cmd.Flags().MarkHidden("insecure-http-auth"); err != nil {
+		panic(fmt.Sprintf("hide insecure-http-auth flag: %v", err))
+	}
+}
+
 func newAuthCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "auth",
@@ -52,14 +75,20 @@ func newAuthCmd() *cobra.Command {
 // --- status -----------------------------------------------------------------
 
 func newAuthStatusCmd() *cobra.Command {
-	return &cobra.Command{
+	var insecureHTTPAuth bool
+	cmd := &cobra.Command{
 		Use:   "status",
 		Short: "Show authentication status",
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if err := requireSecureBaseURL(insecureHTTPAuth); err != nil {
+				return err
+			}
 			return runAuthStatus(cmd.Context(), cmd.OutOrStdout(),
 				auth.NewStore(), defaultListTokens, api.BaseURL())
 		},
 	}
+	addInsecureHTTPAuthFlag(cmd, &insecureHTTPAuth)
+	return cmd
 }
 
 func defaultListTokens(ctx context.Context, token string) ([]api.Token, error) {
@@ -97,15 +126,20 @@ func runAuthStatus(ctx context.Context, w io.Writer, store logoutTokenStore, lis
 
 func newAuthListCmd() *cobra.Command {
 	var jsonOut bool
+	var insecureHTTPAuth bool
 	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "List active API tokens for the authenticated user",
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if err := requireSecureBaseURL(insecureHTTPAuth); err != nil {
+				return err
+			}
 			return runAuthList(cmd.Context(), cmd.OutOrStdout(),
 				auth.NewStore(), defaultListTokens, api.BaseURL(), jsonOut)
 		},
 	}
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Print tokens as JSON")
+	addInsecureHTTPAuthFlag(cmd, &insecureHTTPAuth)
 	return cmd
 }
 
@@ -348,6 +382,7 @@ func fallback(s, alt string) string {
 
 func newAuthRevokeCmd() *cobra.Command {
 	var revokeCurrent bool
+	var insecureHTTPAuth bool
 	cmd := &cobra.Command{
 		Use:   "revoke [id]",
 		Short: "Revoke an API token by id",
@@ -364,12 +399,16 @@ func newAuthRevokeCmd() *cobra.Command {
 			if id != "" && revokeCurrent {
 				return errors.New("cannot use both <id> and --current")
 			}
+			if err := requireSecureBaseURL(insecureHTTPAuth); err != nil {
+				return err
+			}
 			return runAuthRevoke(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(),
-				auth.NewStore(), defaultRevokeTokenByID, defaultRevokeCurrentToken,
+				auth.NewStore(), defaultListTokens, defaultRevokeTokenByID, defaultRevokeCurrentToken,
 				api.BaseURL(), id, revokeCurrent)
 		},
 	}
 	cmd.Flags().BoolVar(&revokeCurrent, "current", false, "Revoke the token used by this CLI and remove the local copy")
+	addInsecureHTTPAuthFlag(cmd, &insecureHTTPAuth)
 	return cmd
 }
 
@@ -381,6 +420,7 @@ func runAuthRevoke(
 	ctx context.Context,
 	outW, errW io.Writer,
 	store logoutTokenStore,
+	list authTokenLister,
 	revokeByID authTokenRevoker,
 	revokeCurrent logoutRevokeFunc,
 	baseURL, id string,
@@ -403,6 +443,18 @@ func runAuthRevoke(
 	if err := revokeByID(ctx, token, id); err != nil {
 		return err
 	}
+
+	// The list endpoint requires bearer auth, so a 401 here means the id we
+	// just revoked was the same one this CLI is using — the keychain entry is
+	// now stale and would otherwise produce confusing 401s on every command.
+	if _, listErr := list(ctx, token); listErr != nil && api.IsHTTPErrorStatus(listErr, http.StatusUnauthorized) {
+		if delErr := store.DeleteToken(baseURL); delErr != nil {
+			return fmt.Errorf("revoked token %s but failed to remove local copy: %w", id, delErr)
+		}
+		fmt.Fprintf(outW, "Revoked token %s (this was your local token; removed from keychain).\n", id)
+		return nil
+	}
+
 	fmt.Fprintf(outW, "Revoked token %s.\n", id)
 	return nil
 }
