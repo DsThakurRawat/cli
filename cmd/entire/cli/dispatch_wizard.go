@@ -12,7 +12,9 @@ import (
 	"sync"
 
 	"github.com/charmbracelet/huh"
+	"github.com/entireio/cli/cmd/entire/cli/api"
 	dispatchpkg "github.com/entireio/cli/cmd/entire/cli/dispatch"
+	"github.com/entireio/cli/cmd/entire/cli/logging"
 	"github.com/entireio/cli/cmd/entire/cli/paths"
 	searchpkg "github.com/entireio/cli/cmd/entire/cli/search"
 	"github.com/go-git/go-git/v6"
@@ -21,8 +23,22 @@ import (
 
 var errDispatchCancelled = errors.New("dispatch cancelled")
 var listDispatchWizardRepos = discoverAuthenticatedDispatchWizardRepos
+var listDispatchWizardRepoResources = defaultListDispatchWizardRepoResources
 var resolveDispatchWizardTopLevel = resolveGitTopLevel
 var getDispatchWizardCurrentBranch = GetCurrentBranch
+var runDispatchWizardForm = func(form *huh.Form) error { return form.Run() }
+
+func defaultListDispatchWizardRepoResources(ctx context.Context) ([]api.Repository, error) {
+	client, err := NewAuthenticatedAPIClient(false)
+	if err != nil {
+		return nil, err
+	}
+	repos, err := client.ListRepositories(ctx, api.RepositorySortRecent)
+	if err != nil {
+		return nil, fmt.Errorf("list dispatch repos: %w", err)
+	}
+	return repos, nil
+}
 
 const (
 	dispatchWizardRepoDiscoveryConcurrencyLimit = 8
@@ -336,7 +352,7 @@ func runDispatchWizard(cmd *cobra.Command) (dispatchpkg.Options, error) {
 
 	fmt.Fprintln(cmd.OutOrStdout())
 
-	if err := form.Run(); err != nil {
+	if err := runDispatchWizardForm(form); err != nil {
 		if handled := handleFormCancellation(cmd.OutOrStdout(), "dispatch", err); handled == nil {
 			return dispatchpkg.Options{}, errDispatchCancelled
 		}
@@ -365,8 +381,10 @@ func newLazyOptions(loader func() []huh.Option[string]) func() []huh.Option[stri
 	}
 }
 
+// buildDispatchRepoOptions dedupes but preserves the caller's order so each
+// source can pick its own order: the API path surfaces recent-first, and the
+// local-discovery fallback surfaces the current repo first.
 func buildDispatchRepoOptions(slugs []string) []huh.Option[string] {
-	sort.Strings(slugs)
 	options := make([]huh.Option[string], 0, len(slugs))
 	seen := make(map[string]struct{}, len(slugs))
 	for _, slug := range slugs {
@@ -482,36 +500,28 @@ func resolveGitTopLevel(ctx context.Context, path string) (string, error) {
 	return strings.TrimSpace(string(output)), nil
 }
 
+// discoverAuthenticatedDispatchWizardRepos drops repos with zero checkpoints —
+// dispatching them would produce nothing. Server order (recent-first) is
+// preserved.
 func discoverAuthenticatedDispatchWizardRepos(ctx context.Context) ([]string, error) {
-	cmd := exec.CommandContext(
-		ctx,
-		"gh",
-		"api",
-		"--paginate",
-		"user/repos?per_page=100&affiliation=owner,collaborator,organization_member&sort=full_name",
-		"--jq",
-		".[].full_name",
-	)
-	output, err := cmd.Output()
+	repos, err := listDispatchWizardRepoResources(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("gh api user/repos: %w", err)
+		logging.Warn(ctx, "dispatch wizard repo list failed", "error", err)
+		return nil, err
 	}
 
-	repos := make([]string, 0)
-	seen := make(map[string]struct{})
-	for _, line := range strings.Split(string(output), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" {
+	slugs := make([]string, 0, len(repos))
+	for _, repo := range repos {
+		if repo.CheckpointCount <= 0 {
 			continue
 		}
-		if _, ok := seen[line]; ok {
+		slug := strings.TrimSpace(repo.FullName)
+		if slug == "" {
 			continue
 		}
-		seen[line] = struct{}{}
-		repos = append(repos, line)
+		slugs = append(slugs, slug)
 	}
-	sort.Strings(repos)
-	return repos, nil
+	return slugs, nil
 }
 
 func discoverRepoSlug(repoRoot string) string {
