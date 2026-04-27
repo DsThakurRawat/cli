@@ -11,7 +11,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/zricethezav/gitleaks/v8/detect"
+	"github.com/betterleaks/betterleaks/detect"
 )
 
 // secretPattern matches high-entropy strings that may be secrets.
@@ -57,19 +57,19 @@ func AlreadyRedacted(data []byte) RedactedBytes {
 }
 
 var (
-	gitleaksDetector     *detect.Detector
-	gitleaksDetectorOnce sync.Once
+	betterleaksDetector     *detect.Detector
+	betterleaksDetectorOnce sync.Once
 )
 
 func getDetector() *detect.Detector {
-	gitleaksDetectorOnce.Do(func() {
+	betterleaksDetectorOnce.Do(func() {
 		d, err := detect.NewDetectorDefaultConfig()
 		if err != nil {
 			return
 		}
-		gitleaksDetector = d
+		betterleaksDetector = d
 	})
-	return gitleaksDetector
+	return betterleaksDetector
 }
 
 // region represents a byte range to redact.
@@ -85,7 +85,7 @@ type taggedRegion struct {
 
 // String replaces secrets and PII in s using layered detection:
 // 1. Entropy-based: high-entropy alphanumeric sequences (threshold 4.5)
-// 2. Pattern-based: gitleaks regex rules (180+ known secret formats)
+// 2. Pattern-based: betterleaks regex rules (260+ known secret formats)
 // 3. PII detection: email, phone, address patterns (only when configured via ConfigurePII)
 // A string is redacted if ANY method flags it.
 func String(s string) string {
@@ -116,7 +116,7 @@ func String(s string) string {
 		}
 	}
 
-	// 2. Pattern-based detection via gitleaks (secrets — always on).
+	// 2. Pattern-based detection via betterleaks (secrets — always on).
 	if d := getDetector(); d != nil {
 		for _, f := range d.DetectString(s) {
 			if f.Secret == "" {
