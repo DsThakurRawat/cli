@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/entireio/cli/cmd/entire/cli/api"
 )
@@ -212,6 +213,79 @@ func TestRunAuthList_EmptyPrintsMessage(t *testing.T) {
 		t.Fatalf("output = %q, want 'No active tokens' message", out.String())
 	}
 }
+
+func TestFormatAuthLastUsed_RelativeBuckets(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 4, 27, 12, 0, 0, 0, time.UTC)
+
+	tests := map[string]struct {
+		input *string
+		want  string
+	}{
+		"nil": {nil, "never"},
+		"just now": {
+			ptr(now.Add(-30 * time.Second).Format(time.RFC3339)),
+			"just now",
+		},
+		"minutes ago": {
+			ptr(now.Add(-15 * time.Minute).Format(time.RFC3339)),
+			"15m ago",
+		},
+		"hours ago": {
+			ptr(now.Add(-3 * time.Hour).Format(time.RFC3339)),
+			"3h ago",
+		},
+		"yesterday": {
+			ptr(now.Add(-30 * time.Hour).Format(time.RFC3339)),
+			"yesterday",
+		},
+		"days ago": {
+			ptr(now.Add(-5 * 24 * time.Hour).Format(time.RFC3339)),
+			"5d ago",
+		},
+		"old absolute": {
+			ptr(now.Add(-90 * 24 * time.Hour).Format(time.RFC3339)),
+			now.Add(-90 * 24 * time.Hour).Local().Format("2006-01-02"),
+		},
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			if got := formatAuthLastUsed(tt.input, now); got != tt.want {
+				t.Errorf("formatAuthLastUsed(%v) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestExpiresState_Buckets(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 4, 27, 12, 0, 0, 0, time.UTC)
+
+	tests := map[string]struct {
+		input string
+		want  expiresStateValue
+	}{
+		"empty":   {"", expiresStateNormal},
+		"expired": {now.Add(-time.Hour).Format(time.RFC3339), expiresStateExpired},
+		"soon":    {now.Add(3 * 24 * time.Hour).Format(time.RFC3339), expiresStateSoon},
+		"normal":  {now.Add(60 * 24 * time.Hour).Format(time.RFC3339), expiresStateNormal},
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			if got := expiresState(tt.input, now); got != tt.want {
+				t.Errorf("expiresState(%q) = %v, want %v", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+func ptr(s string) *string { return &s }
 
 // --- revoke -----------------------------------------------------------------
 
