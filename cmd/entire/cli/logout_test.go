@@ -4,8 +4,11 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"net/http"
 	"strings"
 	"testing"
+
+	"github.com/entireio/cli/cmd/entire/cli/api"
 )
 
 const testLogoutToken = "tok123"
@@ -127,6 +130,33 @@ func TestRunLogout_RevokeFailureWarnsButSucceeds(t *testing.T) {
 	}
 	if !strings.Contains(errOut.String(), "connection refused") {
 		t.Fatalf("stderr = %q, want underlying error message", errOut.String())
+	}
+	if !strings.Contains(out.String(), "Logged out.") {
+		t.Fatalf("stdout = %q, want to contain %q", out.String(), "Logged out.")
+	}
+}
+
+func TestRunLogout_RevokeUnauthorizedIsSilent(t *testing.T) {
+	t.Parallel()
+
+	store := newMockTokenStore()
+	store.tokens["https://entire.io"] = testLogoutToken
+
+	revoke := func(context.Context, string) error {
+		return &api.HTTPError{StatusCode: http.StatusUnauthorized, Message: "Not authenticated"}
+	}
+
+	var out, errOut bytes.Buffer
+	err := runLogout(context.Background(), &out, &errOut, store, revoke, "https://entire.io")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !store.deleted["https://entire.io"] {
+		t.Fatal("local token should still be deleted after silent 401")
+	}
+	if errOut.Len() != 0 {
+		t.Fatalf("stderr = %q, want empty for already-invalid token", errOut.String())
 	}
 	if !strings.Contains(out.String(), "Logged out.") {
 		t.Fatalf("stdout = %q, want to contain %q", out.String(), "Logged out.")

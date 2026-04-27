@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net/http"
 
 	"github.com/entireio/cli/cmd/entire/cli/api"
 	"github.com/entireio/cli/cmd/entire/cli/auth"
@@ -47,9 +48,10 @@ func runLogout(ctx context.Context, outW, errW io.Writer, store logoutTokenStore
 		fmt.Fprintf(errW, "Warning: failed to read token before revocation: %v\n", err)
 	}
 	if token != "" {
-		if err := revoke(ctx, token); err != nil {
-			// Best-effort: a transient network error or a server-side 401 for
-			// an already-invalid token shouldn't block local logout.
+		if err := revoke(ctx, token); err != nil && !api.IsHTTPErrorStatus(err, http.StatusUnauthorized) {
+			// Best-effort: a transient network error shouldn't block local
+			// logout. A 401 means the token is already invalid server-side,
+			// so the desired state is achieved — no warning needed.
 			fmt.Fprintf(errW, "Warning: server-side token revocation failed: %v\n", err)
 		}
 	}
