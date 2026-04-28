@@ -29,7 +29,8 @@ muscle memory continue to work.
 
 - `session` (alias: `sessions`): `list`, `info`, `stop`, `attach`, `resume`, `current`
 - `checkpoint` (aliases: `cp`, `checkpoints`): `list`, `show`, `rewind`, `search`, `diff`
-- `agent`: `list`, `add`, `remove` (replaces flag-driven `entire configure`)
+- `agent`: bare opens the interactive agent selector, plus `list`, `add`, `remove`
+  (replaces flag-driven `entire configure`)
 - `auth`: `login`, `logout`, `status`, `list`, `revoke`
 - `doctor`: bare runs the scan-and-fix flow, plus `trace`, `logs`, `bundle`
 

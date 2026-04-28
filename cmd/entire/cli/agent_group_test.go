@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/entireio/cli/cmd/entire/cli/agent"
+	"github.com/entireio/cli/cmd/entire/cli/testutil"
 )
 
 func TestRunAgentList_ListsAvailableAgents(t *testing.T) {
@@ -53,5 +54,31 @@ func TestRunAgentList_MarksInstalledWithCheck(t *testing.T) {
 	// exist so future formatter changes don't silently break the contract.
 	if !strings.Contains(out, "✓ ") && !strings.Contains(out, "  ") {
 		t.Errorf("output uses neither installed (✓) nor uninstalled markers:\n%s", out)
+	}
+}
+
+func TestAgentGroupBareCommandRunsAgentMenu(t *testing.T) {
+	// t.Chdir cannot coexist with t.Parallel; this test mutates process CWD.
+	dir := t.TempDir()
+	testutil.InitRepo(t, dir)
+	testutil.WriteFile(t, dir, EntireSettingsFile, `{"enabled":true}`)
+	t.Chdir(dir)
+
+	cmd := newAgentGroupCmd()
+	var stdout, stderr bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+	cmd.SetContext(context.Background())
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("execute agent: %v\nstderr: %s", err, stderr.String())
+	}
+
+	out := stdout.String()
+	if !strings.Contains(out, "Cannot show agent selection in non-interactive mode.") {
+		t.Fatalf("bare agent command did not run the agent selection flow, got:\n%s", out)
+	}
+	if strings.Contains(out, "Usage:") {
+		t.Fatalf("bare agent command should not fall through to help, got:\n%s", out)
 	}
 }

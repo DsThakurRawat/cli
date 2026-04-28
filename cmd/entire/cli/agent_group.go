@@ -9,6 +9,7 @@ import (
 	"github.com/entireio/cli/cmd/entire/cli/agent"
 	"github.com/entireio/cli/cmd/entire/cli/agent/types"
 	"github.com/entireio/cli/cmd/entire/cli/paths"
+	"github.com/entireio/cli/cmd/entire/cli/settings"
 	"github.com/spf13/cobra"
 )
 
@@ -25,6 +26,7 @@ Commands:
   remove   Uninstall hooks for an agent
 
 Examples:
+  entire agent
   entire agent list
   entire agent add claude-code
   entire agent remove claude-code`,
@@ -34,12 +36,23 @@ Examples:
 			}
 			return nil
 		},
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return runAgentMenu(cmd.Context(), cmd.OutOrStdout())
+		},
 	}
 
 	cmd.AddCommand(newAgentListCmd())
 	cmd.AddCommand(newAgentAddCmd())
 	cmd.AddCommand(newAgentRemoveCmd())
 	return cmd
+}
+
+func runAgentMenu(ctx context.Context, w io.Writer) error {
+	opts := EnableOptions{Telemetry: true}
+	if settings.IsSetUpAny(ctx) {
+		return runManageAgents(ctx, w, opts, nil)
+	}
+	return runSetupFlow(ctx, w, opts)
 }
 
 func newAgentListCmd() *cobra.Command {
