@@ -317,8 +317,8 @@ func (m searchModel) updateBrowseMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) { //n
 				m.cursor = pageLen - 1
 			}
 			m = m.refreshBrowseContent()
+			m.browseVP.GotoBottom()
 		}
-		m.browseVP.GotoBottom()
 	case "n", "right":
 		if m.page < m.totalPages()-1 {
 			m.page++
