@@ -338,7 +338,7 @@ func runManageAgents(ctx context.Context, w io.Writer, opts EnableOptions, selec
 	// A selectFn (e.g. from --yes) bypasses the interactive prompt entirely.
 	if selectFn == nil && !interactive.CanPromptInteractively() {
 		fmt.Fprintln(w, "Cannot show agent selection in non-interactive mode.")
-		fmt.Fprintln(w, "Use: entire configure --agent <name>")
+		fmt.Fprintln(w, "Use: entire agent add <name>")
 		return nil
 	}
 
@@ -415,7 +415,7 @@ func runManageAgents(ctx context.Context, w io.Writer, opts EnableOptions, selec
 
 	err := applyAgentChanges(ctx, w, selectedAgentNames, installedNames, opts)
 	if err == nil && len(selectedAgentNames) == 0 {
-		fmt.Fprintln(w, "To add agents again, run: entire configure --agent <name>")
+		fmt.Fprintln(w, "To add agents again, run: entire agent add <name>")
 	}
 	return err
 }
@@ -576,15 +576,13 @@ func newSetupCmd() *cobra.Command {
 	var summarizeModel string
 
 	cmd := &cobra.Command{
-		Use:   "configure",
-		Short: "Configure Entire in current repository",
-		Long: `Configure Entire with session tracking for your AI agent workflows.
+		Use:    "configure",
+		Hidden: true, // Phase 2: hidden from --help; superseded by 'entire agent'.
+		Short:  "Configure Entire in current repository (deprecated; use 'entire agent')",
+		Long: `Deprecated. Use 'entire agent list/add/remove' for agent management.
 
-On first run, this configures Entire and installs agent hooks.
-On subsequent runs, it lets you add or remove agents interactively.
-
-Use --remove to remove a specific agent non-interactively:
-  entire configure --remove claude-code`,
+Kept functional as a permanent alias to avoid breaking existing scripts and
+documentation. Prints a one-time deprecation warning per process.`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			ctx := cmd.Context()
 
@@ -1023,12 +1021,12 @@ func runEnableInteractive(ctx context.Context, w io.Writer, agents []agent.Agent
 	return nil
 }
 
-// printEnabledStatus prints agents and a hint about `entire configure`.
+// printEnabledStatus prints agents and a hint about `entire agent`.
 func printEnabledStatus(ctx context.Context, w io.Writer) {
 	if displayNames := InstalledAgentDisplayNames(ctx); len(displayNames) > 0 {
 		fmt.Fprintf(w, "Agents: %s\n", strings.Join(displayNames, ", "))
 	}
-	fmt.Fprintln(w, "\nTo add more agents, run `entire configure`.")
+	fmt.Fprintln(w, "\nTo add more agents, run `entire agent add <name>`.")
 }
 
 // runEnable sets the enabled flag in settings.

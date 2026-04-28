@@ -1738,7 +1738,7 @@ func TestManageAgents_DeselectAll_RemovesAllAndShowsGuidance(t *testing.T) {
 	if !strings.Contains(output, "All agents have been removed.") {
 		t.Errorf("Expected 'All agents have been removed.' message, got: %s", output)
 	}
-	if !strings.Contains(output, "entire configure --agent") {
+	if !strings.Contains(output, "entire agent add") {
 		t.Errorf("Expected guidance on how to re-add agents, got: %s", output)
 	}
 
