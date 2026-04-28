@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/spf13/cobra"
@@ -32,10 +33,8 @@ func warnDeprecatedAliasOnce(cmd *cobra.Command, oldUse, replacement string) {
 }
 
 func firstWord(s string) string {
-	for i := range len(s) {
-		if s[i] == ' ' || s[i] == '\t' {
-			return s[:i]
-		}
+	if i := strings.IndexAny(s, " \t"); i >= 0 {
+		return s[:i]
 	}
 	return s
 }

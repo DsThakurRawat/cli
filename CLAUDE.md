@@ -39,7 +39,7 @@ Top-level lifecycle and standalone commands: `enable`, `disable`, `status`,
 Permanent silent top-level aliases (kept for backwards compatibility):
 `rewind` → `checkpoint rewind`, `resume` → `session resume`, `attach` →
 `session attach`, `explain` → `checkpoint show` (smart-routes between
-checkpoint id, commit sha, and session id), `trace` → `doctor trace`,
+checkpoint id and commit sha), `trace` → `doctor trace`,
 `search` → `checkpoint search` (hidden), `sessions` → `session` (Cobra alias).
 
 Deprecated top-level aliases (functional, print one-time stderr warning):

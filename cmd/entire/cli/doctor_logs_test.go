@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -81,5 +82,26 @@ func TestPrintTail_TailsLastN(t *testing.T) {
 	}
 	if buf.String() != "4\n5\n" {
 		t.Errorf("printTail tail = %q, want \"4\\n5\\n\"", buf.String())
+	}
+}
+
+func TestFollowFile_ExitsWhenContextCanceled(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "log.txt")
+	if err := os.WriteFile(path, []byte("existing\n"), 0o600); err != nil {
+		t.Fatalf("write log: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	var buf bytes.Buffer
+	if err := followFile(ctx, &buf, path); err != nil {
+		t.Fatalf("followFile: %v", err)
+	}
+	if buf.Len() != 0 {
+		t.Fatalf("followFile wrote %q after cancellation", buf.String())
 	}
 }

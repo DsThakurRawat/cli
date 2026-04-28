@@ -18,8 +18,9 @@ func newSessionCurrentCmd() *cobra.Command {
 		Long: `Show the most recently active session for the current worktree.
 
 Resolves the session that is writing checkpoints in this directory right now,
-filtered to the current worktree. Equivalent to running 'sessions info' on the
-session ID returned by FindMostRecentSession.
+preferring sessions from the current worktree and falling back to the most
+recent session if no state matches this worktree. Equivalent to running
+'sessions info' on the session ID returned by FindMostRecentSession.
 
 Examples:
   entire session current

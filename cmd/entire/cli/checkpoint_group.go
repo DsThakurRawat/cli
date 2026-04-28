@@ -40,9 +40,15 @@ Examples:
 	cmd.AddCommand(newCheckpointListCmd())
 	cmd.AddCommand(newCheckpointShowCmd())
 	cmd.AddCommand(newRewindCmd())
-	cmd.AddCommand(newSearchCmd())
+	cmd.AddCommand(newCheckpointSearchCmd())
 	cmd.AddCommand(newCheckpointDiffCmd())
 
+	return cmd
+}
+
+func newCheckpointSearchCmd() *cobra.Command {
+	cmd := newSearchCmd()
+	cmd.Hidden = false
 	return cmd
 }
 

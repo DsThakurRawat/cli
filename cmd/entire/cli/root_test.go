@@ -212,6 +212,28 @@ func TestRoot_NounGroupShorthandsUseCobraAliases(t *testing.T) {
 	}
 }
 
+func TestCheckpointSearchIsVisibleButTopLevelSearchIsHidden(t *testing.T) {
+	t.Parallel()
+
+	root := NewRootCmd()
+
+	checkpointSearch, _, err := root.Find([]string{"checkpoint", "search"})
+	if err != nil {
+		t.Fatalf("find checkpoint search: %v", err)
+	}
+	if checkpointSearch.Hidden {
+		t.Fatal("checkpoint search should be visible in checkpoint help")
+	}
+
+	topLevelSearch, _, err := root.Find([]string{"search"})
+	if err != nil {
+		t.Fatalf("find top-level search: %v", err)
+	}
+	if !topLevelSearch.Hidden {
+		t.Fatal("top-level search should remain hidden as a compatibility alias")
+	}
+}
+
 func containsString(values []string, want string) bool {
 	for _, value := range values {
 		if value == want {

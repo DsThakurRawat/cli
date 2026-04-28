@@ -1,14 +1,19 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"sort"
 	"strings"
 
 	"github.com/entireio/cli/cmd/entire/cli/checkpoint"
 	"github.com/entireio/cli/cmd/entire/cli/checkpoint/id"
+	"github.com/entireio/cli/cmd/entire/cli/checkpoint/remote"
+	"github.com/entireio/cli/cmd/entire/cli/logging"
+	"github.com/entireio/cli/cmd/entire/cli/settings"
 	"github.com/entireio/cli/cmd/entire/cli/strategy"
 	"github.com/spf13/cobra"
 )
@@ -20,7 +25,7 @@ func newCheckpointDiffCmd() *cobra.Command {
 		Use:   "diff <checkpoint-a> <checkpoint-b>",
 		Short: "Compare two checkpoints",
 		Long: `Compare two checkpoints by ID and report the delta in files touched,
-token usage, and session counts.
+token usage, and checkpoint counts.
 
 Both arguments must be full 12-character hex checkpoint IDs.
 
@@ -44,13 +49,22 @@ Examples:
 			if err != nil {
 				return fmt.Errorf("open repository: %w", err)
 			}
-			store := checkpoint.NewGitStore(repo)
+			v1Store := checkpoint.NewGitStore(repo)
+			v2URL, err := remote.FetchURL(ctx)
+			if err != nil {
+				logging.Debug(ctx, "checkpoint diff: using origin for v2 store fetch remote",
+					slog.String("error", err.Error()),
+				)
+				v2URL = ""
+			}
+			v2Store := checkpoint.NewV2GitStore(repo, v2URL)
+			preferV2 := settings.IsCheckpointsV2Enabled(ctx)
 
-			a, err := store.ReadCommitted(ctx, aID)
+			a, err := readCheckpointDiffSummary(ctx, aID, v1Store, v2Store, preferV2)
 			if err != nil {
 				return fmt.Errorf("read checkpoint %s: %w", aID, err)
 			}
-			b, err := store.ReadCommitted(ctx, bID)
+			b, err := readCheckpointDiffSummary(ctx, bID, v1Store, v2Store, preferV2)
 			if err != nil {
 				return fmt.Errorf("read checkpoint %s: %w", bID, err)
 			}
@@ -67,17 +81,31 @@ Examples:
 	return cmd
 }
 
+func readCheckpointDiffSummary(
+	ctx context.Context,
+	checkpointID id.CheckpointID,
+	v1Store *checkpoint.GitStore,
+	v2Store *checkpoint.V2GitStore,
+	preferV2 bool,
+) (*checkpoint.CheckpointSummary, error) {
+	_, summary, err := checkpoint.ResolveCommittedReaderForCheckpoint(ctx, checkpointID, v1Store, v2Store, preferV2)
+	if err != nil {
+		return nil, fmt.Errorf("resolve checkpoint: %w", err)
+	}
+	return summary, nil
+}
+
 type checkpointDiff struct {
-	A             *checkpoint.CheckpointSummary `json:"-"`
-	B             *checkpoint.CheckpointSummary `json:"-"`
-	AID           string                        `json:"a"`
-	BID           string                        `json:"b"`
-	ASessions     int                           `json:"a_sessions"`
-	BSessions     int                           `json:"b_sessions"`
-	SessionsDelta int                           `json:"sessions_delta"`
-	FilesAdded    []string                      `json:"files_added"`
-	FilesRemoved  []string                      `json:"files_removed"`
-	TokensDelta   tokenDelta                    `json:"tokens_delta"`
+	A                *checkpoint.CheckpointSummary `json:"-"`
+	B                *checkpoint.CheckpointSummary `json:"-"`
+	AID              string                        `json:"a"`
+	BID              string                        `json:"b"`
+	ACheckpoints     int                           `json:"a_checkpoints"`
+	BCheckpoints     int                           `json:"b_checkpoints"`
+	CheckpointsDelta int                           `json:"checkpoints_delta"`
+	FilesAdded       []string                      `json:"files_added"`
+	FilesRemoved     []string                      `json:"files_removed"`
+	TokensDelta      tokenDelta                    `json:"tokens_delta"`
 }
 
 type tokenDelta struct {
@@ -90,13 +118,13 @@ type tokenDelta struct {
 
 func computeCheckpointDiff(a, b *checkpoint.CheckpointSummary) *checkpointDiff {
 	out := &checkpointDiff{
-		A:             a,
-		B:             b,
-		AID:           a.CheckpointID.String(),
-		BID:           b.CheckpointID.String(),
-		ASessions:     a.CheckpointsCount,
-		BSessions:     b.CheckpointsCount,
-		SessionsDelta: b.CheckpointsCount - a.CheckpointsCount,
+		A:                a,
+		B:                b,
+		AID:              a.CheckpointID.String(),
+		BID:              b.CheckpointID.String(),
+		ACheckpoints:     a.CheckpointsCount,
+		BCheckpoints:     b.CheckpointsCount,
+		CheckpointsDelta: b.CheckpointsCount - a.CheckpointsCount,
 	}
 
 	aFiles := make(map[string]struct{}, len(a.FilesTouched))
@@ -150,7 +178,7 @@ func computeCheckpointDiff(a, b *checkpoint.CheckpointSummary) *checkpointDiff {
 func writeCheckpointDiffText(w io.Writer, d *checkpointDiff) error {
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "Diff: %s → %s\n", d.AID, d.BID)
-	fmt.Fprintf(&sb, "\nSessions:        %+d (%d → %d)\n", d.SessionsDelta, d.ASessions, d.BSessions)
+	fmt.Fprintf(&sb, "\nCheckpoints:     %+d (%d → %d)\n", d.CheckpointsDelta, d.ACheckpoints, d.BCheckpoints)
 
 	sb.WriteString("\nTokens:\n")
 	fmt.Fprintf(&sb, "  total:        %+d\n", d.TokensDelta.Total)

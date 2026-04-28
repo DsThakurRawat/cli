@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -16,6 +17,7 @@ import (
 	"github.com/entireio/cli/cmd/entire/cli/logging"
 	"github.com/entireio/cli/cmd/entire/cli/paths"
 	"github.com/entireio/cli/cmd/entire/cli/versioninfo"
+	"github.com/entireio/cli/redact"
 	"github.com/spf13/cobra"
 )
 
@@ -63,14 +65,28 @@ that path is printed to stdout. Use --out to choose a specific path.`,
 }
 
 func writeDoctorBundle(ctx context.Context, repoRoot, outPath string) error {
-	out, err := os.Create(outPath) //nolint:gosec // user-provided output path is intentional
+	out, err := os.OpenFile(outPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600) //nolint:gosec // user-provided output path is intentional
 	if err != nil {
 		return fmt.Errorf("create bundle: %w", err)
 	}
-	defer out.Close()
+	if err := out.Chmod(0o600); err != nil {
+		_ = out.Close()
+		return fmt.Errorf("set bundle permissions: %w", err)
+	}
+	fileClosed := false
+	defer func() {
+		if !fileClosed {
+			_ = out.Close()
+		}
+	}()
 
 	zw := zip.NewWriter(out)
-	defer zw.Close()
+	zipClosed := false
+	defer func() {
+		if !zipClosed {
+			_ = zw.Close()
+		}
+	}()
 
 	logsDir := filepath.Join(repoRoot, logging.LogsDir)
 	if err := addDirToZip(zw, logsDir, "logs"); err != nil {
@@ -79,7 +95,7 @@ func writeDoctorBundle(ctx context.Context, repoRoot, outPath string) error {
 
 	for _, name := range []string{"settings.json", "settings.local.json"} {
 		src := filepath.Join(repoRoot, ".entire", name)
-		if err := addFileToZip(zw, src, filepath.Join("settings", name)); err != nil {
+		if err := addFileToZip(zw, src, path.Join("settings", name)); err != nil {
 			return err
 		}
 	}
@@ -97,6 +113,16 @@ func writeDoctorBundle(ctx context.Context, repoRoot, outPath string) error {
 	if err := addStringToZip(zw, "version.txt", versionInfoString()); err != nil {
 		return err
 	}
+
+	if err := zw.Close(); err != nil {
+		return fmt.Errorf("finalize bundle: %w", err)
+	}
+	zipClosed = true
+
+	if err := out.Close(); err != nil {
+		return fmt.Errorf("close bundle: %w", err)
+	}
+	fileClosed = true
 
 	return nil
 }
@@ -131,12 +157,23 @@ func addDirToZip(zw *zip.Writer, srcDir, archivePrefix string) error {
 		if err != nil {
 			return fmt.Errorf("rel: %w", err)
 		}
-		return addFileToZip(zw, path, filepath.Join(archivePrefix, rel))
+		return addFileToZip(zw, path, zipEntryName(archivePrefix, rel))
 	})
 	if walkErr != nil {
 		return fmt.Errorf("walk %s: %w", srcDir, walkErr)
 	}
 	return nil
+}
+
+func zipEntryName(parts ...string) string {
+	cleanParts := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if part == "" {
+			continue
+		}
+		cleanParts = append(cleanParts, filepath.ToSlash(part))
+	}
+	return path.Join(cleanParts...)
 }
 
 func addFileToZip(zw *zip.Writer, src, archivePath string) error {
@@ -149,23 +186,25 @@ func addFileToZip(zw *zip.Writer, src, archivePath string) error {
 	}
 	defer f.Close()
 
-	w, err := zw.Create(archivePath)
+	entryName := zipEntryName(archivePath)
+	w, err := zw.Create(entryName)
 	if err != nil {
-		return fmt.Errorf("zip create %s: %w", archivePath, err)
+		return fmt.Errorf("zip create %s: %w", entryName, err)
 	}
 	if _, err := io.Copy(w, f); err != nil {
-		return fmt.Errorf("zip copy %s: %w", archivePath, err)
+		return fmt.Errorf("zip copy %s: %w", entryName, err)
 	}
 	return nil
 }
 
 func addStringToZip(zw *zip.Writer, archivePath, contents string) error {
-	w, err := zw.Create(archivePath)
+	entryName := zipEntryName(archivePath)
+	w, err := zw.Create(entryName)
 	if err != nil {
-		return fmt.Errorf("zip create %s: %w", archivePath, err)
+		return fmt.Errorf("zip create %s: %w", entryName, err)
 	}
 	if _, err := io.WriteString(w, contents); err != nil {
-		return fmt.Errorf("zip write %s: %w", archivePath, err)
+		return fmt.Errorf("zip write %s: %w", entryName, err)
 	}
 	return nil
 }
@@ -177,5 +216,5 @@ func addCommandOutput(ctx context.Context, zw *zip.Writer, archivePath, dir, nam
 	if err != nil {
 		out = append(out, []byte(fmt.Sprintf("\n[error: %v]\n", err))...)
 	}
-	return addStringToZip(zw, archivePath, string(out))
+	return addStringToZip(zw, archivePath, redact.String(string(out)))
 }
