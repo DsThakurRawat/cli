@@ -23,35 +23,39 @@ This repo contains the CLI for Entire.
 ### Command Layout
 
 The CLI is organized around five noun groups plus a small set of top-level
-verbs. Phase 1 introduced the groups additively; the previous flat top-level
-verbs remain registered as silent permanent aliases so existing scripts and
-muscle memory continue to work.
+verbs. The groups are the canonical home for each verb; legacy top-level
+shortcuts remain functional but hidden, and emit a deprecation hint pointing
+at the canonical group form.
 
 - `session` (alias: `sessions`): `list`, `info`, `stop`, `attach`, `resume`, `current`
-- `checkpoint` (aliases: `cp`, `checkpoints`): `list`, `show`, `rewind`, `search`, `diff`
+- `checkpoint` (aliases: `cp`, `checkpoints`): `list`, `explain`, `rewind`, `search`, `diff`
 - `agent`: bare opens the interactive agent selector, plus `list`, `add`, `remove`
-  (replaces flag-driven `entire configure`)
+- `configure`: bare prints help and a hint pointing at `entire agent`; flags
+  manage non-agent settings (telemetry, git-hook installation mode, strategy
+  options, summary provider). Agent CRUD lives under `entire agent`.
 - `auth`: `login`, `logout`, `status`, `list`, `revoke`
 - `doctor`: bare runs the scan-and-fix flow, plus `trace`, `logs`, `bundle`
 
 Top-level lifecycle and standalone commands: `enable`, `disable`, `status`,
-`login`, `logout`, `clean`, `version`, `dispatch`, `activity`, `help`.
+`login`, `logout`, `clean`, `version`, `dispatch`, `activity`, `help`,
+`configure`.
 
-Permanent silent top-level aliases (kept for backwards compatibility):
+Hidden top-level shortcuts (functional, emit a one-line deprecation hint):
 `rewind` → `checkpoint rewind`, `resume` → `session resume`, `attach` →
-`session attach`, `explain` → `checkpoint show` (smart-routes between
-checkpoint id and commit sha), `trace` → `doctor trace`,
-`search` → `checkpoint search` (hidden), `sessions` → `session` (Cobra alias).
+`session attach`, `explain` → `checkpoint explain`, `trace` → `doctor trace`.
+Cobra-native aliases (no hint): `sessions` → `session`, `cp`/`checkpoints` →
+`checkpoint`. The `search` top-level remains hidden without a hint.
 
-Deprecated top-level aliases (functional, print one-time stderr warning):
-`configure` → `agent`, `reset` → `clean`.
+Deprecated top-level alias (functional, prints cobra deprecation message):
+`reset` → `clean`.
 
 Hidden infrastructure commands: `hooks`, `migrate`, `trail`, `git-hook`,
 `curl-bash-post-install`, `__send_analytics`.
 
-Helpers used by the alias surface live in `cmd/entire/cli/aliascmd.go`
-(`warnDeprecatedAliasOnce`). Diagnostic
-subcommands live alongside `doctor.go` as `doctor_logs.go` and
+The `hideAsAlias(cmd, canonical)` helper in `cmd/entire/cli/aliascmd.go`
+marks a command Hidden and sets cobra's `Deprecated` field so the hint
+renders to stderr on every invocation while the command stays functional.
+Diagnostic subcommands live alongside `doctor.go` as `doctor_logs.go` and
 `doctor_bundle.go`. Group roots and noun-group children live in files
 named `<noun>_group.go` and `<noun>_<verb>.go` respectively.
 

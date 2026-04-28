@@ -2073,35 +2073,6 @@ func TestMaybePromptVercelDeploymentDisable_WritesLocalSettingsWhenRequested(t *
 	}
 }
 
-func TestConfigureCmd_RemoveFlag_StillWorks(t *testing.T) {
-	// Cannot use t.Parallel() because we use t.Chdir
-	setupTestRepo(t)
-	writeSettings(t, testSettingsEnabled)
-	writeClaudeHooksFixture(t)
-
-	if !checkClaudeCodeHooksInstalled() {
-		t.Fatal("Expected Claude Code hooks to be installed before test")
-	}
-
-	cmd := newSetupCmd()
-	var stdout bytes.Buffer
-	cmd.SetOut(&stdout)
-	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"--remove", "claude-code"})
-
-	if err := cmd.Execute(); err != nil {
-		t.Fatalf("configure --remove claude-code error = %v", err)
-	}
-
-	if checkClaudeCodeHooksInstalled() {
-		t.Error("Expected Claude Code hooks to be removed after --remove")
-	}
-
-	if !strings.Contains(stdout.String(), "Removed") {
-		t.Errorf("Expected removal message, got: %s", stdout.String())
-	}
-}
-
 func TestDetectOrSelectAgent_ReRun_NewlyDetectedAgentAvailableNotPreSelected(t *testing.T) {
 	// Cannot use t.Parallel() because we use t.Chdir and t.Setenv
 	setupTestRepo(t)
@@ -2847,8 +2818,8 @@ func TestEnableCmd_YesWithTelemetryFalse(t *testing.T) {
 	}
 }
 
-func TestConfigureCmd_YesOnConfiguredRepo(t *testing.T) {
-	// Cannot use t.Parallel() because we use t.Chdir and t.Setenv
+func TestConfigureCmd_BarePrintsHelpHint(t *testing.T) {
+	// Cannot use t.Parallel() because we use t.Chdir
 	setupTestRepo(t)
 	writeSettings(t, testSettingsEnabled)
 	writeClaudeHooksFixture(t)
@@ -2857,18 +2828,102 @@ func TestConfigureCmd_YesOnConfiguredRepo(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	cmd.SetOut(&stdout)
 	cmd.SetErr(&stderr)
-	cmd.SetArgs([]string{"--yes"})
+	cmd.SetArgs([]string{})
 
-	// May partially fail due to stale external agents in global registry,
-	// but the key behavior is that it doesn't bail out with the non-interactive message.
-	_ = cmd.Execute() //nolint:errcheck // partial failure from stale test agents is expected
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("configure error = %v", err)
+	}
 
 	output := stdout.String()
-	if strings.Contains(output, "Cannot show agent selection in non-interactive mode") {
-		t.Error("--yes should bypass non-interactive check, but got bail-out message")
+	if !strings.Contains(output, "entire agent") {
+		t.Errorf("expected hint about 'entire agent' in help output, got: %s", output)
 	}
-	// Should have added at least some built-in agents
-	if !strings.Contains(output, "Added agents:") && !strings.Contains(output, "No changes made.") {
-		t.Errorf("expected agent management output, got: %s", output)
+	// Bare configure must not run the agent picker.
+	if strings.Contains(output, "Cannot show agent selection in non-interactive mode") {
+		t.Errorf("bare configure should not invoke agent picker, got: %s", output)
+	}
+}
+
+func TestConfigureCmd_AgentFlagRemoved(t *testing.T) {
+	t.Parallel()
+	cmd := newSetupCmd()
+	if cmd.Flags().Lookup("agent") != nil {
+		t.Error("'configure' must not expose --agent (use 'entire agent add')")
+	}
+	if cmd.Flags().Lookup("remove") != nil {
+		t.Error("'configure' must not expose --remove (use 'entire agent remove')")
+	}
+	if cmd.Flags().Lookup("yes") != nil {
+		t.Error("'configure' must not expose --yes (lives on 'entire enable')")
+	}
+}
+
+func TestConfigureCmd_TelemetryFlag_PersistsSetting(t *testing.T) {
+	// Cannot use t.Parallel() because we use t.Chdir
+	setupTestRepo(t)
+	writeSettings(t, testSettingsEnabled)
+
+	cmd := newSetupCmd()
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"--telemetry=false"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("configure --telemetry=false error = %v", err)
+	}
+
+	s, err := LoadEntireSettings(context.Background())
+	if err != nil {
+		t.Fatalf("load settings: %v", err)
+	}
+	if s.Telemetry == nil || *s.Telemetry != false {
+		t.Errorf("expected telemetry=false, got %v", s.Telemetry)
+	}
+}
+
+func TestConfigureCmd_AbsoluteGitHookPathFlag_PersistsAndReinstallsHook(t *testing.T) {
+	// Cannot use t.Parallel() because we use t.Chdir
+	setupTestRepo(t)
+	writeSettings(t, testSettingsEnabled)
+
+	cmd := newSetupCmd()
+	var stdout bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"--absolute-git-hook-path"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("configure --absolute-git-hook-path error = %v", err)
+	}
+
+	s, err := LoadEntireSettings(context.Background())
+	if err != nil {
+		t.Fatalf("load settings: %v", err)
+	}
+	if !s.AbsoluteGitHookPath {
+		t.Error("expected absolute_git_hook_path=true after configure --absolute-git-hook-path")
+	}
+	if !strings.Contains(stdout.String(), "Reinstalled git hook") {
+		t.Errorf("expected hook reinstall message, got: %s", stdout.String())
+	}
+}
+
+func TestConfigureCmd_TelemetryAlone_DoesNotReinstallHook(t *testing.T) {
+	// Cannot use t.Parallel() because we use t.Chdir
+	setupTestRepo(t)
+	writeSettings(t, testSettingsEnabled)
+
+	cmd := newSetupCmd()
+	var stdout bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"--telemetry=false"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("configure --telemetry=false error = %v", err)
+	}
+
+	if strings.Contains(stdout.String(), "Reinstalled git hook") {
+		t.Errorf("--telemetry alone should not trigger hook reinstall, got: %s", stdout.String())
 	}
 }

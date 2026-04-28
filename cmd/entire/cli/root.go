@@ -88,7 +88,7 @@ func NewRootCmd() *cobra.Command {
 
 	// Top-level lifecycle and standalone commands.
 	cmd.AddCommand(newCleanCmd())
-	cmd.AddCommand(newSetupCmd()) // 'configure' (deprecated alias of 'agent')
+	cmd.AddCommand(newSetupCmd()) // 'configure' — non-agent settings; agent CRUD lives under 'agent'
 	cmd.AddCommand(newEnableCmd())
 	cmd.AddCommand(newDisableCmd())
 	cmd.AddCommand(newStatusCmd())
@@ -98,13 +98,13 @@ func NewRootCmd() *cobra.Command {
 	cmd.AddCommand(newDispatchCmd())
 	cmd.AddCommand(newActivityCmd())
 
-	// Permanent silent top-level aliases (Phase 1: muscle-memory preservation).
-	cmd.AddCommand(newRewindCmd())  // 'entire rewind' = 'checkpoint rewind'
-	cmd.AddCommand(newResumeCmd())  // 'entire resume' = 'session resume'
-	cmd.AddCommand(newAttachCmd())  // 'entire attach' = 'session attach'
-	cmd.AddCommand(newExplainCmd()) // 'entire explain' = 'checkpoint show'
-	cmd.AddCommand(newTraceCmd())   // 'entire trace' = 'doctor trace'
-	cmd.AddCommand(newSearchCmd())  // 'entire search' = 'checkpoint search' (hidden)
+	// Hidden top-level shortcuts. Functional but print a deprecation hint.
+	cmd.AddCommand(hideAsAlias(newRewindCmd(), "entire checkpoint rewind"))
+	cmd.AddCommand(hideAsAlias(newResumeCmd(), "entire session resume"))
+	cmd.AddCommand(hideAsAlias(newAttachCmd(), "entire session attach"))
+	cmd.AddCommand(hideAsAlias(newExplainCmd(), "entire checkpoint explain"))
+	cmd.AddCommand(hideAsAlias(newTraceCmd(), "entire doctor trace"))
+	cmd.AddCommand(newSearchCmd()) // 'entire search' = 'checkpoint search' (hidden, no hint)
 
 	// Deprecated top-level alias (functional; reset.go marks it Deprecated).
 	cmd.AddCommand(newResetCmd())
