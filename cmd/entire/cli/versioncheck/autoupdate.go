@@ -89,12 +89,14 @@ func MaybeAutoUpdate(ctx context.Context, w io.Writer, currentVersion, latestVer
 
 func maybeBrewAutoUpdate(ctx context.Context, w io.Writer, currentVersion, latestVersion string) AutoUpdateAction {
 	cmdStr := updateCommand(currentVersion)
-	printBrewUpdateMessage(w, currentVersion, latestVersion, cmdStr)
 
 	if os.Getenv(envKillSwitch) != "" || !interactive.CanPromptInteractively() || !isTerminalOut(w) {
+		printNotification(w, currentVersion, latestVersion)
 		fmt.Fprintf(w, "To update, run:\n  %s\n", cmdStr)
 		return autoUpdateActionSkip
 	}
+
+	printBrewUpdateMessage(w, currentVersion, latestVersion, cmdStr)
 
 	action, err := chooseBrewUpdate(w)
 	if err != nil {
@@ -126,12 +128,19 @@ func printBrewUpdateMessage(w io.Writer, currentVersion, latestVersion, cmdStr s
 }
 
 func realChooseBrewUpdate(w io.Writer) (AutoUpdateAction, error) {
-	reader := bufio.NewReader(os.Stdin)
+	return chooseBrewUpdateFromReader(w, os.Stdin)
+}
+
+func chooseBrewUpdateFromReader(w io.Writer, input io.Reader) (AutoUpdateAction, error) {
+	reader := bufio.NewReader(input)
 	for {
 		fmt.Fprint(w, "Choose an option [1]: ")
 		line, err := reader.ReadString('\n')
 		if err != nil && !errors.Is(err, io.EOF) {
 			return autoUpdateActionSkip, fmt.Errorf("read update choice: %w", err)
+		}
+		if errors.Is(err, io.EOF) && strings.TrimSpace(line) == "" {
+			return autoUpdateActionSkip, nil
 		}
 
 		action, ok := parseBrewUpdateChoice(line)

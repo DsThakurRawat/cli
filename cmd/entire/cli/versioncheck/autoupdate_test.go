@@ -71,6 +71,12 @@ func assertManualHint(t *testing.T, out string) {
 	if !strings.Contains(out, "brew upgrade entire") {
 		t.Errorf("manual hint missing installer command: %q", out)
 	}
+	if strings.Contains(out, "1. Update now") ||
+		strings.Contains(out, "2. Skip") ||
+		strings.Contains(out, "3. Skip until next version") ||
+		strings.Contains(out, "Press enter to continue") {
+		t.Errorf("non-interactive output included interactive menu: %q", out)
+	}
 }
 
 func TestMaybeAutoUpdate_KillSwitch(t *testing.T) {
@@ -303,5 +309,27 @@ func TestParseBrewUpdateChoice(t *testing.T) {
 					tt.input, got, ok, tt.want, tt.ok)
 			}
 		})
+	}
+}
+
+func TestChooseBrewUpdateFromReader_EmptyEOFSkips(t *testing.T) {
+	var buf bytes.Buffer
+	action, err := chooseBrewUpdateFromReader(&buf, strings.NewReader(""))
+	if err != nil {
+		t.Fatalf("chooseBrewUpdateFromReader() error = %v", err)
+	}
+	if action != autoUpdateActionSkip {
+		t.Errorf("action = %q, want %q", action, autoUpdateActionSkip)
+	}
+}
+
+func TestChooseBrewUpdateFromReader_EnterUpdates(t *testing.T) {
+	var buf bytes.Buffer
+	action, err := chooseBrewUpdateFromReader(&buf, strings.NewReader("\n"))
+	if err != nil {
+		t.Fatalf("chooseBrewUpdateFromReader() error = %v", err)
+	}
+	if action != autoUpdateActionUpdate {
+		t.Errorf("action = %q, want %q", action, autoUpdateActionUpdate)
 	}
 }
