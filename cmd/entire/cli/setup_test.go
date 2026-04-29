@@ -2927,3 +2927,23 @@ func TestConfigureCmd_TelemetryAlone_DoesNotReinstallHook(t *testing.T) {
 		t.Errorf("--telemetry alone should not trigger hook reinstall, got: %s", stdout.String())
 	}
 }
+
+func TestConfigureCmd_FreshRepo_PointsAtEnable(t *testing.T) {
+	// Cannot use t.Parallel() because we use t.Chdir
+	setupTestRepo(t)
+	// No settings written — fresh repo.
+
+	cmd := newSetupCmd()
+	var stdout, stderr bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+	cmd.SetArgs([]string{"--telemetry=false"})
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected configure on fresh repo to fail")
+	}
+	if !strings.Contains(stderr.String(), "entire enable") {
+		t.Errorf("expected hint pointing at 'entire enable', got stderr: %s", stderr.String())
+	}
+}

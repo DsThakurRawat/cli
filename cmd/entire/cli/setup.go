@@ -652,13 +652,18 @@ Examples:
 				return NewSilentError(errors.New("not a git repository"))
 			}
 
-			// Bare invocation: print help + hint to entire agent.
 			if !hasConfigureSettingsFlags(cmd) {
 				if err := cmd.Help(); err != nil {
 					return fmt.Errorf("failed to render help: %w", err)
 				}
 				fmt.Fprintln(cmd.OutOrStdout(), "\nFor agent setup, use 'entire agent' (e.g. 'entire agent add claude-code').")
 				return nil
+			}
+
+			if !settings.IsSetUpAny(ctx) {
+				cmd.SilenceUsage = true
+				fmt.Fprintln(cmd.ErrOrStderr(), "Entire is not configured in this repository yet. Run 'entire enable' first.")
+				return NewSilentError(errors.New("entire not configured"))
 			}
 
 			if hasStrategyFlags(cmd) {
